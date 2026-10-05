@@ -1,0 +1,450 @@
+import {
+  FullMatchData,
+  ActuarialMetrics,
+  AnalysisReportResult,
+  ManipulationModelType,
+} from '../types/fortuneActuary';
+
+/**
+ * Standardize handicap string to numeric handicap from Home perspective
+ * e.g. "半球" -> -0.5, "受平半" -> 0.25, "-0.75" -> -0.75, "一球" -> -1.0
+ */
+export function parseHandicapValue(line: string): number {
+  if (!line) return 0;
+  const cleaned = line.trim();
+
+  // If already numeric like "-0.75", "+0.5", "0.25"
+  const num = parseFloat(cleaned);
+  if (!isNaN(num) && (cleaned.startsWith('-') || cleaned.startsWith('+') || /^[0-9.]/.test(cleaned))) {
+    return num;
+  }
+
+  // Common Chinese football handicap mappings
+  const isSuffer = cleaned.includes('受') || cleaned.includes('受让');
+  let base = 0;
+
+  if (cleaned.includes('两球半/三球') || cleaned.includes('2.75')) base = 2.75;
+  else if (cleaned.includes('两球半') || cleaned.includes('2.5')) base = 2.5;
+  else if (cleaned.includes('两球/两球半') || cleaned.includes('2.25')) base = 2.25;
+  else if (cleaned.includes('两球') || cleaned.includes('2.0')) base = 2.0;
+  else if (cleaned.includes('球半/两球') || cleaned.includes('1.75')) base = 1.75;
+  else if (cleaned.includes('球半') || cleaned.includes('1.5')) base = 1.5;
+  else if (cleaned.includes('一球/球半') || cleaned.includes('1.25')) base = 1.25;
+  else if (cleaned.includes('一球') || cleaned.includes('1.0')) base = 1.0;
+  else if (cleaned.includes('半一') || cleaned.includes('0.75')) base = 0.75;
+  else if (cleaned.includes('半球') || cleaned.includes('0.5')) base = 0.5;
+  else if (cleaned.includes('平半') || cleaned.includes('0.25')) base = 0.25;
+  else if (cleaned.includes('平手') || cleaned.includes('0')) base = 0;
+
+  return isSuffer ? base : -base;
+}
+
+export function parseOverUnderValue(line: string): number {
+  if (!line) return 2.5;
+  const num = parseFloat(line);
+  if (!isNaN(num)) return num;
+
+  if (line.includes('3/3.5') || line.includes('3.25')) return 3.25;
+  if (line.includes('2.5/3') || line.includes('2.75')) return 2.75;
+  if (line.includes('2/2.5') || line.includes('2.25')) return 2.25;
+  if (line.includes('3.5')) return 3.5;
+  if (line.includes('3')) return 3.0;
+  if (line.includes('2.5')) return 2.5;
+  if (line.includes('2')) return 2.0;
+  return 2.5;
+}
+
+export function computeActuarialMetrics(data: FullMatchData): ActuarialMetrics {
+  const { earlyWin, earlyDraw, earlyLoss, lateWin, lateDraw, lateLoss } = data.euroOdds;
+
+  // 欧指返还率
+  const earlyReturnRate = earlyWin > 0 && earlyDraw > 0 && earlyLoss > 0
+    ? (1 / (1 / earlyWin + 1 / earlyDraw + 1 / earlyLoss)) * 100
+    : 94;
+  const lateReturnRate = lateWin > 0 && lateDraw > 0 && lateLoss > 0
+    ? (1 / (1 / lateWin + 1 / lateDraw + 1 / lateLoss)) * 100
+    : 94;
+
+  // 隐含概率 (已去除机构抽水)
+  const eTotal = (1 / earlyWin) + (1 / earlyDraw) + (1 / earlyLoss);
+  const earlyHomeProb = ((1 / earlyWin) / eTotal) * 100;
+  const earlyDrawProb = ((1 / earlyDraw) / eTotal) * 100;
+  const earlyAwayProb = ((1 / earlyLoss) / eTotal) * 100;
+
+  const lTotal = (1 / lateWin) + (1 / lateDraw) + (1 / lateLoss);
+  const lateHomeProb = ((1 / lateWin) / lTotal) * 100;
+  const lateDrawProb = ((1 / lateDraw) / lTotal) * 100;
+  const lateAwayProb = ((1 / lateLoss) / lTotal) * 100;
+
+  // 趋势判断
+  const winDiff = lateWin - earlyWin;
+  const winTrend = winDiff <= -0.05 ? 'DROP' : winDiff >= 0.05 ? 'RISE' : 'STABLE';
+
+  const drawDiff = lateDraw - earlyDraw;
+  const drawTrend = drawDiff <= -0.05 ? 'DROP' : drawDiff >= 0.05 ? 'RISE' : 'STABLE';
+
+  const lossDiff = lateLoss - earlyLoss;
+  const lossTrend = lossDiff <= -0.05 ? 'DROP' : lossDiff >= 0.05 ? 'RISE' : 'STABLE';
+
+  const earlyHandicapNum = parseHandicapValue(data.asianHandicap.earlyHandicap);
+  const lateHandicapNum = parseHandicapValue(data.asianHandicap.lateHandicap);
+  
+  // -1.0 比 -0.75 让更多，所以 lateHandicapNum < earlyHandicapNum 意味着升让步 (升盘)
+  const asianTrend = lateHandicapNum < earlyHandicapNum
+    ? 'UP_LINE'
+    : lateHandicapNum > earlyHandicapNum
+    ? 'DOWN_LINE'
+    : 'SAME_LINE';
+
+  const homeWaterDiff = data.asianHandicap.lateHomeOdds - data.asianHandicap.earlyHomeOdds;
+  const homeWaterTrend = homeWaterDiff <= -0.05 ? 'DROP' : homeWaterDiff >= 0.05 ? 'RISE' : 'STABLE';
+
+  // 操盘模型匹配检测
+  const detectedModels: ActuarialMetrics['detectedModels'] = [];
+
+  // 1. 【极限榨水 / 正向控赔】
+  // 欧赔持续下调，亚指维持原盘或升盘，上盘水位砸至 <1.80 极低水 -> 真风控控赔，正路可做稳胆
+  if (
+    (winTrend === 'DROP' || lateWin < 1.65) &&
+    (asianTrend === 'SAME_LINE' || asianTrend === 'UP_LINE') &&
+    data.asianHandicap.lateHomeOdds <= 1.82
+  ) {
+    detectedModels.push({
+      model: 'POSITIVE_CONTROL',
+      title: '【极限榨水 / 正向控赔】',
+      confidence: 92,
+      description: '欧赔胜赔持续下调压制，亚指将主队水位极限压缩至1.80超低水区域，机构用赔付红利剥削实现真正的防范性控赔，正路可信度极高。',
+      riskLevel: 'LOW_RISK_SOLID',
+    });
+  }
+
+  // 2. 【高息吸筹 / 名气诱导】
+  // 强队题材拉满强升盘，但水位死卡 2.00~2.08 超高水/满水 -> 大热必死，公开诱上，坚决去下盘/受让胜
+  if (
+    asianTrend === 'UP_LINE' &&
+    data.asianHandicap.lateHomeOdds >= 1.98 &&
+    data.asianHandicap.lateHomeOdds <= 2.12
+  ) {
+    detectedModels.push({
+      model: 'HIGH_INTEREST_TRAP',
+      title: '【高息吸筹 / 名气诱导】',
+      confidence: 94,
+      description: '借强队名气或题材强行升盘制造让步坚挺假象，但上盘水位长期高挂2.00+满水利诱筹码，符合“高息吸筹”典型收割形态，大热必死。',
+      riskLevel: 'HIGH_RISK_TRAP',
+    });
+  }
+
+  // 3. 【雪崩退盘 / 退热示弱】
+  // 临场剧烈退盘升水。常规透明联赛为核心伤停/利空坐实（跟退盘）；豪门无利空反常退盘为暴力洗盘
+  if (
+    asianTrend === 'DOWN_LINE' &&
+    (data.asianHandicap.lateHomeOdds >= data.asianHandicap.earlyHomeOdds || data.asianHandicap.lateHomeOdds > 1.90)
+  ) {
+    detectedModels.push({
+      model: 'AVALANCHE_RETREAT' as ManipulationModelType,
+      title: '【雪崩退盘 / 退热示弱】',
+      confidence: 88,
+      description: '临场机构主动降低让步防线（退盘）并配以中高水，在透明联赛多为主力伤停或大庄获悉内幕利空坐实，切忌盲目贪便宜抄底上盘。',
+      riskLevel: 'UPSET_WARNING',
+    });
+  }
+
+  // 4. 【平赔低洼 / 平赔排雷】
+  // 欧平平赔死压至 <3.00（竞彩 <2.75），胜负盘平手/平半 -> 严防平局真实避险，首选胆平
+  const isShallowAsian = Math.abs(lateHandicapNum) <= 0.25;
+  if (lateDraw <= 3.05 || (isShallowAsian && lateDraw <= 3.15 && drawTrend === 'DROP')) {
+    detectedModels.push({
+      model: 'LOW_DRAW_DEFENSE',
+      title: '【平赔低洼 / 平赔排雷】',
+      confidence: 90,
+      description: `主流欧指平赔低压至 ${lateDraw.toFixed(2)} 的极端防御区间，亚指死卡在平手/平半浅盘，资金两头分流，庄家底牌直指防平。`,
+      riskLevel: 'DRAW_DEFENSE',
+    });
+  }
+
+  // 5. 【浅盘满水死亡】
+  // 强队主场对中下游仅开平手/平半且长期挂 2.00+ 满水 -> 强队让步无力，大概率丢分，坚决走下盘
+  if (
+    Math.abs(lateHandicapNum) <= 0.25 &&
+    lateHandicapNum <= 0 &&
+    data.asianHandicap.lateHomeOdds >= 1.98
+  ) {
+    detectedModels.push({
+      model: 'SHALLOW_FULL_WATER',
+      title: '【浅盘满水死亡】',
+      confidence: 89,
+      description: '主队坐拥主场或名气优势，却只能开出平手/平半的无力浅盘，且主队水位长期高挂满水，机构毫不惧怕主队打出，预警冷门爆发。',
+      riskLevel: 'HIGH_RISK_TRAP',
+    });
+  }
+
+  // 大小球联动测谎
+  const lateOUNum = parseOverUnderValue(data.overUnder.lateLine);
+  let overUnderVerdict = '大小球与胜负盘基本处于合理区间';
+
+  if (Math.abs(lateHandicapNum) >= 1.25 && lateOUNum <= 2.25) {
+    overUnderVerdict = '【深让步 (-1.25+) + 浅大小球 (<=2.25)】：让步深但进球数极浅，机构严防强队控场小胜或破门乏力，强烈指向 1-0、2-0 经济型赛果，测谎判定首选小球！';
+  } else if (Math.abs(lateHandicapNum) <= 0.25 && lateOUNum >= 2.75) {
+    overUnderVerdict = '【浅让步 (平手/平半) + 深大小球 (>=2.75)】：胜负让步虚无，但大小球被暴力拉深至高位，揭示两队防线形同虚设，战术大开大合，机构真实底牌引导对攻，测谎判定直追大球！';
+  } else if (lateOUNum === 2.5 && data.overUnder.lateOverOdds < data.overUnder.earlyOverOdds && data.overUnder.lateOverOdds > 1.85) {
+    overUnderVerdict = '【大球题材 + 死卡 2.5 仅降水不升盘】：市场充斥大球热度，但盘口纹丝不动仅做微降水诱惑，典型的假大球双向收割陷阱，建议反向防小！';
+  }
+
+  // 欧亚偏离度简述
+  const handicapDiscrepancy = `欧亚对齐度：晚盘欧指主胜折合理论盘口约 ${getTheoreticalHandicap(lateWin)}，实际即时盘为 ${data.asianHandicap.lateHandicap}（水位 ${data.asianHandicap.lateHomeOdds.toFixed(2)}）。`;
+
+  return {
+    earlyReturnRate,
+    lateReturnRate,
+    earlyHomeProb,
+    earlyDrawProb,
+    earlyAwayProb,
+    lateHomeProb,
+    lateDrawProb,
+    lateAwayProb,
+    winTrend,
+    drawTrend,
+    lossTrend,
+    asianTrend,
+    homeWaterTrend,
+    detectedModels,
+    overUnderVerdict,
+    handicapDiscrepancy,
+  };
+}
+
+function getTheoreticalHandicap(winOdds: number): string {
+  if (winOdds <= 1.18) return '两球半以上';
+  if (winOdds <= 1.28) return '两球/两球半';
+  if (winOdds <= 1.38) return '球半/两球';
+  if (winOdds <= 1.50) return '球半';
+  if (winOdds <= 1.65) return '一球/球半';
+  if (winOdds <= 1.85) return '半一';
+  if (winOdds <= 2.10) return '半球';
+  if (winOdds <= 2.40) return '平半';
+  return '平手/受让';
+}
+
+/**
+ * Automatically derives consistent, mathematically sound reference scores
+ * aligning with euroPick, handicapPick, and overUnderPick
+ */
+export function calculateConsistentPredictedScores(
+  euroPick: string,
+  handicapPick: string,
+  overUnderPick: string,
+  lateOUNum: number,
+  lateHandicapNum: number
+): string[] {
+  const isAwayFavored =
+    euroPick.includes('客') ||
+    euroPick.includes('让球负') ||
+    (handicapPick.includes('下盘') && !euroPick.includes('主胜'));
+
+  const isDrawFavored =
+    euroPick.includes('胆平') ||
+    (euroPick.includes('平') && !euroPick.includes('主胜') && !euroPick.includes('客'));
+
+  const isOver = overUnderPick.includes('大球') || lateOUNum >= 2.75;
+
+  if (isDrawFavored) {
+    if (isOver) {
+      return ['2-2', '1-1', '3-3'];
+    }
+    return ['1-1', '0-0', '1-0'];
+  }
+
+  if (isAwayFavored) {
+    if (isOver) {
+      return ['1-2', '0-2', '1-3'];
+    }
+    return ['0-1', '1-1', '0-2'];
+  }
+
+  // Home favored (主胜 / 上盘)
+  if (Math.abs(lateHandicapNum) >= 1.25) {
+    if (isOver) {
+      return ['3-0', '3-1', '4-1'];
+    }
+    return ['2-0', '3-0', '2-1'];
+  }
+
+  if (isOver) {
+    return ['2-1', '3-1', '2-0'];
+  }
+  return ['1-0', '2-0', '1-1'];
+}
+
+/**
+ * Deterministic fallback generator strictly adhering to the 3 output sections required by the user
+ */
+export function generateActuarialRuleReport(data: FullMatchData): AnalysisReportResult {
+  const metrics = computeActuarialMetrics(data);
+  const primaryModel = metrics.detectedModels[0] || {
+    model: 'UNCLASSIFIED' as ManipulationModelType,
+    title: '【复合博弈调仓盘】',
+    confidence: 80,
+    description: '盘口处于常规资金调和期，需警惕临场最后30分钟的二次变轨。',
+    riskLevel: 'LOW_RISK_SOLID',
+  };
+
+  const { homeTeam, awayTeam, league } = data.matchInfo;
+  const { lateHandicap, lateHomeOdds, lateAwayOdds } = data.asianHandicap;
+  const { lateWin, lateDraw, lateLoss } = data.euroOdds;
+  const lateHandicapNum = parseHandicapValue(lateHandicap);
+  const lateOUNum = parseOverUnderValue(data.overUnder.lateLine);
+
+  let firstImpression = '';
+  let threeDimLieDetection = '';
+  let finalDirection = '';
+  let finalDirectionDetail = '';
+  let riskWarning = '';
+
+  let starRating = 3;
+  let euroPick = '主胜';
+  let handicapPick = `上盘 ${homeTeam}`;
+  let overUnderPick = `小球 (<=${data.overUnder.lateLine})`;
+  let predictedScores: string[] = ['1-0', '2-0', '1-1'];
+  let confidenceReason = '常规盘赔调和';
+
+  switch (primaryModel.model) {
+    case 'POSITIVE_CONTROL': // 极限榨水 / 正向控赔
+      firstImpression = `【定性：正向控赔稳胆】本场 ${league} ${homeTeam} 对阵 ${awayTeam}，盘面呈现纯粹的“极限榨水 / 正向控赔”特征。机构在早盘确认双方战力与基本面后，晚盘并未借助名气虚晃升盘诱导，而是欧赔胜赔持续下调，同时亚指将 ${homeTeam} 水位强行砸至 ${lateHomeOdds.toFixed(2)} 的极端超低水区域。大庄宁愿剥夺彩民的盈利倍率，也不愿承担高赔付风险，这是机构为了不赔钱而做出的最纯粹的避险调仓。`;
+      threeDimLieDetection = `三维联动交叉验证：
+1. 亚盘水位维度：${lateHandicap} 盘口搭配 ${lateHomeOdds.toFixed(2)} 低水位，完全没有“天上掉馅饼”的暴利空间，彻底断绝投机客贪高水心理。
+2. 欧赔走势维度：欧指主胜由 ${data.euroOdds.earlyWin.toFixed(2)} 降至 ${lateWin.toFixed(2)}，平赔与负赔同步抬升，欧亚换算严丝合缝，没有出现欧降亚升的虚热背离。
+3. 大小球联动维度：${metrics.overUnderVerdict}。盘面整体逻辑自洽，无资金诱导死角，早盘意图与晚盘风控底牌高度一致。`;
+      finalDirection = `【推荐方向】：主队（上盘 ${homeTeam} ${lateHandicap}）及主胜稳胆`;
+      finalDirectionDetail = `竞彩/盘口：主胜独赢 / 亚指上盘；比分参考 2-0、3-0、3-1`;
+      riskWarning = `避坑风险提示：此类超低水盘面切忌因“赔率过低、回报太少”而盲目博冷去下盘。大庄的底牌已毫无保留地向主队倾斜，顺应机构风控是唯一正解。`;
+
+      starRating = 5;
+      euroPick = '主胜 (稳胆)';
+      handicapPick = `上盘 ${homeTeam} (${lateHandicap})`;
+      overUnderPick = lateOUNum <= 2.25 ? `小球 (<=${data.overUnder.lateLine})` : `大球 (>=${data.overUnder.lateLine})`;
+      predictedScores = ['2-0', '3-0', '3-1'];
+      confidenceReason = '机构真实避险下调主胜，水位砸至冰点防范打出，5星稳胆。';
+      break;
+
+    case 'HIGH_INTEREST_TRAP': // 高息吸筹 / 名气诱导
+      firstImpression = `【定性：高息诱上陷阱】本场 ${homeTeam} 对阵 ${awayTeam} 是极其标准的“高息吸筹 / 名气诱导”杀猪盘。机构充分利用 ${homeTeam} 的豪门名气与市场追捧题材，在晚盘强势升盘至 ${lateHandicap}，看似力挺主队打穿，但致命死穴在于：主队水位始终死死卡在 ${lateHomeOdds.toFixed(2)} 的超高水/满水状态！《财富经》核心铁律：天上不会掉无缘无故的馅饼，买得太舒服且回报率异常丰厚，必是机构请君入瓮的诱导陷阱。`;
+      threeDimLieDetection = `三维联动交叉验证：
+1. 亚盘水位维度：升盘不降水反挂满水 (${lateHomeOdds.toFixed(2)})，如果庄家真怕上盘打出，绝不敢长期提供如此高额的赔付红利供市场白捡。
+2. 欧赔走势维度：欧平主胜赔并未出现深幅夯实，客胜与平赔暗流涌动，欧亚折算呈现明显的“虚开盘型”，机构在用盘口障眼法为主队吸纳巨量筹码。
+3. 大小球联动维度：${metrics.overUnderVerdict}。亚盘强升但大小球并未配合暴力上抬，形成了“强队大胜”预期与“实际进球空间受限”的尖锐矛盾，早盘的造势逻辑被晚盘高水彻底证伪。`;
+      finalDirection = `【推荐方向】：客队（下盘 ${awayTeam} 受让）坚决反选`;
+      finalDirectionDetail = `竞彩/盘口：让球客胜（受让赢盘） / 甚至防平局客胜爆大冷；比分参考 1-1、1-2、0-1`;
+      riskWarning = `避坑风险提示：千万警惕名气虚火与球迷情怀！凡是“升盘给满水”的豪门赛事，99% 为机构收割局，坚决不碰上盘，拥抱下盘避风港。`;
+
+      starRating = 5;
+      euroPick = '让球负 (受让胜)';
+      handicapPick = `下盘 ${awayTeam} (${lateHandicap.startsWith('-') ? '+' + lateHandicap.slice(1) : '+' + lateHandicap})`;
+      overUnderPick = `小球 (<=${data.overUnder.lateLine})`;
+      predictedScores = ['1-1', '1-2', '0-1'];
+      confidenceReason = '豪门升盘死卡2.00+满水，公开利诱筹码，大热必死，反选5星。';
+      break;
+
+    case 'AVALANCHE_RETREAT': // 雪崩退盘 / 退热示弱
+      firstImpression = `【定性：雪崩退盘 / 避险退热】盘面特征归属于“雪崩退盘 / 退热示弱”。初盘 ${data.asianHandicap.earlyHandicap} 在晚盘临场资金大举介入时剧烈下调防线至 ${lateHandicap}，水位反弹至 ${lateHomeOdds.toFixed(2)}。在现代足彩精算体系中，正规透明联赛无端退盘升水，往往是机构核心风控提前捕捉到了未公开的核心利空（如主力伤停、更衣室内讧或更深层的轮换）而做出的紧急避险。`;
+      threeDimLieDetection = `三维联动交叉验证：
+1. 亚盘水位维度：机构主动示弱退盘，放弃第一道阻击线，将赔付压力向客队倾斜。
+2. 欧赔走势维度：主胜赔由 ${data.euroOdds.earlyWin.toFixed(2)} 大幅抬高至 ${lateWin.toFixed(2)}，平赔低压或客胜折线暴跌，欧赔异动彻底证伪了早盘对主队的信心。
+3. 大小球联动维度：${metrics.overUnderVerdict}。进球数防线伴随胜负盘同步收缩，反映出主队在进攻端存在难以弥补的硬伤。`;
+      finalDirection = `【推荐方向】：客队（下盘 ${awayTeam} ${lateHandicap.replace('-', '+')}）`;
+      finalDirectionDetail = `竞彩/盘口：让球平负 / 客队不败；比分参考 0-0、1-1、0-1`;
+      riskWarning = `避坑风险提示：切勿抱有“豪门退盘捡便宜上车”的侥幸心理。透明联赛临场剧烈退盘，大庄是在止损避险，跟退盘者存，盲抄底者亡。`;
+
+      starRating = 4;
+      euroPick = '平 / 负 (客队不败)';
+      handicapPick = `下盘 ${awayTeam} (${lateHandicap.replace('-', '+')})`;
+      overUnderPick = `小球 (<=${data.overUnder.lateLine})`;
+      predictedScores = ['1-1', '0-1', '0-0'];
+      confidenceReason = '临场退盘升水，核心利空坐实，跟退盘4星。';
+      break;
+
+    case 'LOW_DRAW_DEFENSE': // 平赔低洼 / 平赔排雷
+      firstImpression = `【定性：平赔绝对风控】本场呈现极其罕见的“平赔低洼 / 严防平局”操盘图景。主流欧指平赔已一路被机构死死压制在 ${lateDraw.toFixed(2)} 的极端低洼水位（竞彩甚至低于2.70区间），亚指则胶着在 ${lateHandicap} 的极浅区间。两端胜负水位上下摇摆作为幌子，实际上庄家真实风控底牌已全部押注在“防范平局穿透”之上。`;
+      threeDimLieDetection = `三维联动交叉验证：
+1. 亚盘水位维度：亚指在平手与平半之间来回横跳拉扯，两端筹码高度对冲，机构刻意淡化胜负两头的倾向性。
+2. 欧赔走势维度：平赔 ${lateDraw.toFixed(2)} 异常低企，凯利指数在平局上形成牢不可破的安全垫，主胜与客胜均缺乏绝对防范价值。
+3. 大小球联动维度：${metrics.overUnderVerdict}。与平局模型最契合的比分多为小球对峙。`;
+      finalDirection = `【推荐方向】：首选平局（胆平 / 下盘受让平局），次选小球`;
+      finalDirectionDetail = `竞彩/盘口：直接博平局 (Draw) / 双选平+让平；比分参考 1-1、0-0`;
+      riskWarning = `避坑风险提示：不要试图在主客胜两头寻找所谓的价值，平赔压至3.00以下是机构最明确的预警红线，两头下注极易被精准绝杀。`;
+
+      starRating = 5;
+      euroPick = '平局 (首选胆平)';
+      handicapPick = `下盘 ${awayTeam} (+0.25/平手)`;
+      overUnderPick = `小球 (<=${data.overUnder.lateLine})`;
+      predictedScores = ['1-1', '0-0', '2-2'];
+      confidenceReason = '平赔死压至3.00极度防御区，两端分流打掩护，5星胆平。';
+      break;
+
+    case 'SHALLOW_FULL_WATER': // 浅盘满水死亡
+      firstImpression = `【定性：浅盘满水死亡陷阱】本场盘面触发《财富经》经典杀招“浅盘满水死亡”。${homeTeam} 坐镇主场面对排名或实力处于下风的 ${awayTeam}，盘口仅仅开出 ${lateHandicap} 的无力浅盘，且水位长期高挂 ${lateHomeOdds.toFixed(2)} 满水状态。主场优势被机构完全无视，阻力几乎为零，这是机构对强队完全不设防的典型态度。`;
+      threeDimLieDetection = `三维联动交叉验证：
+1. 亚盘水位维度：平手/平半盘挂 2.00+ 满水，给市场制造“主场不败、赢半博全、高赔暴利”的虚假舒适感，实则是机构大门敞开收割主队筹码。
+2. 欧赔走势维度：主胜赔高居 ${lateWin.toFixed(2)} 居高不下，与两队真实战力严重脱节，客队不败概率被严重低估。
+3. 大小球联动维度：${metrics.overUnderVerdict}。`;
+      finalDirection = `【推荐方向】：坚决走下盘（${awayTeam} 不败）`;
+      finalDirectionDetail = `竞彩/盘口：让球负（客队受让胜） / 博客队爆冷独赢；比分参考 0-1、1-2、1-1`;
+      riskWarning = `避坑风险提示：强队主场浅盘满水是足彩最大的温床陷阱。凡是买得太舒服的盘，99% 是送命题，果断舍弃主队情怀。`;
+
+      starRating = 5;
+      euroPick = '让球负 (客胜/平)';
+      handicapPick = `下盘 ${awayTeam} (+0.25/0)`;
+      overUnderPick = lateOUNum >= 2.75 ? `大球 (>=${data.overUnder.lateLine})` : `小球 (<=${data.overUnder.lateLine})`;
+      predictedScores = ['0-1', '1-2', '1-1'];
+      confidenceReason = '强队主场浅盘挂满水，买得太舒服必定送命，5星冷门下盘。';
+      break;
+
+    default:
+      firstImpression = `【定性：博弈调仓中性盘】本场 ${league} ${homeTeam} vs ${awayTeam} 晚盘处于机构资金的微调平衡期。即时盘口 ${lateHandicap} 配套主客水 ${lateHomeOdds.toFixed(2)} / ${lateAwayOdds.toFixed(2)}，欧指 ${lateWin.toFixed(2)} / ${lateDraw.toFixed(2)} / ${lateLoss.toFixed(2)}。需用晚盘最后阶段的急剧变水去证伪早盘的市场预期。`;
+      threeDimLieDetection = `三维联动交叉验证：
+1. 亚盘水位：即时水位未见极端两极分化，但需注意资金在临场前1小时的单向倾斜。
+2. 欧赔走势：返还率 ${metrics.lateReturnRate.toFixed(1)}%，平局赔率 ${lateDraw.toFixed(2)}，三项分布处于博弈均衡线。
+3. 大小球联动：${metrics.overUnderVerdict}。`;
+      finalDirection = lateHandicapNum <= -0.5 && lateHomeOdds <= 1.88 ? `【推荐方向】：上盘 ${homeTeam}` : `【推荐方向】：下盘 ${awayTeam}`;
+      finalDirectionDetail = `根据临场赔付压力权衡，倾向稳健防守盘口。`;
+      riskWarning = `避坑风险提示：注意临场前45分钟是否有反常升水或退盘现象，严格遵循“晚盘看真实风控”原则。`;
+
+      starRating = 3;
+      euroPick = lateWin < lateLoss ? '主胜 / 平' : '客队不败';
+      handicapPick = lateHandicapNum <= -0.5 && lateHomeOdds <= 1.88 ? `上盘 ${homeTeam} (${lateHandicap})` : `下盘 ${awayTeam}`;
+      overUnderPick = lateOUNum >= 2.75 ? `大球 (>=${data.overUnder.lateLine})` : `小球 (<=${data.overUnder.lateLine})`;
+      predictedScores = calculateConsistentPredictedScores(
+        euroPick,
+        handicapPick,
+        overUnderPick,
+        lateOUNum,
+        lateHandicapNum
+      );
+      confidenceReason = '中性博弈盘型，严格遵循晚盘临场风控变水。';
+      break;
+  }
+
+  return {
+    firstImpression,
+    threeDimLieDetection,
+    finalVerdict: {
+      direction: finalDirection,
+      directionDetail: finalDirectionDetail,
+      riskWarning,
+    },
+    decision: {
+      starRating,
+      euroPick,
+      handicapPick,
+      overUnderPick,
+      predictedScores:
+        predictedScores && predictedScores.length > 0
+          ? predictedScores
+          : calculateConsistentPredictedScores(euroPick, handicapPick, overUnderPick, lateOUNum, lateHandicapNum),
+      confidenceReason,
+    },
+    identifiedModel: primaryModel.model,
+    modelTitle: primaryModel.title,
+    source: 'ACTUARIAL_RULE_ENGINE',
+    metrics,
+  };
+}

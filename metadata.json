@@ -1,0 +1,6 @@
+{
+  "name": "财富经足彩盘赔精算与风控博弈系统",
+  "description": "基于《财富经》底线逻辑与五大操盘模型，剥离球队名气与市场虚火，早晚盘变轨测谎，直击大庄风控底牌的专业足彩精算矩阵。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
