@@ -404,14 +404,52 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 1. 亚盘水位：即时水位未见极端两极分化，但需注意资金在临场前1小时的单向倾斜。
 2. 欧赔走势：返还率 ${metrics.lateReturnRate.toFixed(1)}%，平局赔率 ${lateDraw.toFixed(2)}，三项分布处于博弈均衡线。
 3. 大小球联动：${metrics.overUnderVerdict}。`;
-      finalDirection = lateHandicapNum <= -0.5 && lateHomeOdds <= 1.88 ? `【推荐方向】：上盘 ${homeTeam}` : `【推荐方向】：下盘 ${awayTeam}`;
-      finalDirectionDetail = `根据临场赔付压力权衡，倾向稳健防守盘口。`;
-      riskWarning = `避坑风险提示：注意临场前45分钟是否有反常升水或退盘现象，严格遵循“晚盘看真实风控”原则。`;
 
       starRating = 3;
-      euroPick = lateWin < lateLoss ? '主胜 / 平' : '客队不败';
-      handicapPick = lateHandicapNum <= -0.5 && lateHomeOdds <= 1.88 ? `上盘 ${homeTeam} (${lateHandicap})` : `下盘 ${awayTeam}`;
-      overUnderPick = lateOUNum >= 2.75 ? `大球 (>=${data.overUnder.lateLine})` : `小球 (<=${data.overUnder.lateLine})`;
+      euroPick = lateWin <= lateLoss ? '主胜 / 平' : '客队不败';
+
+      // Precise handicap line derivation with explicit goal count and hedge explanation
+      if (lateHandicapNum === 0) {
+        handicapPick =
+          lateWin <= lateLoss
+            ? `平手盘 ${homeTeam} (0 / 保平争胜)`
+            : `平手盘 ${awayTeam} (0 / 保平争胜)`;
+      } else if (lateHandicapNum < 0) {
+        // Home gives goals (e.g. -1.0)
+        const goalCount = Math.abs(lateHandicapNum);
+        if (lateHomeOdds <= 1.85) {
+          handicapPick = `上盘 ${homeTeam} (-${goalCount}让球)`;
+        } else {
+          handicapPick = `下盘 ${awayTeam} (+${goalCount}受让)`;
+        }
+      } else {
+        // Away gives goals (Home is receiving goals, e.g. +1.0)
+        if (lateLoss <= lateWin) {
+          handicapPick = `上盘 ${awayTeam} (-${lateHandicapNum}客让)`;
+        } else {
+          handicapPick = `下盘 ${homeTeam} (+${lateHandicapNum}受让)`;
+        }
+      }
+
+      overUnderPick =
+        lateOUNum >= 2.75
+          ? `大球 (>=${data.overUnder.lateLine})`
+          : `小球 (<=${data.overUnder.lateLine})`;
+
+      finalDirection = handicapPick.includes('上盘')
+        ? `【推荐方向】：${handicapPick}`
+        : `【推荐方向】：${handicapPick}`;
+
+      // Clear, crystal-lucid hedge explanation
+      if (euroPick.includes('主胜') && handicapPick.includes('下盘')) {
+        const absGoal = Math.abs(lateHandicapNum);
+        finalDirectionDetail = `【操盘精算对冲】：胜平负维度主队赢面占优（主胜/平）；但亚盘主让${absGoal}球门槛偏高（必须净胜2球才能赢全盘）。实战重点防范主队 1-0 经济型赢球走盘或 1-1 爆冷冷平，因此让球端首选下盘受让方 (+${absGoal})，双向构筑资金风控安全垫！`;
+      } else {
+        finalDirectionDetail = `根据临场欧亚赔付防线与水位阻诱权衡，首选稳健防守盘口。`;
+      }
+
+      riskWarning = `避坑风险提示：注意临场前45分钟是否有反常升水或退盘现象，严格遵循“晚盘看真实风控”原则。`;
+
       predictedScores = calculateConsistentPredictedScores(
         euroPick,
         handicapPick,
@@ -419,7 +457,7 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
         lateOUNum,
         lateHandicapNum
       );
-      confidenceReason = '中性博弈盘型，严格遵循晚盘临场风控变水。';
+      confidenceReason = '中性博弈盘型，结合胜平负与让球盘口门槛进行对冲精算。';
       break;
   }
 

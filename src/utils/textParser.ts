@@ -26,26 +26,52 @@ export function parseNaturalTextOdds(text: string, currentData: FullMatchData): 
 
   const fullText = text;
 
-  // 1. Teams & League extraction (e.g. "英超 阿森纳 vs 切尔西" or "瑞士 vs 斯洛文尼亚")
-  const vsMatch = fullText.match(/([^\d\s\n,;，；|/\\#【】（(]{2,10})\s*(?:vs|VS|对阵|对|\-)\s*([^\d\s\n,;，；|/\\#【】（(]{2,10})/i);
+  // Blacklisted non-team words
+  const INVALID_WORDS = [
+    '时点', '核对', '快照', '验证', '明细', '公司', '总结', '对阵',
+    '列表', '板块', '参考', '截止', '开赛', '范围', '销售日', '指数',
+    '数据', '时间', '表头', '赔率', '抓取', '逐家', '原盘', '即时'
+  ];
+
+  const isValidTeamName = (name: string): boolean => {
+    if (!name || name.length < 2 || name.length > 12) return false;
+    if (INVALID_WORDS.some((w) => name.includes(w))) return false;
+    if (/^[#\d\s\-*|/\\.,:：]+$/.test(name)) return false;
+    return true;
+  };
+
+  // 1. Teams & League extraction (Ensure on the SAME line, no newlines!)
+  const vsMatch = fullText.match(
+    /(?:^|\n|[#|•\-])[^\S\r\n]*([^\d\s\n,;，；|/\\#【】（(]{2,10})[^\S\r\n]*(?:\bvs\b|\bVS\b|\bVs\b|对阵)[^\S\r\n]*([^\d\s\n,;，；|/\\#【】（(]{2,10})/i
+  );
   if (vsMatch && result.matchInfo) {
     const home = vsMatch[1].trim();
     const away = vsMatch[2].trim();
-    if (!home.startsWith('主队') && !away.startsWith('客队') && !home.includes('重新核') && !home.includes('对阵')) {
+    if (isValidTeamName(home) && isValidTeamName(away)) {
       result.matchInfo.homeTeam = home;
       result.matchInfo.awayTeam = away;
     }
   }
 
   // League keywords
-  const leagueMatch = fullText.match(/(欧国联|英超|西甲|德甲|意甲|法甲|欧冠|欧罗巴|英冠|日职|荷甲|葡超|世界杯|亚洲杯|欧洲杯|中超|北单|竞彩)/);
+  const leagueMatch = fullText.match(
+    /(欧国联|英超|西甲|德甲|意甲|法甲|欧冠|欧罗巴|英冠|日职|荷甲|葡超|世界杯|亚洲杯|欧洲杯|中超|北单|竞彩)/
+  );
   if (leagueMatch && result.matchInfo) {
-    result.matchInfo.league = leagueMatch[1] + (leagueMatch[1].includes('联') || leagueMatch[1].includes('杯') || leagueMatch[1].includes('单') ? '' : '联赛');
+    result.matchInfo.league =
+      leagueMatch[1] +
+      (leagueMatch[1].includes('联') ||
+      leagueMatch[1].includes('杯') ||
+      leagueMatch[1].includes('单')
+        ? ''
+        : '联赛');
   }
 
   // 2. Euro odds extraction
   // Format: 欧初1.36/4.40/7.50即1.30/4.60/9.50 or 1.45 4.50 7.00 -> 1.30 5.00 9.00
-  const euroDualMatch = fullText.match(/欧初\s*(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})\s*即\s*(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})/);
+  const euroDualMatch = fullText.match(
+    /欧初\s*(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})\s*即\s*(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})/
+  );
   if (euroDualMatch && result.euroOdds) {
     result.euroOdds.earlyWin = parseFloat(euroDualMatch[1]);
     result.euroOdds.earlyDraw = parseFloat(euroDualMatch[2]);
@@ -54,7 +80,9 @@ export function parseNaturalTextOdds(text: string, currentData: FullMatchData): 
     result.euroOdds.lateDraw = parseFloat(euroDualMatch[5]);
     result.euroOdds.lateLoss = parseFloat(euroDualMatch[6]);
   } else {
-    const euroGroups = [...fullText.matchAll(/(\d+\.\d{1,3})[\s/]+(\d+\.\d{1,3})[\s/]+(\d+\.\d{1,3})/g)];
+    const euroGroups = [
+      ...fullText.matchAll(/(\d+\.\d{1,3})[\s/]+(\d+\.\d{1,3})[\s/]+(\d+\.\d{1,3})/g),
+    ];
     if (euroGroups.length >= 2 && result.euroOdds) {
       result.euroOdds.earlyWin = parseFloat(euroGroups[0][1]);
       result.euroOdds.earlyDraw = parseFloat(euroGroups[0][2]);
@@ -70,8 +98,10 @@ export function parseNaturalTextOdds(text: string, currentData: FullMatchData): 
   }
 
   // 3. Asian Handicap extraction
-  // Format: 亚初一球/球半[0.910/0.800]即球半[1.060/0.780] or 受半球/一球
-  const asianDualMatch = fullText.match(/亚初\s*([^\d\[\]\s]+)\[([\d.]+)[/ ]+([\d.]+)\]\s*即\s*([^\d\[\]\s]+)\[([\d.]+)[/ ]+([\d.]+)\]/);
+  // Check for dual match: 亚初一球/球半[0.910/0.800]即球半[1.060/0.780]
+  const asianDualMatch = fullText.match(
+    /亚初\s*([^\d\[\]\s]+)\[([\d.]+)[/ ]+([\d.]+)\]\s*即\s*([^\d\[\]\s]+)\[([\d.]+)[/ ]+([\d.]+)\]/
+  );
   if (asianDualMatch && result.asianHandicap) {
     result.asianHandicap.earlyHandicap = asianDualMatch[1];
     result.asianHandicap.earlyHomeOdds = normalizeWaterOdds(parseFloat(asianDualMatch[2]));
@@ -80,28 +110,51 @@ export function parseNaturalTextOdds(text: string, currentData: FullMatchData): 
     result.asianHandicap.lateHomeOdds = normalizeWaterOdds(parseFloat(asianDualMatch[5]));
     result.asianHandicap.lateAwayOdds = normalizeWaterOdds(parseFloat(asianDualMatch[6]));
   } else {
-    const handicapKeywords = [
-      '两球半/三球', '两球半', '两球/两球半', '两球',
-      '球半/两球', '球半', '一球/球半', '一球',
-      '受一球', '受半球/一球', '受半球', '受平半',
-      '半一', '半球', '平半', '平手',
-      '-3.0', '-2.75', '-2.5', '-2.25', '-2.0',
-      '-1.75', '-1.5', '-1.25', '-1.0',
-      '-0.75', '-0.5', '-0.25', '0', '+0.25', '+0.5', '+0.75', '+1.0'
-    ];
+    // 3.1 Check crawler snapshot format:
+    // "盘口分布 受半球/一球×12" or "盘口分布 一球×14"
+    const distMatch = fullText.match(/盘口分布\s*([^\s×·,，()（）\d]+(?:[^\s×·,，()（）]+)?)/);
+    // "让球线 -1（主队让1球）" or "让球线 1（主队受让1球（客队让1球））" or "让球线 0（不让球）"
+    const lineWithDescMatch = fullText.match(/让球线\s*[:：\-*]*\s*([+\-]?\d+(?:\.\d+)?)\s*（([^）]+)）/);
 
-    for (const hk of handicapKeywords) {
-      if (fullText.includes(hk) && result.asianHandicap) {
-        result.asianHandicap.lateHandicap = hk;
-        break;
+    if (distMatch && result.asianHandicap) {
+      result.asianHandicap.lateHandicap = distMatch[1].trim();
+      if (lineWithDescMatch && result.matchInfo) {
+        result.matchInfo.marketStory = `北单/竞彩让球线: ${lineWithDescMatch[0]}`;
+      }
+    } else if (lineWithDescMatch && result.asianHandicap) {
+      const lineVal = parseFloat(lineWithDescMatch[1]);
+      if (lineVal === 0) {
+        result.asianHandicap.lateHandicap = '平手 (0)';
+      } else if (lineVal < 0) {
+        result.asianHandicap.lateHandicap = `主让${Math.abs(lineVal)}球 (${lineVal})`;
+      } else {
+        result.asianHandicap.lateHandicap = `客让${lineVal}球 (+${lineVal})`;
+      }
+    } else {
+      // Longest keywords first so "受半球/一球" and "受一球" match before "一球"!
+      const handicapKeywords = [
+        '两球半/三球', '两球/两球半', '球半/两球', '受半球/一球', '一球/球半',
+        '两球半', '受两球', '两球', '受球半', '球半', '受一球', '一球',
+        '受半一', '半一', '受半球', '半球', '受平半', '平半', '平手',
+        '-3.0', '-2.75', '-2.5', '-2.25', '-2.0',
+        '-1.75', '-1.5', '-1.25', '-1.0',
+        '-0.75', '-0.5', '-0.25', '0', '+0.25', '+0.5', '+0.75', '+1.0'
+      ];
+
+      for (const hk of handicapKeywords) {
+        if (fullText.includes(hk) && result.asianHandicap) {
+          result.asianHandicap.lateHandicap = hk;
+          break;
+        }
       }
     }
 
-    const waterMatch = fullText.match(/(?:水位|水|盘水|主水均|主水)[\s:：]*(\d\.\d{2,3})/);
+    // Water level extraction
+    const waterMatch = fullText.match(/(?:即时主水均|主水均|水位|水|盘水|主水)[\s:：]*(\d\.\d{2,3})/);
     if (waterMatch && result.asianHandicap) {
       result.asianHandicap.lateHomeOdds = normalizeWaterOdds(parseFloat(waterMatch[1]));
     }
-    const guestWaterMatch = fullText.match(/(?:客水均|客水)[\s:：]*(\d\.\d{2,3})/);
+    const guestWaterMatch = fullText.match(/(?:即时客水均|客水均|客水)[\s:：]*(\d\.\d{2,3})/);
     if (guestWaterMatch && result.asianHandicap) {
       result.asianHandicap.lateAwayOdds = normalizeWaterOdds(parseFloat(guestWaterMatch[1]));
     }
@@ -146,22 +199,52 @@ export function parseBatchMatchesFromText(rawText: string): FullMatchData[] {
   const matches: FullMatchData[] = [];
   const text = rawText.trim();
 
-  // Pattern 1: Section-based multi-match document
-  // e.g. "## 【1】瑞士 vs 斯洛文尼亚" or "## 瑞士 vs 斯洛文尼亚" or "### 1. 瑞士 vs 斯洛文尼亚"
-  const sectionSplitPattern = /(?:^|\n)(?=##+\s*(?:【?\d+】?\.?\s*)?[^\n]*?(?:vs|VS|对阵|对|\-)[^\n]*)/gi;
-  const sections = text.split(sectionSplitPattern).map(s => s.trim()).filter(Boolean);
+  const INVALID_WORDS = [
+    '时点', '核对', '快照', '验证', '明细', '公司', '总结', '对阵',
+    '列表', '板块', '参考', '截止', '开赛', '范围', '销售日', '指数',
+    '数据', '时间', '表头', '赔率', '抓取', '逐家', '原盘', '即时'
+  ];
 
-  if (sections.length > 1 || (sections.length === 1 && /##+\s*.*?(?:vs|VS)/i.test(sections[0]))) {
+  const isValidTeamName = (name: string): boolean => {
+    if (!name || name.length < 2 || name.length > 12) return false;
+    if (INVALID_WORDS.some((w) => name.includes(w))) return false;
+    if (/^[#\d\s\-*|/\\.,:：]+$/.test(name)) return false;
+    return true;
+  };
+
+  // Pattern 1A: Numbered match sections (e.g. "## 【1】塞浦路斯 vs 拉脱维亚")
+  const numberedSplitPattern =
+    /(?:^|\n)(?=##+\s*【?\s*\d+\s*】?\.?\s*[^\n\r]*?(?:\bvs\b|\bVS\b|对阵)[^\n\r]*)/gi;
+  let sections = text
+    .split(numberedSplitPattern)
+    .map((s) => s.trim())
+    .filter((s) =>
+      /##+\s*【?\s*\d+\s*】?\.?\s*[^\n\r]*?(?:\bvs\b|\bVS\b|对阵)/i.test(s)
+    );
+
+  // Pattern 1B: If no numbered sections, try general single-line match headings
+  if (sections.length === 0) {
+    const generalSplitPattern =
+      /(?:^|\n)(?=##+\s*[^\n\r]*?(?:\bvs\b|\bVS\b|对阵)[^\n\r]*)/gi;
+    sections = text
+      .split(generalSplitPattern)
+      .map((s) => s.trim())
+      .filter((s) => /##+\s*[^\n\r]*?(?:\bvs\b|\bVS\b|对阵)/i.test(s));
+  }
+
+  if (sections.length > 0) {
     for (const section of sections) {
-      // Find team heading in this section
-      const headingMatch = section.match(/##+\s*(?:【?\d+】?\.?\s*)?([^\d\s\n#【】（(]{2,10})\s*(?:vs|VS|对阵|对|\-)\s*([^\d\s\n#【】（(]{2,10})/i);
+      // Find team heading strictly on the FIRST line of the section (prevents newline bleed)
+      const firstLine = section.split('\n')[0].trim();
+      const headingMatch = firstLine.match(
+        /##+\s*(?:【?\s*\d+\s*】?\.?\s*)?([^\d\s\n#【】（(]{2,10})[^\S\r\n]*(?:\bvs\b|\bVS\b|对阵)[^\S\r\n]*([^\d\s\n#【】（(]{2,10})/i
+      );
       if (!headingMatch) continue;
 
       const home = headingMatch[1].trim();
       const away = headingMatch[2].trim();
 
-      // Filter out invalid headings like "对阵 vs 开赛"
-      if (home === '对阵' || home.includes('快照') || home.includes('列表')) continue;
+      if (!isValidTeamName(home) || !isValidTeamName(away)) continue;
 
       // Extract league from section
       const leagueMatch = section.match(/联赛[：:]\s*([^\s|｜]+)/);
@@ -213,6 +296,8 @@ export function parseBatchMatchesFromText(rawText: string): FullMatchData[] {
         matchInfo: {
           ...matchItem.matchInfo,
           ...(parsedDetails.matchInfo || {}),
+          homeTeam: home,
+          awayTeam: away,
         },
         asianHandicap: {
           ...matchItem.asianHandicap,

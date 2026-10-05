@@ -369,9 +369,12 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
 
                       {/* 3. 让球首选 */}
                       <td className="py-3 px-3 whitespace-nowrap">
-                        <span className="font-mono font-bold text-slate-200">
+                        <div className="font-mono font-bold text-cyan-300">
                           {dec.handicapPick}
-                        </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                          盘口: {item.data.asianHandicap.lateHandicap || '平手'} ｜ 主水 {item.data.asianHandicap.lateHomeOdds.toFixed(2)}
+                        </div>
                       </td>
 
                       {/* 4. 大小球首选 */}
@@ -496,12 +499,17 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
 
                   {/* 3. 让球首选 */}
                   <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
-                    <div className="text-[10px] text-slate-400">让球首选</div>
-                    <div className="font-bold text-white text-xs mt-0.5 truncate">
+                    <div className="flex items-center justify-between text-[10px] text-slate-400">
+                      <span>让球首选</span>
+                      <span className="text-[10px] text-cyan-400 font-mono font-bold bg-cyan-950/60 px-1.5 py-0.2 rounded border border-cyan-800/40">
+                        盘口: {item.data.asianHandicap.lateHandicap || '平手'}
+                      </span>
+                    </div>
+                    <div className="font-bold text-cyan-300 text-xs mt-0.5 truncate" title={dec.handicapPick}>
                       {dec.handicapPick}
                     </div>
                     <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-                      水位 {item.data.asianHandicap.lateHomeOdds.toFixed(2)}
+                      主水 {item.data.asianHandicap.lateHomeOdds.toFixed(2)} ｜ 客水 {item.data.asianHandicap.lateAwayOdds.toFixed(2)}
                     </div>
                   </div>
 

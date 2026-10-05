@@ -349,8 +349,13 @@ export const ActuarialReport: React.FC<ActuarialReportProps> = ({
                       </div>
                     </div>
                     <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
-                      <div className="text-[10px] text-slate-400">让球首选</div>
-                      <div className="font-extrabold text-cyan-400 mt-0.5 truncate">
+                      <div className="flex items-center justify-between text-[10px] text-slate-400">
+                        <span>让球首选</span>
+                        <span className="text-[10px] text-cyan-400 font-mono font-bold">
+                          {mData.asianHandicap.lateHandicap || '平手'}
+                        </span>
+                      </div>
+                      <div className="font-extrabold text-cyan-400 mt-0.5 truncate" title={rep.decision.handicapPick}>
                         {rep.decision.handicapPick}
                       </div>
                     </div>
