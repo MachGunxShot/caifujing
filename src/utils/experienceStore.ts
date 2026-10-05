@@ -62,7 +62,7 @@ const SEED_RULES: EvolvedExperienceRule[] = [
 ];
 
 /**
- * Retrieve evolved experience rules from localStorage
+ * Retrieve evolved experience rules from localStorage with automatic deduplication
  */
 export function getExperienceRules(): EvolvedExperienceRule[] {
   try {
@@ -72,7 +72,25 @@ export function getExperienceRules(): EvolvedExperienceRule[] {
       return SEED_RULES;
     }
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : SEED_RULES;
+    if (Array.isArray(parsed)) {
+      // Auto-deduplicate by normalized title or source match + category
+      const seen = new Set<string>();
+      const deduplicated: EvolvedExperienceRule[] = [];
+      for (const r of parsed) {
+        const cleanTitle = (r.title || '').replace(/\s+/g, '').trim();
+        const cleanSource = (r.sourceMatch || '').replace(/\s+/g, '').trim();
+        const key = cleanTitle || `${cleanSource}_${r.category}`;
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          deduplicated.push(r);
+        }
+      }
+      if (deduplicated.length !== parsed.length) {
+        saveExperienceRules(deduplicated);
+      }
+      return deduplicated;
+    }
+    return SEED_RULES;
   } catch (e) {
     console.error('Error loading experience rules:', e);
     return SEED_RULES;
@@ -91,13 +109,31 @@ export function saveExperienceRules(rules: EvolvedExperienceRule[]): void {
 }
 
 /**
- * Add or update an experience rule
+ * Add or update an experience rule (Idempotent - prevents duplicates)
  */
 export function addOrUpdateExperienceRule(rule: EvolvedExperienceRule): void {
   const rules = getExperienceRules();
-  const existingIdx = rules.findIndex((r) => r.id === rule.id);
+  const cleanTitle = (rule.title || '').replace(/\s+/g, '').trim();
+  const cleanSource = (rule.sourceMatch || '').replace(/\s+/g, '').trim();
+
+  const existingIdx = rules.findIndex((r) => {
+    if (r.id === rule.id) return true;
+    const rTitle = (r.title || '').replace(/\s+/g, '').trim();
+    if (rTitle && cleanTitle && rTitle === cleanTitle) return true;
+    const rSource = (r.sourceMatch || '').replace(/\s+/g, '').trim();
+    if (rSource && cleanSource && rSource === cleanSource && r.category === rule.category) return true;
+    return false;
+  });
+
   if (existingIdx >= 0) {
-    rules[existingIdx] = rule;
+    // Update existing rule in-place, preserve user's active state and increment hitCount
+    rules[existingIdx] = {
+      ...rules[existingIdx],
+      ...rule,
+      id: rules[existingIdx].id,
+      hitCount: Math.max(rules[existingIdx].hitCount || 0, rule.hitCount || 1),
+      isActive: rules[existingIdx].isActive ?? true,
+    };
   } else {
     rules.unshift(rule);
   }
@@ -170,7 +206,7 @@ ${activeRules
 }
 
 /**
- * Retrieve saved post-match reviews
+ * Retrieve saved post-match reviews with automatic deduplication
  */
 export function getPostMatchReviews(): PostMatchReview[] {
   try {
@@ -178,13 +214,33 @@ export function getPostMatchReviews(): PostMatchReview[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return parsed.map((rev) => {
+      const seen = new Set<string>();
+      const deduplicated: PostMatchReview[] = [];
+
+      for (const rev of parsed) {
+        // Ensure scoreHit boolean is accurately evaluated
         if (rev.outcomeEvaluation && typeof rev.outcomeEvaluation.scoreHit !== 'boolean') {
           const predicted = rev.priorReport?.decision?.predictedScores || [];
           rev.outcomeEvaluation.scoreHit = predicted.includes(rev.actualScore);
         }
-        return rev;
-      });
+
+        // Deduplicate key: home vs away + actual score
+        const home = (rev.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').trim();
+        const away = (rev.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').trim();
+        const score = (rev.actualScore || '').replace(/\s+/g, '').trim();
+        const key = home && away ? `${home}_vs_${away}_${score}` : rev.id;
+
+        if (!seen.has(key)) {
+          seen.add(key);
+          deduplicated.push(rev);
+        }
+      }
+
+      // If duplicates were pruned, sync back to localStorage
+      if (deduplicated.length !== parsed.length) {
+        localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(deduplicated));
+      }
+      return deduplicated;
     }
     return [];
   } catch (e) {
@@ -194,20 +250,60 @@ export function getPostMatchReviews(): PostMatchReview[] {
 }
 
 /**
- * Save a new post-match review
+ * Save a post-match review (Idempotent: updates existing review of the same match rather than creating duplicate)
  */
 export function savePostMatchReview(review: PostMatchReview): void {
   try {
     const reviews = getPostMatchReviews();
-    const existingIdx = reviews.findIndex((r) => r.id === review.id);
+    const getMatchKey = (r: PostMatchReview) => {
+      const home = (r.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').trim();
+      const away = (r.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').trim();
+      const score = (r.actualScore || '').replace(/\s+/g, '').trim();
+      return `${home}_vs_${away}_${score}`;
+    };
+
+    const targetKey = getMatchKey(review);
+    const existingIdx = reviews.findIndex(
+      (r) => r.id === review.id || getMatchKey(r) === targetKey
+    );
+
     if (existingIdx >= 0) {
-      reviews[existingIdx] = review;
+      reviews[existingIdx] = {
+        ...review,
+        id: reviews[existingIdx].id, // preserve ID
+        reviewTimestamp: reviews[existingIdx].reviewTimestamp || review.reviewTimestamp,
+      };
     } else {
       reviews.unshift(review);
     }
     localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(reviews));
   } catch (e) {
     console.error('Error saving review:', e);
+  }
+}
+
+/**
+ * Delete a single post-match review by ID
+ */
+export function deletePostMatchReview(reviewId: string): PostMatchReview[] {
+  try {
+    const reviews = getPostMatchReviews().filter((r) => r.id !== reviewId);
+    localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(reviews));
+    return reviews;
+  } catch (e) {
+    console.error('Error deleting review:', e);
+    return [];
+  }
+}
+
+/**
+ * Clear all post-match reviews
+ */
+export function clearAllPostMatchReviews(): void {
+  try {
+    localStorage.removeItem(REVIEWS_STORAGE_KEY);
+  } catch (e) {
+    console.error('Error clearing reviews:', e);
   }
 }
 
@@ -294,8 +390,11 @@ export function evaluateMatchOutcomeAndExtractLesson(
     evolvedRuleContent = `针对 ${league} 类似对阵，若晚盘呈现让球 ${matchData.asianHandicap.lateHandicap} 但大小球卡在 ${matchData.overUnder.lateLine} 时，切忌单向押注，需重点防范实际赛果指向的【${actualEuroOutcome === 'WIN' ? '主胜' : actualEuroOutcome === 'DRAW' ? '平局' : '客胜'}】冷门反杀。`;
   }
 
+  const safeHome = (homeTeam || 'Home').replace(/\s+/g, '_');
+  const safeAway = (awayTeam || 'Away').replace(/\s+/g, '_');
+
   const review: PostMatchReview = {
-    id: `rev-${Date.now()}`,
+    id: `rev-${safeHome}-${safeAway}-${actualScoreStr}`,
     matchData,
     priorReport,
     actualScore: actualScoreStr,
@@ -317,12 +416,12 @@ export function evaluateMatchOutcomeAndExtractLesson(
     ruleCategory: model,
   };
 
-  // Automatically save this review to history
+  // Automatically save this review to history (idempotent)
   savePostMatchReview(review);
 
-  // Create and save the new evolved rule into the knowledge base!
+  // Create and save the new evolved rule into the knowledge base (idempotent)
   const newRule: EvolvedExperienceRule = {
-    id: `rule-${Date.now()}`,
+    id: `rule-${safeHome}-${safeAway}-${model}`,
     title: evolvedRuleTitle,
     category: model,
     leagueScope: league || '全部联赛',

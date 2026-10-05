@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Brain,
   Sparkles,
@@ -27,6 +27,12 @@ import {
   ListChecks,
   ScanText,
   Clipboard,
+  Calendar,
+  CalendarDays,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  Filter,
 } from 'lucide-react';
 import {
   FullMatchData,
@@ -45,6 +51,9 @@ import {
   importRulesFromJson,
   getPostMatchReviews,
   evaluateMatchOutcomeAndExtractLesson,
+  deletePostMatchReview,
+  clearAllPostMatchReviews,
+  savePostMatchReview,
 } from '../utils/experienceStore';
 import { generateActuarialRuleReport } from '../utils/actuaryEngine';
 import { ParsedScoreItem, parseBatchMatchScoresFromText } from '../utils/textParser';
@@ -108,6 +117,133 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
   // Copy status
   const [copiedJson, setCopiedJson] = useState(false);
+
+  // Date Grouping and Filter States for Reviews
+  const [selectedDateFilter, setSelectedDateFilter] = useState<string>('ALL');
+  const [collapsedDateGroups, setCollapsedDateGroups] = useState<Record<string, boolean>>({});
+  const [expandedDissections, setExpandedDissections] = useState<Record<string, boolean>>({});
+
+  // Date formatting helper for YYYY-MM-DD grouping
+  const formatDateInfo = (timestamp?: number) => {
+    const date = timestamp ? new Date(timestamp) : new Date();
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    const dateKey = `${y}-${m}-${d}`;
+    const dateLabel = `${y}年${m}月${d}日`;
+
+    const days = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+    const dayOfWeek = days[date.getDay()];
+
+    const now = new Date();
+    const isToday =
+      y === now.getFullYear() &&
+      date.getMonth() === now.getMonth() &&
+      date.getDate() === now.getDate();
+
+    const hours = String(date.getHours()).padStart(2, '0');
+    const mins = String(date.getMinutes()).padStart(2, '0');
+    const secs = String(date.getSeconds()).padStart(2, '0');
+    const timeStr = `${hours}:${mins}:${secs}`;
+
+    return { dateKey, dateLabel, dayOfWeek, isToday, timeStr };
+  };
+
+  // Group reviews hierarchically by Year-Month-Day
+  const groupedReviews = useMemo(() => {
+    const groupsMap = new Map<
+      string,
+      {
+        dateKey: string;
+        dateLabel: string;
+        dayOfWeek: string;
+        isToday: boolean;
+        items: PostMatchReview[];
+        stats: {
+          total: number;
+          euroHits: number;
+          handicapHits: number;
+          ouHits: number;
+          scoreHits: number;
+        };
+      }
+    >();
+
+    for (const rev of reviews) {
+      const { dateKey, dateLabel, dayOfWeek, isToday } = formatDateInfo(rev.reviewTimestamp);
+      if (!groupsMap.has(dateKey)) {
+        groupsMap.set(dateKey, {
+          dateKey,
+          dateLabel,
+          dayOfWeek,
+          isToday,
+          items: [],
+          stats: {
+            total: 0,
+            euroHits: 0,
+            handicapHits: 0,
+            ouHits: 0,
+            scoreHits: 0,
+          },
+        });
+      }
+
+      const g = groupsMap.get(dateKey)!;
+      g.items.push(rev);
+      g.stats.total += 1;
+      if (rev.outcomeEvaluation.euroHit) g.stats.euroHits += 1;
+      if (rev.outcomeEvaluation.handicapHit) g.stats.handicapHits += 1;
+      if (rev.outcomeEvaluation.overUnderHit) g.stats.ouHits += 1;
+      if (rev.outcomeEvaluation.scoreHit) g.stats.scoreHits += 1;
+    }
+
+    return Array.from(groupsMap.values()).sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+  }, [reviews]);
+
+  // Toggle group collapse
+  const toggleDateCollapse = (dateKey: string) => {
+    setCollapsedDateGroups((prev) => ({
+      ...prev,
+      [dateKey]: !prev[dateKey],
+    }));
+  };
+
+  // Toggle deep dissection detail
+  const toggleDissection = (reviewId: string) => {
+    setExpandedDissections((prev) => ({
+      ...prev,
+      [reviewId]: !prev[reviewId],
+    }));
+  };
+
+  // Delete single review
+  const handleDeleteReview = (reviewId: string) => {
+    if (window.confirm('确定要删除这条复盘战报吗？')) {
+      const updated = deletePostMatchReview(reviewId);
+      setReviews(updated);
+    }
+  };
+
+  // Delete all reviews of a specific date
+  const handleDeleteDateGroup = (dateKey: string, dateLabel: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (window.confirm(`确定要删除【${dateLabel}】当天的全部战报吗？`)) {
+      const filtered = reviews.filter((r) => {
+        const { dateKey: rKey } = formatDateInfo(r.reviewTimestamp);
+        return rKey !== dateKey;
+      });
+      localStorage.setItem('fortune_actuary_reviews_v1', JSON.stringify(filtered));
+      setReviews(filtered);
+    }
+  };
+
+  // Clear all reviews
+  const handleClearAllReviews = () => {
+    if (window.confirm(`确定要清空全部 ${reviews.length} 条历史复盘战报吗？（核心法则库将完好保留）`)) {
+      clearAllPostMatchReviews();
+      setReviews([]);
+    }
+  };
 
   useEffect(() => {
     setRules(getExperienceRules());
@@ -424,9 +560,15 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         localReview.outcomeEvaluation.summaryNote =
           aiDissectionData.summaryNote || localReview.outcomeEvaluation.summaryNote;
 
+        // Persist the AI-enhanced review
+        savePostMatchReview(localReview);
+
+        const safeHome = (activeReviewMatchData.matchInfo.homeTeam || 'Home').replace(/\s+/g, '_');
+        const safeAway = (activeReviewMatchData.matchInfo.awayTeam || 'Away').replace(/\s+/g, '_');
+
         // Also add or update the rule with AI's sharpened wording
         addOrUpdateExperienceRule({
-          id: `rule-ai-${Date.now()}`,
+          id: `rule-${safeHome}-${safeAway}-${activeReviewReport.identifiedModel}`,
           title: localReview.evolvedRuleTitle,
           category: activeReviewReport.identifiedModel,
           leagueScope: activeReviewMatchData.matchInfo.league || '常规联赛',
@@ -1481,71 +1623,296 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         </div>
       )}
 
-      {/* ===================== SUBTAB 3: REVIEW HISTORY LOG ===================== */}
+      {/* ===================== SUBTAB 3: REVIEW HISTORY LOG (YEAR-MONTH-DAY GROUPED) ===================== */}
       {activeSubTab === 'history' && (
         <div className="space-y-4">
           {reviews.length === 0 ? (
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-8 text-center text-slate-400 text-xs space-y-2">
               <RotateCcw className="w-8 h-8 mx-auto text-slate-600 mb-1" />
-              <div>暂无已归档的历史复盘战报</div>
+              <div className="font-bold text-slate-300">暂无已归档的历史复盘战报</div>
               <div className="text-[11px] text-slate-500">
-                在“录入完场比分复盘”中录入完场比分后，系统将自动留存归档并计算胜率统计！
+                在“录入完场比分复盘”中录入完场比分后，系统将自动按年月日归档留存，并自动去重与计算核准率！
               </div>
             </div>
           ) : (
-            <div className="space-y-3">
-              {reviews.map((rev) => (
-                <div
-                  key={rev.id}
-                  className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm space-y-3"
-                >
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="font-extrabold text-white text-sm">
-                        {rev.matchData.matchInfo.homeTeam} VS {rev.matchData.matchInfo.awayTeam}
-                      </span>
-                      <span className="px-2 py-0.5 bg-slate-950 text-emerald-400 font-mono font-bold text-xs rounded border border-slate-800">
-                        完场 {rev.actualScore}
-                      </span>
-                      <span className="text-[10px] text-slate-400 font-mono">
-                        {rev.matchData.matchInfo.league}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 text-xs flex-wrap">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        rev.outcomeEvaluation.euroHit ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'
-                      }`}>
-                        胜平负: {rev.outcomeEvaluation.euroHit ? '命中' : '失准'}
-                      </span>
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        rev.outcomeEvaluation.handicapHit ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'
-                      }`}>
-                        让球: {rev.outcomeEvaluation.handicapHit ? '赢盘' : '输盘'}
-                      </span>
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        rev.outcomeEvaluation.overUnderHit ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'
-                      }`}>
-                        大小: {rev.outcomeEvaluation.overUnderHit ? '命中' : '失准'}
-                      </span>
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        rev.outcomeEvaluation.scoreHit
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                          : 'bg-slate-800 text-slate-400 border border-slate-700'
-                      }`}>
-                        比分: {rev.outcomeEvaluation.scoreHit ? '命中' : '未中'}
-                      </span>
-                    </div>
+            <div className="space-y-4">
+              {/* Top Management Bar */}
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-md">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold">
+                    <CalendarDays className="w-4 h-4" />
                   </div>
-
-                  <div className="text-xs text-slate-300 leading-relaxed bg-slate-950/60 p-3 rounded-lg border border-slate-800/80">
-                    <div className="font-bold text-emerald-400 mb-1">
-                      提炼法则：【{rev.evolvedRuleTitle}】
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-extrabold text-white">
+                        实战复盘战报历史归档库
+                      </h3>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-950 text-emerald-400 border border-slate-800">
+                        共 {reviews.length} 场 · {groupedReviews.length} 个日期归档
+                      </span>
                     </div>
-                    <div className="text-slate-300">{rev.evolvedRuleContent}</div>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      按年月日时间线自动归纳 · 已自动过滤重复点击记录 · 支持单场与整日精准删除
+                    </p>
                   </div>
                 </div>
-              ))}
+
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={handleClearAllReviews}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-bold transition-colors cursor-pointer"
+                    title="清空全部历史复盘战报（核心法则库不受影响）"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                    <span>清空全部战报</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Date Quick Filter Pills (按年月日快速筛选) */}
+              {groupedReviews.length > 1 && (
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+                  <span className="text-[11px] text-slate-400 font-bold flex items-center gap-1 shrink-0 mr-1">
+                    <Filter className="w-3.5 h-3.5 text-slate-500" />
+                    <span>日期快速筛选：</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDateFilter('ALL')}
+                    className={`px-3 py-1 rounded-lg font-bold transition-all shrink-0 cursor-pointer ${
+                      selectedDateFilter === 'ALL'
+                        ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                        : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+                    }`}
+                  >
+                    全部日期 ({reviews.length} 场)
+                  </button>
+                  {groupedReviews.map((g) => (
+                    <button
+                      key={g.dateKey}
+                      type="button"
+                      onClick={() => setSelectedDateFilter(g.dateKey)}
+                      className={`px-3 py-1 rounded-lg font-bold transition-all shrink-0 cursor-pointer ${
+                        selectedDateFilter === g.dateKey
+                          ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                          : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+                      }`}
+                    >
+                      {g.isToday ? '🔥 今天 · ' : ''}
+                      {g.dateLabel} ({g.items.length} 场)
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Grouped Reviews Accordion Timeline */}
+              <div className="space-y-4">
+                {groupedReviews
+                  .filter(
+                    (group) =>
+                      selectedDateFilter === 'ALL' || group.dateKey === selectedDateFilter
+                  )
+                  .map((group) => {
+                    const isCollapsed = !!collapsedDateGroups[group.dateKey];
+
+                    return (
+                      <div
+                        key={group.dateKey}
+                        className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-md"
+                      >
+                        {/* Date Group Header */}
+                        <div
+                          onClick={() => toggleDateCollapse(group.dateKey)}
+                          className="bg-slate-950/80 hover:bg-slate-950 p-3.5 border-b border-slate-800/80 flex flex-col md:flex-row md:items-center justify-between gap-2.5 cursor-pointer transition-colors"
+                        >
+                          <div className="flex items-center gap-2.5 flex-wrap">
+                            <Calendar className="w-4 h-4 text-emerald-400 shrink-0" />
+                            <span className="font-black text-white text-sm tracking-wide">
+                              {group.dateLabel}
+                            </span>
+                            <span className="text-xs text-slate-400 font-mono">
+                              （{group.dayOfWeek}）
+                            </span>
+                            {group.isToday && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                                🔥 当日实战复盘
+                              </span>
+                            )}
+                            <span className="text-xs text-slate-300 font-bold bg-slate-900 px-2 py-0.5 rounded border border-slate-800 font-mono">
+                              共 {group.items.length} 场复盘
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2 flex-wrap text-xs">
+                            {/* Summary Accuracy Stats for that date */}
+                            <div className="flex items-center gap-1.5 text-[11px] font-mono bg-slate-900/90 px-2.5 py-1 rounded-lg border border-slate-800">
+                              <span className="text-emerald-400">
+                                胜平负 {group.stats.euroHits}/{group.stats.total}
+                              </span>
+                              <span className="text-slate-600">|</span>
+                              <span className="text-cyan-400">
+                                让球 {group.stats.handicapHits}/{group.stats.total}
+                              </span>
+                              <span className="text-slate-600">|</span>
+                              <span className="text-amber-400">
+                                大小 {group.stats.ouHits}/{group.stats.total}
+                              </span>
+                              <span className="text-slate-600">|</span>
+                              <span className="text-teal-400">
+                                比分 {group.stats.scoreHits}/{group.stats.total}
+                              </span>
+                            </div>
+
+                            {/* Delete Group Action */}
+                            <button
+                              type="button"
+                              onClick={(e) =>
+                                handleDeleteDateGroup(group.dateKey, group.dateLabel, e)
+                              }
+                              className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-900 hover:bg-rose-950/40 text-slate-400 hover:text-rose-300 border border-slate-800 hover:border-rose-500/30 text-[11px] font-semibold transition-all cursor-pointer"
+                              title={`删除 ${group.dateLabel} 当天全部战报`}
+                            >
+                              <Trash2 className="w-3 h-3 text-rose-400" />
+                              <span className="hidden sm:inline">删除当日</span>
+                            </button>
+
+                            {/* Collapse/Expand chevron */}
+                            <div className="text-slate-400 p-0.5">
+                              {isCollapsed ? (
+                                <ChevronDown className="w-4 h-4" />
+                              ) : (
+                                <ChevronUp className="w-4 h-4" />
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Match Review Cards under this Date Group */}
+                        {!isCollapsed && (
+                          <div className="p-3.5 space-y-3 bg-slate-900/50">
+                            {group.items.map((rev) => {
+                              const timeInfo = formatDateInfo(rev.reviewTimestamp);
+                              const isDissectionOpen = !!expandedDissections[rev.id];
+
+                              return (
+                                <div
+                                  key={rev.id}
+                                  className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 shadow-sm space-y-3 hover:border-slate-700/80 transition-all"
+                                >
+                                  {/* Card Header */}
+                                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-2">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-black text-white text-sm">
+                                        {rev.matchData.matchInfo.homeTeam} VS{' '}
+                                        {rev.matchData.matchInfo.awayTeam}
+                                      </span>
+                                      <span className="px-2 py-0.5 bg-slate-950 text-emerald-400 font-mono font-black text-xs rounded border border-slate-800">
+                                        完场 {rev.actualScore}
+                                      </span>
+                                      <span className="text-[10px] text-slate-400 font-mono">
+                                        {rev.matchData.matchInfo.league || '常规赛事'}
+                                      </span>
+                                      <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
+                                        <Clock className="w-3 h-3 text-slate-500" />
+                                        <span>{timeInfo.timeStr}</span>
+                                      </span>
+                                    </div>
+
+                                    {/* 4 Outcome Badges + Delete Button */}
+                                    <div className="flex items-center gap-1.5 text-xs flex-wrap">
+                                      <span
+                                        className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                          rev.outcomeEvaluation.euroHit
+                                            ? 'bg-emerald-500/20 text-emerald-300'
+                                            : 'bg-rose-500/20 text-rose-300'
+                                        }`}
+                                      >
+                                        胜平负: {rev.outcomeEvaluation.euroHit ? '命中' : '失准'}
+                                      </span>
+                                      <span
+                                        className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                          rev.outcomeEvaluation.handicapHit
+                                            ? 'bg-emerald-500/20 text-emerald-300'
+                                            : 'bg-rose-500/20 text-rose-300'
+                                        }`}
+                                      >
+                                        让球: {rev.outcomeEvaluation.handicapHit ? '赢盘' : '输盘'}
+                                      </span>
+                                      <span
+                                        className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                          rev.outcomeEvaluation.overUnderHit
+                                            ? 'bg-emerald-500/20 text-emerald-300'
+                                            : 'bg-rose-500/20 text-rose-300'
+                                        }`}
+                                      >
+                                        大小: {rev.outcomeEvaluation.overUnderHit ? '命中' : '失准'}
+                                      </span>
+                                      <span
+                                        className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                          rev.outcomeEvaluation.scoreHit
+                                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                            : 'bg-slate-800 text-slate-400 border border-slate-700'
+                                        }`}
+                                      >
+                                        比分: {rev.outcomeEvaluation.scoreHit ? '命中' : '未中'}
+                                      </span>
+
+                                      {/* Single Delete Button */}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteReview(rev.id)}
+                                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-950 hover:bg-rose-950/40 text-slate-400 hover:text-rose-300 border border-slate-800 hover:border-rose-500/40 text-[11px] font-bold transition-all cursor-pointer ml-1"
+                                        title="删除此条复盘战报"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                                        <span>删除</span>
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Evolved Rule Content */}
+                                  <div className="text-xs text-slate-300 leading-relaxed bg-slate-950/60 p-3 rounded-lg border border-slate-800/80 space-y-1.5">
+                                    <div className="font-bold text-emerald-400 flex items-center justify-between">
+                                      <span>提炼法则：【{rev.evolvedRuleTitle}】</span>
+                                      {rev.dissectionText && (
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleDissection(rev.id)}
+                                          className="text-[11px] font-normal text-cyan-400 hover:underline cursor-pointer flex items-center gap-0.5"
+                                        >
+                                          <span>
+                                            {isDissectionOpen ? '收起博弈剖析' : '展开精算总监剖析'}
+                                          </span>
+                                          {isDissectionOpen ? (
+                                            <ChevronUp className="w-3 h-3" />
+                                          ) : (
+                                            <ChevronDown className="w-3 h-3" />
+                                          )}
+                                        </button>
+                                      )}
+                                    </div>
+                                    <div className="text-slate-300">{rev.evolvedRuleContent}</div>
+
+                                    {/* Collapsible Deep Dissection */}
+                                    {isDissectionOpen && rev.dissectionText && (
+                                      <div className="mt-2 pt-2 border-t border-slate-800/80 text-[11px] text-slate-400 whitespace-pre-line leading-relaxed bg-slate-950 p-2.5 rounded">
+                                        <div className="text-emerald-400 font-bold mb-1">
+                                          《财富经》精算总监深度复盘博弈剖析：
+                                        </div>
+                                        {rev.dissectionText}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
             </div>
           )}
         </div>
