@@ -347,6 +347,16 @@ export const AttachmentUploadModal: React.FC<AttachmentUploadModalProps> = ({
                 </div>
               </div>
 
+              {/* Multi-Import & Kickoff Lock Protection Notice */}
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2 flex items-center justify-between text-xs text-amber-300">
+                <div className="flex items-center gap-2">
+                  <span className="text-amber-400 font-bold">🔒 终盘快照差量更新保护：</span>
+                  <span className="text-[11px] text-slate-300">
+                    若您已锁定/已封盘早先开赛的场次（如 00:00 场次），再次导入包含全量赛事的 Markdown 时，系统将<strong>自动免疫覆盖</strong>，完整保留开赛前预测与终盘快照，仅更新未开赛场次的最新盘赔！
+                  </span>
+                </div>
+              </div>
+
               <textarea
                 value={batchRawText}
                 onChange={(e) => handleBatchTextChange(e.target.value)}

@@ -110,6 +110,11 @@ export interface BatchMatchItem {
   status: 'idle' | 'analyzing' | 'done' | 'error';
   timestamp: number;
   review?: PostMatchReview;
+  isLocked?: boolean;         // 🔒 封盘锁定：开赛后固定盘口快照，防止多次导入新 Markdown 时被篡改或覆盖
+  lockedAt?: string;          // 锁定时间（如 "10-06 00:00"）
+  lockedReason?: string;      // 锁定理由（如 "开赛封盘保护"）
+  finalScore?: string;        // 完赛真实比分 (如 "3-1")
+  isReviewed?: boolean;       // 是否已归档到《财富经》复盘进化库
 }
 
 export interface PostMatchReview {

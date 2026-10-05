@@ -15,7 +15,11 @@ import { ReviewEvolutionView } from './components/ReviewEvolutionView';
 import { FullMatchData, AnalysisReportResult, BatchMatchItem } from './types/fortuneActuary';
 import { PRESET_CASES, PresetCase } from './utils/presetCases';
 import { generateActuarialRuleReport } from './utils/actuaryEngine';
-import { getActiveExperiencePromptText } from './utils/experienceStore';
+import {
+  getActiveExperiencePromptText,
+  evaluateMatchOutcomeAndExtractLesson,
+  savePostMatchReview,
+} from './utils/experienceStore';
 import { ShieldCheck, Sparkles, TrendingUp, AlertTriangle, HelpCircle, Layers, Brain } from 'lucide-react';
 
 export default function App() {
@@ -33,6 +37,15 @@ export default function App() {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isBatchAnalyzing, setIsBatchAnalyzing] = useState(false);
   
+  // Notification banner for multi-import differential updates & lock protection
+  const [importNotification, setImportNotification] = useState<{
+    message: string;
+    details: string;
+    protectedCount: number;
+    updatedCount: number;
+    newCount: number;
+  } | null>(null);
+
   // Independent mode states: 'single' (2-column matched workbench) vs 'batch' (independent full-width page)
   const [reportMode, setReportMode] = useState<'single' | 'batch'>('single');
   const [calcMode, setCalcMode] = useState<'single' | 'batch'>('single');
@@ -189,18 +202,116 @@ export default function App() {
     setBatchQueue((prev) => [newItem, ...prev]);
   };
 
-  // Batch imported callback
+  // Batch imported callback (Smart Merge with Lock Protection: never overwrites locked/started matches!)
   const handleBatchImported = (matches: FullMatchData[]) => {
-    const newItems: BatchMatchItem[] = matches.map((m, idx) => ({
-      id: `batch-${Date.now()}-${idx}`,
-      sourceName: `导入场次_${m.matchInfo.homeTeam}vs${m.matchInfo.awayTeam}`,
-      data: m,
-      report: generateActuarialRuleReport(m),
-      status: 'done',
-      timestamp: Date.now(),
-    }));
+    let protectedCount = 0;
+    let updatedCount = 0;
+    let newCount = 0;
 
-    setBatchQueue((prev) => [...newItems, ...prev]);
+    setBatchQueue((prevQueue) => {
+      const updatedQueue = [...prevQueue];
+
+      for (const m of matches) {
+        const home = m.matchInfo.homeTeam.trim();
+        const away = m.matchInfo.awayTeam.trim();
+        const existingIndex = updatedQueue.findIndex(
+          (item) =>
+            item.data.matchInfo.homeTeam.trim() === home &&
+            item.data.matchInfo.awayTeam.trim() === away
+        );
+
+        if (existingIndex >= 0) {
+          const existing = updatedQueue[existingIndex];
+          if (existing.isLocked) {
+            // 🔒 LOCKED! Strictly preserve the frozen pre-match snapshot & predictions!
+            protectedCount++;
+            continue;
+          } else {
+            // Update unlocked match with newer snapshot data: Smart Early-vs-Late Merge!
+            updatedCount++;
+
+            const prevData = existing.data;
+            const mergedMatchData: FullMatchData = {
+              ...m,
+              matchInfo: {
+                ...m.matchInfo,
+                matchTime: m.matchInfo.matchTime || prevData.matchInfo.matchTime,
+                marketStory: m.matchInfo.marketStory || prevData.matchInfo.marketStory,
+              },
+              euroOdds: {
+                // If previous match data already captured earlyWin, and the new upload only has late odds (or earlyWin wasn't updated)
+                earlyWin: (prevData.euroOdds.earlyWin > 0 && (!m.euroOdds.earlyWin || m.euroOdds.earlyWin === m.euroOdds.lateWin))
+                  ? prevData.euroOdds.earlyWin
+                  : (m.euroOdds.earlyWin || prevData.euroOdds.earlyWin),
+                earlyDraw: (prevData.euroOdds.earlyDraw > 0 && (!m.euroOdds.earlyDraw || m.euroOdds.earlyDraw === m.euroOdds.lateDraw))
+                  ? prevData.euroOdds.earlyDraw
+                  : (m.euroOdds.earlyDraw || prevData.euroOdds.earlyDraw),
+                earlyLoss: (prevData.euroOdds.earlyLoss > 0 && (!m.euroOdds.earlyLoss || m.euroOdds.earlyLoss === m.euroOdds.lateLoss))
+                  ? prevData.euroOdds.earlyLoss
+                  : (m.euroOdds.earlyLoss || prevData.euroOdds.earlyLoss),
+                lateWin: m.euroOdds.lateWin || prevData.euroOdds.lateWin,
+                lateDraw: m.euroOdds.lateDraw || prevData.euroOdds.lateDraw,
+                lateLoss: m.euroOdds.lateLoss || prevData.euroOdds.lateLoss,
+              },
+              asianHandicap: {
+                earlyHandicap: prevData.asianHandicap.earlyHandicap || m.asianHandicap.earlyHandicap,
+                earlyHomeOdds: (prevData.asianHandicap.earlyHomeOdds > 0 && (!m.asianHandicap.earlyHomeOdds || m.asianHandicap.earlyHomeOdds === m.asianHandicap.lateHomeOdds))
+                  ? prevData.asianHandicap.earlyHomeOdds
+                  : (m.asianHandicap.earlyHomeOdds || prevData.asianHandicap.earlyHomeOdds),
+                earlyAwayOdds: (prevData.asianHandicap.earlyAwayOdds > 0 && (!m.asianHandicap.earlyAwayOdds || m.asianHandicap.earlyAwayOdds === m.asianHandicap.lateAwayOdds))
+                  ? prevData.asianHandicap.earlyAwayOdds
+                  : (m.asianHandicap.earlyAwayOdds || prevData.asianHandicap.earlyAwayOdds),
+                lateHandicap: m.asianHandicap.lateHandicap || prevData.asianHandicap.lateHandicap,
+                lateHomeOdds: m.asianHandicap.lateHomeOdds || prevData.asianHandicap.lateHomeOdds,
+                lateAwayOdds: m.asianHandicap.lateAwayOdds || prevData.asianHandicap.lateAwayOdds,
+              },
+              overUnder: {
+                earlyLine: prevData.overUnder.earlyLine || m.overUnder.earlyLine,
+                earlyOverOdds: prevData.overUnder.earlyOverOdds || m.overUnder.earlyOverOdds,
+                earlyUnderOdds: prevData.overUnder.earlyUnderOdds || m.overUnder.earlyUnderOdds,
+                lateLine: m.overUnder.lateLine || prevData.overUnder.lateLine,
+                lateOverOdds: m.overUnder.lateOverOdds || prevData.overUnder.lateOverOdds,
+                lateUnderOdds: m.overUnder.lateUnderOdds || prevData.overUnder.lateUnderOdds,
+              },
+            };
+
+            const updatedReport = generateActuarialRuleReport(mergedMatchData);
+
+            updatedQueue[existingIndex] = {
+              ...existing,
+              data: mergedMatchData,
+              report: updatedReport,
+              status: 'done',
+              timestamp: Date.now(),
+            };
+          }
+        } else {
+          // Brand new match, add to queue
+          newCount++;
+          updatedQueue.push({
+            id: `batch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            sourceName: `导入场次_${home}vs${away}`,
+            data: m,
+            report: generateActuarialRuleReport(m),
+            status: 'done',
+            timestamp: Date.now(),
+          });
+        }
+      }
+
+      return updatedQueue;
+    });
+
+    setImportNotification({
+      message: `智能差量导入完成：共抓取 ${matches.length} 场赛事`,
+      details: protectedCount > 0
+        ? `🔒 已封盘保护 ${protectedCount} 场（终盘快照与原预测 100% 冻结，未受覆盖），🔄 临场更新 ${updatedCount} 场，➕ 新增 ${newCount} 场`
+        : `🔄 更新 ${updatedCount} 场临场赛事盘口，➕ 新增 ${newCount} 场`,
+      protectedCount,
+      updatedCount,
+      newCount,
+    });
+
     setActiveTab('batch');
 
     // Also populate the first imported match into active view
@@ -209,6 +320,111 @@ export default function App() {
       setReport(generateActuarialRuleReport(matches[0]));
       setRawAiText('');
     }
+  };
+
+  // Auto-lock matches that have kicked off or have specific matchTime (e.g. <= cutoff)
+  const handleAutoLockStartedMatches = (cutoffTimeStr?: string) => {
+    let count = 0;
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+
+    setBatchQueue((prev) =>
+      prev.map((item) => {
+        if (item.isLocked) return item;
+        const mTime = item.data.matchInfo.matchTime || '';
+        let shouldLock = false;
+
+        if (cutoffTimeStr) {
+          // E.g., if match time equals cutoff or user explicitly specified
+          if (mTime.includes(cutoffTimeStr) || mTime.localeCompare(cutoffTimeStr) <= 0) {
+            shouldLock = true;
+          }
+        } else {
+          // Default: if match has a concrete time like "00:00" or user wants to lock current early games
+          shouldLock = true;
+        }
+
+        if (shouldLock) {
+          count++;
+          return {
+            ...item,
+            isLocked: true,
+            lockedAt: mTime || timeStr,
+            lockedReason: '开赛封盘保护 (固化终盘)',
+          };
+        }
+        return item;
+      })
+    );
+
+    return count;
+  };
+
+  // Toggle lock for a specific match (protects snapshot against re-imports)
+  const handleToggleLockMatch = (id: string) => {
+    setBatchQueue((prev) =>
+      prev.map((item) => {
+        if (item.id === id) {
+          const willLock = !item.isLocked;
+          return {
+            ...item,
+            isLocked: willLock,
+            lockedAt: willLock
+              ? new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+              : undefined,
+            lockedReason: willLock ? '已开赛封盘保护' : undefined,
+          };
+        }
+        return item;
+      })
+    );
+  };
+
+  // Batch lock or unlock matches
+  const handleBatchLockMatches = (lock: boolean) => {
+    const timeStr = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    setBatchQueue((prev) =>
+      prev.map((item) => ({
+        ...item,
+        isLocked: lock,
+        lockedAt: lock ? item.lockedAt || timeStr : undefined,
+        lockedReason: lock ? item.lockedReason || '开赛封盘保护' : undefined,
+      }))
+    );
+  };
+
+  // Record actual match score and automatically perform post-match evaluation and knowledge archiving
+  const handleRecordScoreAndReview = (
+    id: string,
+    homeScore: number,
+    awayScore: number,
+    incidents: string = ''
+  ) => {
+    setBatchQueue((prev) =>
+      prev.map((item) => {
+        if (item.id === id) {
+          const rep = item.report || generateActuarialRuleReport(item.data);
+          const review = evaluateMatchOutcomeAndExtractLesson(
+            item.data,
+            rep,
+            homeScore,
+            awayScore,
+            incidents
+          );
+          // Persist into PostMatchReviews storage
+          savePostMatchReview(review);
+
+          return {
+            ...item,
+            finalScore: `${homeScore}-${awayScore}`,
+            isReviewed: true,
+            isLocked: true, // Automatically lock once result is recorded
+            review,
+          };
+        }
+        return item;
+      })
+    );
   };
 
   const handleSelectBatchMatch = (match: FullMatchData) => {
@@ -277,6 +493,13 @@ export default function App() {
                 onOpenUploadModal={() => setIsUploadModalOpen(true)}
                 onBatchAnalyzeAll={handleBatchAnalyzeAll}
                 isBatchAnalyzing={isBatchAnalyzing}
+                onToggleLockMatch={handleToggleLockMatch}
+                onBatchLockMatches={handleBatchLockMatches}
+                onAutoLockStartedMatches={handleAutoLockStartedMatches}
+                importNotification={importNotification}
+                onDismissNotification={() => setImportNotification(null)}
+                onRecordScoreAndReview={handleRecordScoreAndReview}
+                onNavigateToReview={() => setActiveTab('review')}
               />
             )}
 
