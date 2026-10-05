@@ -171,19 +171,420 @@ export function exportRulesAsJson(): string {
 }
 
 /**
- * Import rules from JSON string
+ * Import rules from JSON string (supports standard array, structured systems, and markdown-wrapped JSON)
  */
-export function importRulesFromJson(jsonStr: string): boolean {
+export function importRulesFromJson(
+  jsonStr: string,
+  mode: 'merge' | 'replace' = 'merge'
+): { success: boolean; count: number; message: string } {
   try {
-    const parsed = JSON.parse(jsonStr);
-    if (Array.isArray(parsed) && parsed.length > 0) {
-      saveExperienceRules(parsed);
-      return true;
+    // 1. Strip potential Markdown code fences
+    let cleanStr = jsonStr.trim();
+    if (cleanStr.startsWith('```')) {
+      cleanStr = cleanStr.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
     }
-    return false;
-  } catch {
-    return false;
+
+    const parsed = JSON.parse(cleanStr);
+    const convertedRules: EvolvedExperienceRule[] = [];
+
+    // Category mapping helper
+    const mapCategory = (cat?: string, id?: string): any => {
+      const s = ((cat || '') + ' ' + (id || '')).toUpperCase();
+      if (s.includes('榨水') || s.includes('正向') || s.includes('正路') || s.includes('R1') || s.includes('POSITIVE_CONTROL')) {
+        return 'POSITIVE_CONTROL';
+      }
+      if (s.includes('高息') || s.includes('吸筹') || s.includes('名气') || s.includes('避坑') || s.includes('R2') || s.includes('HIGH_INTEREST_TRAP')) {
+        return 'HIGH_INTEREST_TRAP';
+      }
+      if (s.includes('退盘') || s.includes('异动') || s.includes('退热') || s.includes('R3') || s.includes('AVALANCHE_RETREAT')) {
+        return 'AVALANCHE_RETREAT';
+      }
+      if (s.includes('平赔') || s.includes('胆平') || s.includes('R4') || s.includes('LOW_DRAW_DEFENSE')) {
+        return 'LOW_DRAW_DEFENSE';
+      }
+      if (s.includes('浅盘') || s.includes('满水') || s.includes('失守') || s.includes('R5') || s.includes('SHALLOW_FULL_WATER')) {
+        return 'SHALLOW_FULL_WATER';
+      }
+      return 'GENERAL';
+    };
+
+    // Case 1: Standard Array of rules
+    if (Array.isArray(parsed)) {
+      for (let i = 0; i < parsed.length; i++) {
+        const item = parsed[i];
+        if (item && (item.title || item.name || item.ruleContent)) {
+          convertedRules.push({
+            id: item.id || `rule-import-${Date.now()}-${i}`,
+            title: item.title || item.name || `实战法则 #${i + 1}`,
+            category: mapCategory(item.category, item.id),
+            leagueScope: item.leagueScope || item.scope || '全部主流联赛',
+            ruleContent: item.ruleContent || item.content || item.decision || JSON.stringify(item),
+            sourceMatch: item.sourceMatch || (Array.isArray(item.examples) ? item.examples.join(' / ') : '外部经验导入'),
+            createdAt: item.createdAt || new Date().toISOString().slice(0, 10),
+            isActive: item.isActive ?? true,
+            hitCount: item.hitCount || 10,
+          });
+        }
+      }
+    } else if (typeof parsed === 'object' && parsed !== null) {
+      // Case 2: Structured Fortune Actuary System Specification Object
+
+      // A. five_classic_rules
+      if (Array.isArray(parsed.five_classic_rules)) {
+        parsed.five_classic_rules.forEach((r: any, idx: number) => {
+          const cat = mapCategory(r.category || r.name, r.rule_id);
+          const hf = r.handicap_features;
+          const featuresStr = hf
+            ? `【盘赔形态】：欧指[${hf.euro_odds || '未设'}] ｜ 亚盘[${hf.asian_handicap || '未设'}] ｜ 水位[${hf.water_level || '未设'}]`
+            : '';
+          const intentStr = r.bookmaker_intent ? `【操盘意图】：${r.bookmaker_intent}` : '';
+          const decisionStr = r.decision ? `【财富经定论】：${r.decision}` : '';
+          const content = [featuresStr, intentStr, decisionStr].filter(Boolean).join('\n') || r.description || '';
+
+          convertedRules.push({
+            id: `rule-classic-${r.rule_id || idx + 1}`,
+            title: r.name || `《财富经》经典法则 ${r.rule_id || idx + 1}`,
+            category: cat,
+            leagueScope: '全部主流联赛',
+            ruleContent: content,
+            sourceMatch: Array.isArray(r.examples) ? r.examples.join(' / ') : '经典实战盘口验证',
+            createdAt: new Date().toISOString().slice(0, 10),
+            isActive: true,
+            hitCount: 20,
+          });
+        });
+      }
+
+      // B. total_goals_lie_detector (大小球测谎法则)
+      if (Array.isArray(parsed.total_goals_lie_detector)) {
+        parsed.total_goals_lie_detector.forEach((item: any, idx: number) => {
+          const content = `【形态匹配】：${item.pattern}\n【操盘意图】：${item.bookmaker_intent || ''}\n【精算策略】：${item.strategy || ''}`;
+          convertedRules.push({
+            id: `rule-goals-detector-${idx + 1}`,
+            title: `大小球测谎：${item.pattern}`,
+            category: 'GENERAL',
+            leagueScope: '常规联赛大小球',
+            ruleContent: content,
+            sourceMatch: '《财富经》大小球三维联动测谎',
+            createdAt: new Date().toISOString().slice(0, 10),
+            isActive: true,
+            hitCount: 15,
+          });
+        });
+      }
+
+      // C. core_philosophy (心法准则)
+      if (parsed.core_philosophy && parsed.core_philosophy.key_principles) {
+        const principles = parsed.core_philosophy.key_principles;
+        if (Array.isArray(principles)) {
+          convertedRules.push({
+            id: 'rule-philosophy-core',
+            title: `《财富经》核心心法：${parsed.core_philosophy.motto || '数据是流动的，人性是恒定的'}`,
+            category: 'GENERAL',
+            leagueScope: '全局战术心法与避坑红线',
+            ruleContent: `【核心箴言准则】：\n${principles.map((p: string, i: number) => `${i + 1}. ${p}`).join('\n')}`,
+            sourceMatch: '《财富经》量化分析体系总纲',
+            createdAt: new Date().toISOString().slice(0, 10),
+            isActive: true,
+            hitCount: 99,
+          });
+        }
+      }
+
+      // D. rules / evolvedRules array
+      if (Array.isArray(parsed.rules)) {
+        for (const item of parsed.rules) {
+          if (item && (item.title || item.name)) {
+            convertedRules.push({
+              id: item.id || `rule-import-${Date.now()}`,
+              title: item.title || item.name,
+              category: mapCategory(item.category, item.id),
+              leagueScope: item.leagueScope || '全部联赛',
+              ruleContent: item.ruleContent || item.content || JSON.stringify(item),
+              sourceMatch: item.sourceMatch || '外部导入',
+              createdAt: item.createdAt || new Date().toISOString().slice(0, 10),
+              isActive: item.isActive ?? true,
+              hitCount: item.hitCount || 10,
+            });
+          }
+        }
+      }
+      if (Array.isArray(parsed.evolvedRules)) {
+        for (const item of parsed.evolvedRules) {
+          if (item && (item.title || item.name)) {
+            convertedRules.push({
+              id: item.id || `rule-import-${Date.now()}`,
+              title: item.title || item.name,
+              category: mapCategory(item.category, item.id),
+              leagueScope: item.leagueScope || '全部联赛',
+              ruleContent: item.ruleContent || item.content || JSON.stringify(item),
+              sourceMatch: item.sourceMatch || '外部导入',
+              createdAt: item.createdAt || new Date().toISOString().slice(0, 10),
+              isActive: item.isActive ?? true,
+              hitCount: item.hitCount || 10,
+            });
+          }
+        }
+      }
+    }
+
+    if (convertedRules.length === 0) {
+      return { success: false, count: 0, message: '未能在提供的 JSON 中解析到有效的法则条目。' };
+    }
+
+    // Merge or replace
+    if (mode === 'replace') {
+      saveExperienceRules(convertedRules);
+    } else {
+      // Merge with existing
+      for (const r of convertedRules) {
+        addOrUpdateExperienceRule(r);
+      }
+    }
+
+    return {
+      success: true,
+      count: convertedRules.length,
+      message: `成功解析并导入 ${convertedRules.length} 条《财富经》核心法则与大小球测谎规则！`,
+    };
+  } catch (err: any) {
+    return { success: false, count: 0, message: `JSON 解析异常: ${err?.message || '格式错误'}` };
   }
+}
+
+/**
+ * Parse Markdown formatted rules into EvolvedExperienceRule[]
+ * Supports:
+ * 1. Markdown Tables: | 法则名称 | 适用范围 | 核心法则正文 | 实战案例 |
+ * 2. Markdown Headings (## 【极限榨水法则】 with bullet points)
+ * 3. Markdown Numbered lists: 1. 【法则名称】（适用范围）\n 核心法则：...
+ */
+export function parseRulesFromMarkdown(mdStr: string): EvolvedExperienceRule[] {
+  const rules: EvolvedExperienceRule[] = [];
+  const text = mdStr.trim();
+  if (!text) return rules;
+
+  const mapCategory = (str?: string): any => {
+    const s = (str || '').toUpperCase();
+    if (s.includes('榨水') || s.includes('正向') || s.includes('正路') || s.includes('R1') || s.includes('POSITIVE')) return 'POSITIVE_CONTROL';
+    if (s.includes('高息') || s.includes('吸筹') || s.includes('名气') || s.includes('避坑') || s.includes('R2') || s.includes('HIGH_INTEREST')) return 'HIGH_INTEREST_TRAP';
+    if (s.includes('退盘') || s.includes('异动') || s.includes('退热') || s.includes('R3') || s.includes('AVALANCHE')) return 'AVALANCHE_RETREAT';
+    if (s.includes('平赔') || s.includes('胆平') || s.includes('R4') || s.includes('LOW_DRAW')) return 'LOW_DRAW_DEFENSE';
+    if (s.includes('浅盘') || s.includes('满水') || s.includes('失守') || s.includes('R5') || s.includes('SHALLOW')) return 'SHALLOW_FULL_WATER';
+    return 'GENERAL';
+  };
+
+  // Method 1: Check for Markdown Tables
+  const lines = text.split('\n');
+  const tableRows = lines.filter((l) => l.trim().startsWith('|') && l.trim().endsWith('|'));
+  if (tableRows.length >= 3) {
+    const hasDivider = tableRows[1].includes('---');
+    if (hasDivider) {
+      const dataRows = tableRows.slice(2);
+      for (let i = 0; i < dataRows.length; i++) {
+        const cols = dataRows[i]
+          .split('|')
+          .map((c) => c.trim())
+          .filter((_, idx, arr) => idx > 0 && idx < arr.length - 1);
+        if (cols.length >= 2) {
+          let title = '';
+          let scope = '全部主流联赛';
+          let content = '';
+          let source = 'Markdown 表格导入';
+
+          if (cols.length >= 4) {
+            title = cols[0];
+            scope = cols[1];
+            content = cols[2];
+            source = cols[3];
+          } else if (cols.length === 3) {
+            title = cols[0];
+            scope = cols[1];
+            content = cols[2];
+          } else {
+            title = cols[0];
+            content = cols[1];
+          }
+
+          if (title && content) {
+            rules.push({
+              id: `rule-md-table-${Date.now()}-${i}`,
+              title: title.replace(/^[#\*\s【]+|[#\*\s】]+$/g, ''),
+              category: mapCategory(title + ' ' + content),
+              leagueScope: scope || '全部主流联赛',
+              ruleContent: content,
+              sourceMatch: source || 'Markdown 知识库导入',
+              createdAt: new Date().toISOString().slice(0, 10),
+              isActive: true,
+              hitCount: 15,
+            });
+          }
+        }
+      }
+      if (rules.length > 0) return rules;
+    }
+  }
+
+  // Method 2: Header-based sections (## 或 ###)
+  const headerRegex = /^(#{1,4})\s+(.+)$/gm;
+  const headerMatches = Array.from(text.matchAll(headerRegex));
+
+  if (headerMatches.length >= 1) {
+    for (let i = 0; i < headerMatches.length; i++) {
+      const match = headerMatches[i];
+      const titleRaw = match[2].trim();
+      const startIndex = match.index! + match[0].length;
+      const endIndex = i + 1 < headerMatches.length ? headerMatches[i + 1].index! : text.length;
+      const sectionBody = text.slice(startIndex, endIndex).trim();
+
+      const cleanTitle = titleRaw.replace(/^[【\[（\(#\*\s]+|[】\]）\)#\*\s]+$/g, '').trim();
+
+      let leagueScope = '全部主流联赛';
+      let sourceMatch = 'Markdown 体系导入';
+      const bulletLines: string[] = [];
+
+      const bodyLines = sectionBody.split('\n');
+      for (const bLine of bodyLines) {
+        const trimmed = bLine.trim();
+        if (!trimmed) continue;
+
+        const scopeMatch = trimmed.match(/^[-*•]?\s*(?:\*\*)?(?:适用范围|适用联赛|联赛范围)(?:\*\*)?[：:]\s*(.+)$/i);
+        if (scopeMatch) {
+          leagueScope = scopeMatch[1].replace(/\*\*/g, '').trim();
+          continue;
+        }
+
+        const sourceMatchResult = trimmed.match(/^[-*•]?\s*(?:\*\*)?(?:实战案例|来源赛事|验证案例|经典案例)(?:\*\*)?[：:]\s*(.+)$/i);
+        if (sourceMatchResult) {
+          sourceMatch = sourceMatchResult[1].replace(/\*\*/g, '').trim();
+          continue;
+        }
+
+        bulletLines.push(trimmed);
+      }
+
+      const content = bulletLines.join('\n') || sectionBody;
+      if (cleanTitle && content) {
+        rules.push({
+          id: `rule-md-heading-${Date.now()}-${i}`,
+          title: cleanTitle,
+          category: mapCategory(cleanTitle + ' ' + content),
+          leagueScope,
+          ruleContent: content,
+          sourceMatch,
+          createdAt: new Date().toISOString().slice(0, 10),
+          isActive: true,
+          hitCount: 15,
+        });
+      }
+    }
+    if (rules.length > 0) return rules;
+  }
+
+  // Method 3: Numbered list pattern (1. 【...】 or 1. ...\n 核心法则：...)
+  const listRegex = /(?:^|\n)(?:\d+[\.、]|\(\d+\))\s*(?:【|\*\*)?([^\n】\*]+)(?:】|\*\*)?(?:（([^）\n]+)）)?\s*\n([\s\S]*?)(?=(?:\n(?:\d+[\.、]|\(\d+\))\s*(?:【|\*\*)|$))/g;
+  const listMatches = Array.from(text.matchAll(listRegex));
+
+  if (listMatches.length > 0) {
+    for (let i = 0; i < listMatches.length; i++) {
+      const match = listMatches[i];
+      const title = match[1].trim();
+      const scope = match[2]?.trim() || '全部常规联赛';
+      const body = match[3]?.trim();
+
+      if (title && body) {
+        rules.push({
+          id: `rule-md-list-${Date.now()}-${i}`,
+          title,
+          category: mapCategory(title + ' ' + body),
+          leagueScope: scope,
+          ruleContent: body,
+          sourceMatch: 'Markdown 列表导入',
+          createdAt: new Date().toISOString().slice(0, 10),
+          isActive: true,
+          hitCount: 15,
+        });
+      }
+    }
+    if (rules.length > 0) return rules;
+  }
+
+  return rules;
+}
+
+/**
+ * Import rules from Markdown string
+ */
+export function importRulesFromMarkdown(
+  mdStr: string,
+  mode: 'merge' | 'replace' = 'merge'
+): { success: boolean; count: number; message: string } {
+  try {
+    const rules = parseRulesFromMarkdown(mdStr);
+    if (rules.length === 0) {
+      return {
+        success: false,
+        count: 0,
+        message: '未能识别出有效的 Markdown 法则结构（支持标题级 ## 法则、列表 1. 【法则】 或 Markdown 表格）。',
+      };
+    }
+
+    if (mode === 'replace') {
+      saveExperienceRules(rules);
+    } else {
+      for (const r of rules) {
+        addOrUpdateExperienceRule(r);
+      }
+    }
+
+    return {
+      success: true,
+      count: rules.length,
+      message: `成功解析并导入 ${rules.length} 条 Markdown 格式的实战经验法则！`,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      count: 0,
+      message: `Markdown 解析失败: ${err?.message || '未知错误'}`,
+    };
+  }
+}
+
+/**
+ * Smart Auto-Detector for importing rules (JSON or Markdown)
+ */
+export function importRulesSmart(
+  input: string,
+  mode: 'merge' | 'replace' = 'merge'
+): { success: boolean; count: number; message: string; detectedFormat: 'JSON' | 'MARKDOWN' } {
+  const trimmed = input.trim();
+  const looksLikeJson =
+    trimmed.startsWith('{') ||
+    trimmed.startsWith('[') ||
+    trimmed.startsWith('```json') ||
+    (trimmed.includes('"five_classic_rules"') && trimmed.includes('{'));
+
+  if (looksLikeJson) {
+    const jsonRes = importRulesFromJson(trimmed, mode);
+    if (jsonRes.success) {
+      return { ...jsonRes, detectedFormat: 'JSON' };
+    }
+  }
+
+  // Try Markdown parsing
+  const mdRes = importRulesFromMarkdown(trimmed, mode);
+  if (mdRes.success) {
+    return { ...mdRes, detectedFormat: 'MARKDOWN' };
+  }
+
+  // Fallback to JSON error if it seemed like JSON
+  if (looksLikeJson) {
+    const jsonRes = importRulesFromJson(trimmed, mode);
+    return { ...jsonRes, detectedFormat: 'JSON' };
+  }
+
+  return { ...mdRes, detectedFormat: 'MARKDOWN' };
 }
 
 /**

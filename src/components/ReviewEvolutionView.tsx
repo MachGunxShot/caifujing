@@ -49,6 +49,8 @@ import {
   addOrUpdateExperienceRule,
   exportRulesAsJson,
   importRulesFromJson,
+  importRulesFromMarkdown,
+  importRulesSmart,
   getPostMatchReviews,
   evaluateMatchOutcomeAndExtractLesson,
   deletePostMatchReview,
@@ -117,6 +119,12 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
   // Copy status
   const [copiedJson, setCopiedJson] = useState(false);
+
+  // Import Rules Modal States
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importJsonText, setImportJsonText] = useState('');
+  const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
+  const [importFeedback, setImportFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Date Grouping and Filter States for Reviews
   const [selectedDateFilter, setSelectedDateFilter] = useState<string>('ALL');
@@ -637,17 +645,31 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     setTimeout(() => setCopiedJson(false), 2000);
   };
 
-  // Import JSON
+  // Open Import Modal
   const handleImportJson = () => {
-    const input = prompt('请粘贴导出的《财富经》经验法则 JSON 代码：');
-    if (input) {
-      const ok = importRulesFromJson(input);
-      if (ok) {
-        setRules(getExperienceRules());
-        alert('经验法则库已成功导入并合并生效！');
-      } else {
-        alert('导入失败，请检查 JSON 格式是否正确。');
-      }
+    setImportFeedback(null);
+    setIsImportModalOpen(true);
+  };
+
+  // Confirm Import Rules (Smart auto-detect: JSON or Markdown)
+  const handleConfirmImportRules = () => {
+    if (!importJsonText.trim()) {
+      setImportFeedback({ type: 'error', message: '请先粘贴待导入的 Markdown 文本或 JSON 代码！' });
+      return;
+    }
+
+    const res = importRulesSmart(importJsonText, importMode);
+    if (res.success) {
+      setRules(getExperienceRules());
+      const formatTag = res.detectedFormat === 'MARKDOWN' ? '【Markdown 格式已识别】' : '【JSON 格式已识别】';
+      setImportFeedback({ type: 'success', message: `${formatTag} ${res.message}` });
+      setTimeout(() => {
+        setIsImportModalOpen(false);
+        setImportJsonText('');
+        setImportFeedback(null);
+      }, 1500);
+    } else {
+      setImportFeedback({ type: 'error', message: res.message });
     }
   };
 
@@ -1616,6 +1638,166 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                   >
                     保存并立即生效
                   </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Import Rules Modal (Markdown & JSON Dual Engine) */}
+          {isImportModalOpen && (
+            <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 max-w-2xl w-full space-y-4 shadow-2xl">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <div className="flex items-center gap-2">
+                    <Upload className="w-4 h-4 text-cyan-400" />
+                    <h4 className="text-sm font-black text-white flex items-center gap-2">
+                      <span>导入《财富经》经验法则知识库</span>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/30">
+                        Markdown & JSON 双引擎自适应
+                      </span>
+                    </h4>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsImportModalOpen(false);
+                      setImportFeedback(null);
+                    }}
+                    className="text-slate-400 hover:text-white"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-3 text-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-slate-400 text-[11px]">
+                    <p className="leading-relaxed">
+                      支持粘贴 <span className="text-cyan-400 font-bold">Markdown 格式</span>（文档标题 `##`、表格、条目列表）或 <span className="text-emerald-400 font-bold">JSON 结构化规范</span>，系统将自动智能识别并解析！
+                    </p>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const mdSample = `## 法则一：极限榨水 / 正向控赔法则
+- **适用范围**：五大联赛 / 全部联赛
+- **盘赔特征**：欧指顺畅持续下调，维持原盘或强力升盘，水位砸至低于1.80极低水
+- **机构意图**：极度看好让球方打出，通过提高门槛与压缩派彩空间进行真实避险风控
+- **财富定论**：正路主胜 / 独赢（可作 2串1 稳胆基石）
+- **实战案例**：FC首尔 3-1 浦项制铁 / 罗森博格 4-0 腓特烈斯塔
+
+## 法则二：高息吸筹 / 名气诱导法则
+- **适用范围**：全部主流联赛
+- **盘赔特征**：顺应强队名气强行升盘或开深盘，水位死卡在 2.00 - 2.08 超高水/满水
+- **机构意图**：利用强队人气公开派发高息福利，诱导散户资金博上盘
+- **财富定论**：坚决去下盘 / 受让胜（大热必死）
+- **实战案例**：江原FC 0-3 富川1995 / 巴西 1-2 挪威
+
+## 大小球测谎：深让步 (-1.25+) + 浅大小球 (2.25)
+- **机构意图**：强队破门乏力或控场小胜，机构防范经济型赢球
+- **精算策略**：去小球 (2.25小)，比分锁定 1-0、2-0`;
+                          setImportJsonText(mdSample);
+                          setImportFeedback(null);
+                        }}
+                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-750 text-cyan-300 border border-slate-700 text-[10px] cursor-pointer"
+                      >
+                        填入 Markdown 范例
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-slate-300 font-bold">
+                        请粘贴待导入文本（Markdown 或 JSON）：
+                      </label>
+                      <span className="text-[10px] text-slate-500 font-mono">
+                        当前字数: {importJsonText.length}
+                      </span>
+                    </div>
+                    <textarea
+                      rows={10}
+                      value={importJsonText}
+                      onChange={(e) => {
+                        setImportJsonText(e.target.value);
+                        setImportFeedback(null);
+                      }}
+                      placeholder={`支持直接粘贴：\n1. Markdown 标题格式：\n## 极限榨水 / 正向控赔法则\n- 适用范围：五大联赛\n- 机构意图：极度看好让球方打出...\n- 财富定论：正路主胜稳胆\n\n2. 或 Markdown 表格：\n| 法则名称 | 适用范围 | 核心精算法则 | 实战案例 |\n\n3. 或完整的《财富经足球盘赔量化分析体系》JSON 规范代码`}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-white font-mono text-[11px] focus:outline-none focus:border-cyan-500/50 leading-relaxed"
+                    />
+                  </div>
+
+                  {/* Import Mode Selection */}
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 text-[11px]">
+                    <span className="text-slate-400 font-bold shrink-0">导入方式：</span>
+                    <label className="flex items-center gap-1.5 cursor-pointer text-slate-200">
+                      <input
+                        type="radio"
+                        name="importMode"
+                        checked={importMode === 'merge'}
+                        onChange={() => setImportMode('merge')}
+                        className="text-emerald-500 focus:ring-0"
+                      />
+                      <span>追加合并（保留现有已进化法则，同名自动增强更新）</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer text-slate-400 hover:text-slate-200">
+                      <input
+                        type="radio"
+                        name="importMode"
+                        checked={importMode === 'replace'}
+                        onChange={() => setImportMode('replace')}
+                        className="text-emerald-500 focus:ring-0"
+                      />
+                      <span>全量覆盖重置</span>
+                    </label>
+                  </div>
+
+                  {/* Feedback Message */}
+                  {importFeedback && (
+                    <div
+                      className={`p-2.5 rounded-lg text-[11px] font-bold ${
+                        importFeedback.type === 'success'
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                          : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                      }`}
+                    >
+                      {importFeedback.message}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard?.readText?.().then((txt) => {
+                        if (txt) setImportJsonText(txt);
+                      }).catch(() => {});
+                    }}
+                    className="text-[11px] text-cyan-400 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Clipboard className="w-3 h-3" />
+                    <span>从剪贴板读取粘贴</span>
+                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsImportModalOpen(false);
+                        setImportFeedback(null);
+                      }}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 text-xs rounded-lg cursor-pointer"
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleConfirmImportRules}
+                      className="px-4 py-1.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs rounded-lg shadow-md cursor-pointer transition-all"
+                    >
+                      智能识别并导入
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
