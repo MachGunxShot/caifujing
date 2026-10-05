@@ -22,16 +22,53 @@ import {
   ExternalLink,
   History,
   Activity,
+  Copy,
+  Star,
+  Filter,
 } from 'lucide-react';
 import { PRESET_CASES, PresetCase } from '../utils/presetCases';
+import { FullMatchData, AnalysisReportResult, BatchMatchItem } from '../types/fortuneActuary';
+import { generateActuarialRuleReport } from '../utils/actuaryEngine';
 
 interface ModelKnowledgeBaseProps {
   onLoadPreset: (preset: PresetCase) => void;
+  currentMatch?: FullMatchData;
+  currentReport?: AnalysisReportResult;
+  batchQueue?: BatchMatchItem[];
+  onSelectMatch?: (match: FullMatchData) => void;
+  onNavigateToWorkbench?: () => void;
 }
 
-export const ModelKnowledgeBase: React.FC<ModelKnowledgeBaseProps> = ({ onLoadPreset }) => {
+export const ModelKnowledgeBase: React.FC<ModelKnowledgeBaseProps> = ({
+  onLoadPreset,
+  currentMatch,
+  currentReport,
+  batchQueue = [],
+  onSelectMatch,
+  onNavigateToWorkbench,
+}) => {
   const [activeModel, setActiveModel] = useState<number>(0);
   const [isSandboxOpen, setIsSandboxOpen] = useState<boolean>(true);
+
+  // Top-level View Mode: 'batchShowcase' (批量推演大屏展示) vs 'theoryGuide' (五大模型理论知识库)
+  const [topViewMode, setTopViewMode] = useState<'batchShowcase' | 'theoryGuide'>(() => {
+    return batchQueue && batchQueue.length > 0 ? 'batchShowcase' : 'theoryGuide';
+  });
+  const [batchShowcaseModelFilter, setBatchShowcaseModelFilter] = useState<string>('ALL');
+  const [batchShowcaseStarFilter, setBatchShowcaseStarFilter] = useState<number | 'ALL'>('ALL');
+  const [batchShowcaseStatusFilter, setBatchShowcaseStatusFilter] = useState<'ALL' | 'REVIEWED' | 'UNFINISHED'>('ALL');
+  const [isAllBatchShowcaseExpanded, setIsAllBatchShowcaseExpanded] = useState<boolean>(true);
+  const [copiedSingleMatchId, setCopiedSingleMatchId] = useState<string | null>(null);
+
+  // User-selected mode for Sandbox Deduction: 'batch' (批量展示全部场次) vs 'single' (单场精推) vs 'preset' (经典教科书教学)
+  const [sandboxTarget, setSandboxTarget] = useState<'single' | 'batch' | 'preset'>(() => {
+    if (batchQueue && batchQueue.length > 1) return 'batch';
+    if (currentMatch && currentMatch.matchInfo.homeTeam) return 'single';
+    return 'preset';
+  });
+  const [selectedMatchId, setSelectedMatchId] = useState<string>('');
+  const [batchModelFilter, setBatchModelFilter] = useState<string>('ALL');
+  const [copiedBatchSandbox, setCopiedBatchSandbox] = useState<boolean>(false);
 
   // 30s Interactive Diagnostic Tool States
   const [diagEuroTrend, setDiagEuroTrend] = useState<'DROP' | 'DRAW_LOW' | 'RISE_OR_FLAT'>('DROP');
@@ -289,10 +326,601 @@ export const ModelKnowledgeBase: React.FC<ModelKnowledgeBaseProps> = ({ onLoadPr
     };
   }, [diagEuroTrend, diagAsianTrend, diagWaterLevel]);
 
-  const activeSandbox = getSandboxDetails(activeModel);
+  // Determine currently selected real match for live sandbox deduction
+  const activeSelectedMatch = useMemo(() => {
+    if (selectedMatchId && batchQueue && batchQueue.length > 0) {
+      const found = batchQueue.find((b) => b.id === selectedMatchId);
+      if (found) return found;
+    }
+    if (batchQueue && batchQueue.length > 0) {
+      const matchInQueue = batchQueue.find(
+        (b) =>
+          b.data.matchInfo.homeTeam === currentMatch?.matchInfo.homeTeam &&
+          b.data.matchInfo.awayTeam === currentMatch?.matchInfo.awayTeam
+      );
+      if (matchInQueue) return matchInQueue;
+      return batchQueue[0];
+    }
+    if (currentMatch && currentMatch.matchInfo.homeTeam) {
+      return {
+        id: 'current-active',
+        data: currentMatch,
+        report: currentReport || generateActuarialRuleReport(currentMatch),
+        status: 'done' as const,
+        timestamp: Date.now(),
+      };
+    }
+    return null;
+  }, [selectedMatchId, batchQueue, currentMatch, currentReport]);
+
+  // Dynamic 4-Step Game Theory Sandbox Generator for ANY match
+  const buildMatchSandbox = (
+    mData: FullMatchData,
+    rep: AnalysisReportResult,
+    finalScore?: string
+  ) => {
+    const { homeTeam, awayTeam, league, matchTime, marketStory } = mData.matchInfo;
+    const earlyWin = mData.euroOdds.earlyWin;
+    const lateWin = mData.euroOdds.lateWin;
+    const winDiff = lateWin - earlyWin;
+    const winDiffStr = winDiff > 0 ? `+${winDiff.toFixed(2)}` : winDiff.toFixed(2);
+    const modelTitle = rep.modelTitle || '博弈调仓中性盘';
+
+    return {
+      matchTitle: `${homeTeam} vs ${awayTeam}`,
+      league: `${league || '常规联赛'} ｜ ${matchTime || '临场'}`,
+      finalScore: finalScore
+        ? `${finalScore} (已完赛真实比分)`
+        : '⏳ 临场即时博弈推演 (前瞻盘面)',
+      story:
+        marketStory ||
+        `${homeTeam} 与 ${awayTeam} 战力对碰，临场资金在胜平负与让球盘呈现博弈分流与热度倾斜。`,
+      earlyEuro: `${earlyWin.toFixed(2)} ｜ ${mData.euroOdds.earlyDraw.toFixed(2)} ｜ ${mData.euroOdds.earlyLoss.toFixed(2)}`,
+      lateEuro: `${lateWin.toFixed(2)} ｜ ${mData.euroOdds.lateDraw.toFixed(2)} ｜ ${mData.euroOdds.lateLoss.toFixed(2)}`,
+      euroShift: `主胜欧赔由早盘 ${earlyWin.toFixed(2)} 变动至终盘 ${lateWin.toFixed(2)} (${winDiffStr})，平赔 ${mData.euroOdds.lateDraw.toFixed(2)}，客胜 ${mData.euroOdds.lateLoss.toFixed(2)}`,
+      earlyAsian: `${mData.asianHandicap.earlyHandicap} ｜ 主水 ${mData.asianHandicap.earlyHomeOdds.toFixed(2)}`,
+      lateAsian: `${mData.asianHandicap.lateHandicap} ｜ 主水 ${mData.asianHandicap.lateHomeOdds.toFixed(2)}`,
+      asianShift: `让步由初盘 ${mData.asianHandicap.earlyHandicap} (主水 ${mData.asianHandicap.earlyHomeOdds.toFixed(2)}) 变动至终盘 ${mData.asianHandicap.lateHandicap} (主水 ${mData.asianHandicap.lateHomeOdds.toFixed(2)})`,
+      earlyOU: `${mData.overUnder.earlyLine}球 ｜ 大水 ${mData.overUnder.earlyOverOdds.toFixed(2)}`,
+      lateOU: `${mData.overUnder.lateLine}球 ｜ 大水 ${mData.overUnder.lateOverOdds.toFixed(2)}`,
+      ouShift: `大小球界线 ${mData.overUnder.lateLine} 球，${rep.metrics.overUnderVerdict}`,
+      step1: `【早盘意图】：初盘给出 ${mData.asianHandicap.earlyHandicap} 搭配欧指 ${earlyWin.toFixed(2)} 初赔，机构第一道防线旨在均衡两端基石资金。`,
+      step2: `【资金发酵】：伴随市场题材与公众热度发酵，筹码在主胜与让球盘持续沉淀，资金倾斜引发水位微调。`,
+      step3: `【临场风控变轨】：${rep.firstImpression ? rep.firstImpression.slice(0, 140) + '...' : `机构临场变轨定性为【${modelTitle}】，重点防范 ${rep.decision.euroPick}。`}`,
+      step4: `【终局推演与避坑】：${rep.finalVerdict.direction}；${rep.finalVerdict.directionDetail}。${rep.finalVerdict.riskWarning}`,
+      isLiveMatch: true,
+      homeTeam,
+      awayTeam,
+    };
+  };
+
+  const dynamicMatchSandbox = useMemo(() => {
+    if (!activeSelectedMatch) return null;
+    const mData = activeSelectedMatch.data;
+    const rep = activeSelectedMatch.report || generateActuarialRuleReport(mData);
+    return buildMatchSandbox(mData, rep, activeSelectedMatch.finalScore);
+  }, [activeSelectedMatch]);
+
+  const handleCopyBatchSandbox = () => {
+    if (!batchQueue || batchQueue.length === 0) return;
+    const md = batchQueue
+      .map((item, idx) => {
+        const rep = item.report || generateActuarialRuleReport(item.data);
+        const box = buildMatchSandbox(item.data, rep, item.finalScore);
+        return `### 【第 ${idx + 1} 场沙盘推演】${box.matchTitle} (${box.league})
+- **赛果状态**：${box.finalScore}
+- **战意题材**：${box.story}
+- **欧指初终跳变**：${box.earlyEuro} ➔ ${box.lateEuro} (${box.euroShift})
+- **亚盘初终跳变**：${box.earlyAsian} ➔ ${box.lateAsian} (${box.asianShift})
+- **大小球跳变**：${box.earlyOU} ➔ ${box.lateOU} (${box.ouShift})
+
+#### 四步动态博弈沙盘测谎推演：
+1. **${box.step1}**
+2. **${box.step2}**
+3. **${box.step3}**
+4. **${box.step4}**`;
+      })
+      .join('\n\n---\n\n');
+
+    navigator.clipboard.writeText(md);
+    setCopiedBatchSandbox(true);
+    setTimeout(() => setCopiedBatchSandbox(false), 2000);
+  };
+
+  // If user chooses current live match, use dynamicMatchSandbox; else use textbook preset
+  const activeSandbox =
+    (sandboxTarget === 'single' || sandboxTarget === 'batch') && dynamicMatchSandbox
+      ? dynamicMatchSandbox
+      : getSandboxDetails(activeModel);
 
   return (
     <div className="space-y-5">
+      {/* 0. Master Switcher Bar: 批量推演矩阵大屏 vs 五大模型理论知识库 */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500/20 to-cyan-500/20 text-emerald-400 flex items-center justify-center font-bold">
+            <Layers className="w-4 h-4" />
+          </div>
+          <div>
+            <h2 className="text-sm font-black text-white flex items-center gap-2">
+              <span>五大模型 · 矩阵推演与知识库</span>
+              {batchQueue.length > 0 && (
+                <span className="px-2 py-0.2 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                  实盘已载入 {batchQueue.length} 场
+                </span>
+              )}
+            </h2>
+            <p className="text-[11px] text-slate-400">
+              支持一键切换「批量推演矩阵大屏」全览所有场次沙盘，或查阅「五大经典模型字典」
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs self-stretch sm:self-auto">
+          <button
+            type="button"
+            onClick={() => setTopViewMode('batchShowcase')}
+            className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md font-bold transition-all cursor-pointer ${
+              topViewMode === 'batchShowcase'
+                ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 shadow-sm'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>📑 批量推演矩阵大屏</span>
+            {batchQueue.length > 0 && (
+              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-900/60 font-normal">
+                {batchQueue.length}场
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTopViewMode('theoryGuide')}
+            className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md font-bold transition-all cursor-pointer ${
+              topViewMode === 'theoryGuide'
+                ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 shadow-sm'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            <span>📘 五大模型理论知识库 & 测谎仪</span>
+          </button>
+        </div>
+      </div>
+
+      {topViewMode === 'batchShowcase' ? (
+        <div className="space-y-4">
+          {/* Top Model Distribution Bar */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-2.5">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
+                  <Layers className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white">五大操盘模型 · 批量实盘命中全景透视</h3>
+                  <p className="text-[11px] text-slate-400">
+                    当前导入队列共 <strong className="text-white font-mono">{batchQueue.length}</strong> 场比赛，系统算法已完成全部比赛的操盘模型智能归类
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyBatchSandbox}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 cursor-pointer shadow-sm"
+                >
+                  {copiedBatchSandbox ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-emerald-400 font-bold">已复制全部沙盘合辑</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>复制全部沙盘合辑 (Markdown)</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsAllBatchShowcaseExpanded(!isAllBatchShowcaseExpanded)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-750 text-cyan-300 text-xs font-semibold rounded-lg border border-slate-700 cursor-pointer"
+                >
+                  <History className="w-3.5 h-3.5" />
+                  <span>{isAllBatchShowcaseExpanded ? '折叠全部沙盘' : '展开全部沙盘'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Model Distribution Pills Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+              <button
+                type="button"
+                onClick={() => setBatchShowcaseModelFilter('ALL')}
+                className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
+                  batchShowcaseModelFilter === 'ALL'
+                    ? 'bg-slate-800 border-emerald-500 text-white shadow-md'
+                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                }`}
+              >
+                <div className="text-[10px] text-slate-400 font-bold">全量队列</div>
+                <div className="text-base font-black text-white font-mono">{batchQueue.length} <span className="text-xs font-normal">场</span></div>
+                <div className="text-[10px] text-emerald-400 font-mono mt-0.5">100% 覆盖</div>
+              </button>
+
+              {models.map((m, idx) => {
+                const count = batchQueue.filter((b) => {
+                  const rep = b.report || generateActuarialRuleReport(b.data);
+                  return rep.identifiedModel === m.id;
+                }).length;
+                const isSelected = batchShowcaseModelFilter === m.id;
+
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setBatchShowcaseModelFilter(isSelected ? 'ALL' : m.id)}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
+                      isSelected
+                        ? 'bg-slate-800 border-cyan-500 text-white shadow-md ring-1 ring-cyan-500/50'
+                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-[10px] font-mono text-cyan-400 font-bold">
+                      <span>0{idx + 1}. {m.title.replace(/[【】]/g, '').slice(0, 4)}</span>
+                      {count > 0 && <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />}
+                    </div>
+                    <div className="text-base font-black text-white font-mono mt-0.5">
+                      {count} <span className="text-xs font-normal text-slate-400">场</span>
+                    </div>
+                    <div className="text-[10px] text-slate-400 truncate mt-0.5">
+                      {m.badge.split(' ')[0]}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Filter Chips Bar */}
+            <div className="flex items-center justify-between gap-2 flex-wrap pt-1 text-xs border-t border-slate-800/60">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                  <Filter className="w-3 h-3 text-cyan-400" />
+                  <span>筛选过滤:</span>
+                </span>
+
+                {/* Status Filter */}
+                <div className="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setBatchShowcaseStatusFilter('ALL')}
+                    className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
+                      batchShowcaseStatusFilter === 'ALL'
+                        ? 'bg-emerald-500/20 text-emerald-300'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    全部状态
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBatchShowcaseStatusFilter('REVIEWED')}
+                    className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
+                      batchShowcaseStatusFilter === 'REVIEWED'
+                        ? 'bg-emerald-500/20 text-emerald-300'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    已完赛 ({batchQueue.filter((b) => b.isReviewed || b.finalScore).length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBatchShowcaseStatusFilter('UNFINISHED')}
+                    className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
+                      batchShowcaseStatusFilter === 'UNFINISHED'
+                        ? 'bg-cyan-500/20 text-cyan-300'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    未开赛/前瞻 ({batchQueue.filter((b) => !b.isReviewed && !b.finalScore).length})
+                  </button>
+                </div>
+
+                {/* Star Filter */}
+                <div className="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setBatchShowcaseStarFilter('ALL')}
+                    className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
+                      batchShowcaseStarFilter === 'ALL'
+                        ? 'bg-amber-500/20 text-amber-300'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    全部星级
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBatchShowcaseStarFilter(5)}
+                    className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
+                      batchShowcaseStarFilter === 5
+                        ? 'bg-amber-500/20 text-amber-300'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    ★★★★★ 5星稳胆
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBatchShowcaseStarFilter(4)}
+                    className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
+                      batchShowcaseStarFilter === 4
+                        ? 'bg-emerald-500/20 text-emerald-300'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    ★★★★ 4星博弈
+                  </button>
+                </div>
+              </div>
+
+              {onNavigateToWorkbench && (
+                <button
+                  type="button"
+                  onClick={onNavigateToWorkbench}
+                  className="flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 font-bold hover:underline cursor-pointer"
+                >
+                  <span>前往「三维测谎」工作台全屏研判</span>
+                  <ArrowRight className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Cards List */}
+          {batchQueue.length === 0 ? (
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-8 text-center space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto text-xl font-bold">
+                📑
+              </div>
+              <h4 className="text-base font-black text-white">当前批量队列为空</h4>
+              <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+                请在页面顶部点击「上传附件」导入 Markdown 或 CSV 格式比赛数据，系统将自动对每场比赛进行五大模型识别与四步博弈沙盘推演！
+              </p>
+              <button
+                type="button"
+                onClick={() => setTopViewMode('theoryGuide')}
+                className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-black transition-colors cursor-pointer"
+              >
+                查阅五大模型理论字典与教学案例
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {batchQueue
+                .filter((item) => {
+                  const rep = item.report || generateActuarialRuleReport(item.data);
+                  if (batchShowcaseModelFilter !== 'ALL' && rep.identifiedModel !== batchShowcaseModelFilter) {
+                    return false;
+                  }
+                  if (batchShowcaseStarFilter !== 'ALL' && rep.decision.starRating !== batchShowcaseStarFilter) {
+                    return false;
+                  }
+                  if (batchShowcaseStatusFilter === 'REVIEWED' && !(item.isReviewed || item.finalScore)) {
+                    return false;
+                  }
+                  if (batchShowcaseStatusFilter === 'UNFINISHED' && (item.isReviewed || item.finalScore)) {
+                    return false;
+                  }
+                  return true;
+                })
+                .map((item, idx) => {
+                  const rep = item.report || generateActuarialRuleReport(item.data);
+                  const box = buildMatchSandbox(item.data, rep, item.finalScore);
+                  const modelItem = models.find((m) => m.id === rep.identifiedModel);
+                  const isFiveStar = rep.decision.starRating === 5;
+
+                  return (
+                    <div
+                      key={item.id}
+                      className={`bg-slate-900 border rounded-xl p-5 shadow-lg space-y-4 transition-all hover:border-slate-700 ${
+                        isFiveStar
+                          ? 'border-amber-500/50 bg-gradient-to-br from-slate-900 via-slate-900 to-amber-950/10'
+                          : 'border-slate-800'
+                      }`}
+                    >
+                      {/* Card Header */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span
+                              className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${
+                                isFiveStar
+                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                  : 'text-emerald-400 bg-emerald-500/10'
+                              }`}
+                            >
+                              #{idx + 1} 场
+                            </span>
+                            <span className="text-xs text-slate-400 font-medium">
+                              {box.league}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded text-xs font-bold border ${
+                                modelItem?.badgeColor || 'bg-slate-800 text-slate-400 border-slate-700'
+                              }`}
+                            >
+                              【{rep.modelTitle}】
+                            </span>
+                            <span className="text-amber-400 font-mono text-xs font-bold">
+                              {'★'.repeat(rep.decision.starRating)}
+                              {'☆'.repeat(5 - rep.decision.starRating)}
+                            </span>
+                            {item.isLocked && (
+                              <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold">
+                                🔒 快照已锁 ({item.lockedAt || '开赛'})
+                              </span>
+                            )}
+                          </div>
+                          <h4 className="text-base font-black text-white mt-1">
+                            {box.matchTitle}
+                          </h4>
+                        </div>
+
+                        {/* Top-Right Badges & Actions */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <div className="text-xs font-mono font-bold text-emerald-400 px-2.5 py-1 rounded bg-emerald-950/60 border border-emerald-800/40">
+                            {box.finalScore}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const md = `### 【沙盘推演】${box.matchTitle}\n- 赛果：${box.finalScore}\n- 操盘模型：${rep.modelTitle}\n- 战意：${box.story}\n- 欧赔：${box.earlyEuro} ➔ ${box.lateEuro}\n- 亚盘：${box.earlyAsian} ➔ ${box.lateAsian}\n- 大小球：${box.earlyOU} ➔ ${box.lateOU}\n\n#### 四步动态博弈推演：\n1. ${box.step1}\n2. ${box.step2}\n3. ${box.step3}\n4. ${box.step4}`;
+                              navigator.clipboard.writeText(md);
+                              setCopiedSingleMatchId(item.id);
+                              setTimeout(() => setCopiedSingleMatchId(null), 2000);
+                            }}
+                            className="px-2.5 py-1 text-xs font-semibold bg-slate-800 hover:bg-slate-750 text-slate-300 rounded border border-slate-700 transition-colors inline-flex items-center gap-1 cursor-pointer"
+                            title="复制单场沙盘推演 Markdown"
+                          >
+                            {copiedSingleMatchId === item.id ? (
+                              <>
+                                <Check className="w-3 h-3 text-emerald-400" />
+                                <span className="text-emerald-400 font-bold">已复制</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3 h-3 text-slate-400" />
+                                <span>复制沙盘</span>
+                              </>
+                            )}
+                          </button>
+
+                          {onSelectMatch && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onSelectMatch(item.data);
+                                if (onNavigateToWorkbench) onNavigateToWorkbench();
+                              }}
+                              className="px-3 py-1 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 text-xs font-black rounded shadow transition-all inline-flex items-center gap-1 cursor-pointer"
+                              title="带着这场比赛的早晚盘数据，跳转到「三维测谎」工作台"
+                            >
+                              <span>三维精修</span>
+                              <ArrowRight className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Story */}
+                      <div className="text-xs text-slate-300 bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
+                        <strong className="text-amber-300">战意与题材背景：</strong>
+                        {box.story}
+                      </div>
+
+                      {/* Odds Transition Card */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs font-mono">
+                        <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 space-y-1">
+                          <span className="text-[10px] text-slate-400 font-sans font-bold flex items-center gap-1">
+                            <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                            <span>欧指跳变</span>
+                          </span>
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-slate-400">初：{box.earlyEuro}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-cyan-400 font-bold">终：{box.lateEuro}</span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 font-sans pt-1 border-t border-slate-800/60 leading-relaxed truncate">
+                            {box.euroShift}
+                          </p>
+                        </div>
+
+                        <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 space-y-1">
+                          <span className="text-[10px] text-slate-400 font-sans font-bold flex items-center gap-1">
+                            <Target className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>亚盘跳变</span>
+                          </span>
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-slate-400">初：{box.earlyAsian}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-emerald-400 font-bold">终：{box.lateAsian}</span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 font-sans pt-1 border-t border-slate-800/60 leading-relaxed truncate">
+                            {box.asianShift}
+                          </p>
+                        </div>
+
+                        <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 space-y-1">
+                          <span className="text-[10px] text-slate-400 font-sans font-bold flex items-center gap-1">
+                            <Flame className="w-3.5 h-3.5 text-amber-400" />
+                            <span>大小球跳变</span>
+                          </span>
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-slate-400">初：{box.earlyOU}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-amber-400 font-bold">终：{box.lateOU}</span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 font-sans pt-1 border-t border-slate-800/60 leading-relaxed truncate">
+                            {box.ouShift}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* 4-Step Deduction Walkthrough */}
+                      {isAllBatchShowcaseExpanded && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-1">
+                          <div className="bg-slate-950/70 p-2.5 rounded-lg border border-slate-800 space-y-1">
+                            <div className="text-slate-400 font-bold text-[11px]">
+                              第一阶段 · 早盘基石建仓
+                            </div>
+                            <p className="text-slate-300 text-[11px] leading-relaxed">
+                              {box.step1}
+                            </p>
+                          </div>
+                          <div className="bg-slate-950/70 p-2.5 rounded-lg border border-slate-800 space-y-1">
+                            <div className="text-slate-400 font-bold text-[11px]">
+                              第二阶段 · 资金发酵沉淀
+                            </div>
+                            <p className="text-slate-300 text-[11px] leading-relaxed">
+                              {box.step2}
+                            </p>
+                          </div>
+                          <div className="bg-slate-950/70 p-2.5 rounded-lg border border-slate-800 space-y-1">
+                            <div className="text-cyan-300 font-bold text-[11px]">
+                              第三阶段 · 临场风控变轨
+                            </div>
+                            <p className="text-slate-300 text-[11px] leading-relaxed">
+                              {box.step3}
+                            </p>
+                          </div>
+                          <div className="bg-slate-950/70 p-2.5 rounded-lg border border-slate-800 space-y-1">
+                            <div className="text-emerald-300 font-bold text-[11px]">
+                              第四阶段 · 终局印证与避坑
+                            </div>
+                            <p className="text-slate-300 text-[11px] leading-relaxed">
+                              {box.step4}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-5">
       {/* 1. Core Orientation Banner: How to Use this Section */}
       <div className="bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-950 border border-emerald-500/40 rounded-xl p-4 shadow-lg">
         <div className="flex items-center gap-2.5 mb-2">
@@ -663,19 +1291,48 @@ export const ModelKnowledgeBase: React.FC<ModelKnowledgeBaseProps> = ({ onLoadPr
                   {isSandboxOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    const found = PRESET_CASES.find((c) => c.id === models[activeModel].presetId);
-                    if (found) onLoadPreset(found);
-                  }}
-                  className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-black rounded-lg shadow cursor-pointer transition-colors"
-                  title="载入该比赛全套初盘终盘数据，前往「三维测谎」工作台进行参数微调与 AI 测谎报告查看"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>前往「三维测谎」工作台深度研判</span>
-                  <ExternalLink className="w-3 h-3 ml-0.5" />
-                </button>
+                {sandboxTarget === 'batch' ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onNavigateToWorkbench) onNavigateToWorkbench();
+                    }}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 text-xs font-black rounded-lg shadow cursor-pointer transition-all"
+                    title="前往「三维测谎」工作台批量展示视图"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>前往「三维测谎」批量视图</span>
+                    <ExternalLink className="w-3 h-3 ml-0.5" />
+                  </button>
+                ) : sandboxTarget === 'single' && activeSelectedMatch ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onSelectMatch) onSelectMatch(activeSelectedMatch.data);
+                      if (onNavigateToWorkbench) onNavigateToWorkbench();
+                    }}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-slate-950 text-xs font-black rounded-lg shadow cursor-pointer transition-all"
+                    title={`前往「三维测谎」工作台研判当前选定比赛：${activeSelectedMatch.data.matchInfo.homeTeam} vs ${activeSelectedMatch.data.matchInfo.awayTeam}`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>前往「三维测谎」研判当前比赛 ({activeSelectedMatch.data.matchInfo.homeTeam})</span>
+                    <ExternalLink className="w-3 h-3 ml-0.5" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const found = PRESET_CASES.find((c) => c.id === models[activeModel].presetId);
+                      if (found) onLoadPreset(found);
+                    }}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-black rounded-lg shadow cursor-pointer transition-colors"
+                    title="载入该比赛全套初盘终盘数据，前往「三维测谎」工作台进行参数微调与 AI 测谎报告查看"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>载入教学预设到「三维测谎」</span>
+                    <ExternalLink className="w-3 h-3 ml-0.5" />
+                  </button>
+                )}
               </div>
             </div>
 
@@ -705,114 +1362,434 @@ export const ModelKnowledgeBase: React.FC<ModelKnowledgeBaseProps> = ({ onLoadPr
             {/* IN-SITU INTERACTIVE SANDBOX SIMULATION (Directly addressing user feedback!) */}
             {isSandboxOpen && activeSandbox && (
               <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border border-cyan-500/30 rounded-xl p-4 space-y-4 shadow-xl animate-in fade-in duration-200">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
-                  <div className="flex items-center gap-2">
-                    <span className="w-6 h-6 rounded bg-cyan-500/20 text-cyan-300 flex items-center justify-center font-bold text-xs">
-                      🎲
+                {/* 1. Sandbox Target Switcher: Batch vs Single vs Preset */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-950/90 p-2.5 rounded-lg border border-slate-800">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-slate-300 flex items-center gap-1">
+                      <Target className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>推演展示模式：</span>
                     </span>
-                    <h5 className="text-sm font-black text-white">
-                      【{activeSandbox.matchTitle}】真实战役 · 盘赔动态博弈推演沙盘
-                    </h5>
-                    <span className="text-[11px] text-slate-400 font-mono">
-                      {activeSandbox.league}
-                    </span>
+                    <div className="flex items-center bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setSandboxTarget('batch')}
+                        className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-all font-bold cursor-pointer ${
+                          sandboxTarget === 'batch'
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <Layers className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>📑 批量全览</span>
+                        <span className="text-[10px] text-emerald-400 font-mono font-normal">
+                          (共 {batchQueue.length} 场)
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSandboxTarget('single')}
+                        className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-all font-bold cursor-pointer ${
+                          sandboxTarget === 'single'
+                            ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <Target className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>🎯 单场精推</span>
+                        {activeSelectedMatch && (
+                          <span className="text-[10px] text-cyan-400 font-mono font-normal">
+                            ({activeSelectedMatch.data.matchInfo.homeTeam})
+                          </span>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSandboxTarget('preset')}
+                        className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-all font-bold cursor-pointer ${
+                          sandboxTarget === 'preset'
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <BookOpen className="w-3.5 h-3.5 text-amber-400" />
+                        <span>📚 教学案例</span>
+                        <span className="text-[10px] text-amber-400 font-mono font-normal">
+                          ({models[activeModel].caseName.split('（')[0].slice(0, 8)})
+                        </span>
+                      </button>
+                    </div>
                   </div>
-                  <div className="text-xs font-mono font-bold text-emerald-400 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-800/40 self-start sm:self-auto">
-                    赛果：{activeSandbox.finalScore}
-                  </div>
+
+                  {/* Batch Actions or Single Match Dropdown */}
+                  {sandboxTarget === 'single' && batchQueue && batchQueue.length > 0 && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-slate-400">切换推演场次:</span>
+                      <select
+                        value={selectedMatchId || activeSelectedMatch?.id || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setSelectedMatchId(val);
+                          const found = batchQueue.find((b) => b.id === val);
+                          if (found && onSelectMatch) {
+                            onSelectMatch(found.data);
+                          }
+                        }}
+                        className="bg-slate-900 border border-cyan-500/40 text-cyan-300 text-xs rounded-lg px-2.5 py-1 font-mono focus:outline-none focus:ring-1 focus:ring-cyan-500 cursor-pointer"
+                      >
+                        {batchQueue.map((b, i) => (
+                          <option key={b.id} value={b.id}>
+                            #{i + 1} {b.data.matchInfo.homeTeam} vs {b.data.matchInfo.awayTeam} ({b.data.matchInfo.league || '联赛'})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {sandboxTarget === 'batch' && batchQueue.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleCopyBatchSandbox}
+                      className="flex items-center gap-1.5 px-3 py-1 bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 cursor-pointer"
+                    >
+                      {copiedBatchSandbox ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                          <span className="text-emerald-400 font-bold">已复制全部沙盘合辑</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>一键复制 {batchQueue.length} 场沙盘合辑 (Markdown)</span>
+                        </>
+                      )}
+                    </button>
+                  )}
                 </div>
 
-                {/* Pre-Match Context */}
-                <div className="text-xs text-slate-300 bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
-                  <strong className="text-amber-300">战意与题材背景：</strong>{activeSandbox.story}
-                </div>
+                {/* BATCH ALL MATCHES STREAM */}
+                {sandboxTarget === 'batch' ? (
+                  <div className="space-y-4">
+                    {/* Model Filter Pills */}
+                    {batchQueue.length > 0 && (
+                      <div className="flex items-center gap-1.5 flex-wrap text-xs bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
+                        <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                          <Filter className="w-3 h-3 text-cyan-400" />
+                          <span>按操盘模型筛选:</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setBatchModelFilter('ALL')}
+                          className={`px-2 py-0.5 rounded text-[11px] font-bold border transition-colors cursor-pointer ${
+                            batchModelFilter === 'ALL'
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          全部 ({batchQueue.length})
+                        </button>
+                        {models.map((m) => {
+                          const count = batchQueue.filter((b) => {
+                            const rep = b.report || generateActuarialRuleReport(b.data);
+                            return rep.identifiedModel === m.id;
+                          }).length;
+                          if (count === 0) return null;
+                          return (
+                            <button
+                              key={m.id}
+                              type="button"
+                              onClick={() => setBatchModelFilter(m.id)}
+                              className={`px-2 py-0.5 rounded text-[11px] font-bold border transition-colors cursor-pointer ${
+                                batchModelFilter === m.id
+                                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50'
+                                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              {m.title.replace(/[【】]/g, '').slice(0, 4)} ({count})
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
 
-                {/* Odds Transition Card: Early vs Late */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-mono">
-                  {/* Euro Odds Transition */}
-                  <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-1.5">
-                    <span className="text-[11px] text-slate-400 font-sans font-bold flex items-center gap-1">
-                      <Activity className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>欧指（百家平均）跳变</span>
-                    </span>
-                    <div className="flex items-center justify-between pt-1 text-[11px]">
-                      <span className="text-slate-400">早盘初赔：</span>
-                      <span className="text-slate-200 font-bold">{activeSandbox.earlyEuro}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-cyan-400 font-bold">临场终赔：</span>
-                      <span className="text-cyan-300 font-black">{activeSandbox.lateEuro}</span>
-                    </div>
-                    <p className="text-[10px] text-slate-400 font-sans pt-1 border-t border-slate-800/60 leading-relaxed">
-                      {activeSandbox.euroShift}
-                    </p>
-                  </div>
+                    {batchQueue.length === 0 ? (
+                      <div className="bg-slate-950/80 p-8 rounded-xl border border-slate-800 text-center space-y-2">
+                        <div className="text-slate-400 text-xs">当前批量队列为空，尚未导入多场次比赛数据。</div>
+                        <p className="text-[11px] text-slate-500">
+                          请在顶部点击「上传附件」导入 Markdown 或 CSV 格式比赛，即可在此批量全览所有场次的四步沙盘推演！
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {batchQueue
+                          .filter((item) => {
+                            if (batchModelFilter === 'ALL') return true;
+                            const rep = item.report || generateActuarialRuleReport(item.data);
+                            return rep.identifiedModel === batchModelFilter;
+                          })
+                          .map((item, idx) => {
+                            const rep = item.report || generateActuarialRuleReport(item.data);
+                            const box = buildMatchSandbox(item.data, rep, item.finalScore);
+                            const modelItem = models.find((m) => m.id === rep.identifiedModel);
+                            return (
+                              <div
+                                key={item.id}
+                                className="bg-slate-950/90 border border-slate-800 rounded-xl p-4 space-y-3.5 shadow-md relative"
+                              >
+                                {/* Header */}
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-2.5">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="w-5 h-5 rounded bg-emerald-500/15 text-emerald-400 font-mono text-[11px] font-bold flex items-center justify-center">
+                                      #{idx + 1}
+                                    </span>
+                                    <h5 className="text-sm font-black text-white">
+                                      {box.matchTitle}
+                                    </h5>
+                                    <span className="text-[11px] text-slate-400 font-mono">
+                                      ({box.league})
+                                    </span>
+                                    <span
+                                      className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                                        modelItem?.badgeColor ||
+                                        'bg-slate-800 text-slate-400 border-slate-700'
+                                      }`}
+                                    >
+                                      【{rep.modelTitle}】
+                                    </span>
+                                  </div>
 
-                  {/* Asian Handicap Transition */}
-                  <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-1.5">
-                    <span className="text-[11px] text-slate-400 font-sans font-bold flex items-center gap-1">
-                      <Target className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>亚盘（机构风向标）跳变</span>
-                    </span>
-                    <div className="flex items-center justify-between pt-1 text-[11px]">
-                      <span className="text-slate-400">早盘初指：</span>
-                      <span className="text-slate-200 font-bold">{activeSandbox.earlyAsian}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-emerald-400 font-bold">临场终盘：</span>
-                      <span className="text-emerald-300 font-black">{activeSandbox.lateAsian}</span>
-                    </div>
-                    <p className="text-[10px] text-slate-400 font-sans pt-1 border-t border-slate-800/60 leading-relaxed">
-                      {activeSandbox.asianShift}
-                    </p>
-                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <div className="text-xs font-mono font-bold text-emerald-400 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-800/40">
+                                      {box.finalScore}
+                                    </div>
+                                    {onSelectMatch && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          onSelectMatch(item.data);
+                                          if (onNavigateToWorkbench) onNavigateToWorkbench();
+                                        }}
+                                        className="px-2.5 py-1 text-xs font-bold bg-slate-800 hover:bg-cyan-500 hover:text-slate-950 text-slate-200 rounded border border-slate-700 transition-colors inline-flex items-center gap-1 cursor-pointer"
+                                      >
+                                        <span>三维研判</span>
+                                        <ArrowRight className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
 
-                  {/* Over/Under Transition */}
-                  <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-1.5">
-                    <span className="text-[11px] text-slate-400 font-sans font-bold flex items-center gap-1">
-                      <Flame className="w-3.5 h-3.5 text-amber-400" />
-                      <span>大小球（进球预期）跳变</span>
-                    </span>
-                    <div className="flex items-center justify-between pt-1 text-[11px]">
-                      <span className="text-slate-400">早盘初线：</span>
-                      <span className="text-slate-200 font-bold">{activeSandbox.earlyOU}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-amber-400 font-bold">临场终线：</span>
-                      <span className="text-amber-300 font-black">{activeSandbox.lateOU}</span>
-                    </div>
-                    <p className="text-[10px] text-slate-400 font-sans pt-1 border-t border-slate-800/60 leading-relaxed">
-                      {activeSandbox.ouShift}
-                    </p>
-                  </div>
-                </div>
+                                {/* Story */}
+                                <div className="text-xs text-slate-300 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/80">
+                                  <strong className="text-amber-300">战意与题材背景：</strong>
+                                  {box.story}
+                                </div>
 
-                {/* Step-by-Step Actuarial Deduction Walkthrough */}
-                <div className="space-y-2 pt-1 text-xs">
-                  <div className="text-slate-300 font-bold flex items-center gap-1.5">
-                    <Zap className="w-4 h-4 text-cyan-400" />
-                    <span>四步沙盘操盘博弈测谎推演：</span>
-                  </div>
+                                {/* Odds Transition Card */}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs font-mono">
+                                  <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800 space-y-1">
+                                    <span className="text-[10px] text-slate-400 font-sans font-bold flex items-center gap-1">
+                                      <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                                      <span>欧指跳变</span>
+                                    </span>
+                                    <div className="flex items-center justify-between text-[11px]">
+                                      <span className="text-slate-400">初：{box.earlyEuro}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-[11px]">
+                                      <span className="text-cyan-400 font-bold">终：{box.lateEuro}</span>
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 font-sans pt-1 border-t border-slate-800/60 leading-relaxed truncate">
+                                      {box.euroShift}
+                                    </p>
+                                  </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 space-y-1">
-                      <div className="text-slate-400 font-bold text-[11px]">第一阶段 · 早盘意图</div>
-                      <p className="text-slate-300 text-[11px] leading-relaxed">{activeSandbox.step1}</p>
+                                  <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800 space-y-1">
+                                    <span className="text-[10px] text-slate-400 font-sans font-bold flex items-center gap-1">
+                                      <Target className="w-3.5 h-3.5 text-emerald-400" />
+                                      <span>亚盘跳变</span>
+                                    </span>
+                                    <div className="flex items-center justify-between text-[11px]">
+                                      <span className="text-slate-400">初：{box.earlyAsian}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-[11px]">
+                                      <span className="text-emerald-400 font-bold">终：{box.lateAsian}</span>
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 font-sans pt-1 border-t border-slate-800/60 leading-relaxed truncate">
+                                      {box.asianShift}
+                                    </p>
+                                  </div>
+
+                                  <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800 space-y-1">
+                                    <span className="text-[10px] text-slate-400 font-sans font-bold flex items-center gap-1">
+                                      <Flame className="w-3.5 h-3.5 text-amber-400" />
+                                      <span>大小球跳变</span>
+                                    </span>
+                                    <div className="flex items-center justify-between text-[11px]">
+                                      <span className="text-slate-400">初：{box.earlyOU}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-[11px]">
+                                      <span className="text-amber-400 font-bold">终：{box.lateOU}</span>
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 font-sans pt-1 border-t border-slate-800/60 leading-relaxed truncate">
+                                      {box.ouShift}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                {/* 4-Step Deduction Walkthrough */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-1">
+                                  <div className="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800 space-y-1">
+                                    <div className="text-slate-400 font-bold text-[11px]">
+                                      第一阶段 · 早盘基石建仓
+                                    </div>
+                                    <p className="text-slate-300 text-[11px] leading-relaxed">
+                                      {box.step1}
+                                    </p>
+                                  </div>
+                                  <div className="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800 space-y-1">
+                                    <div className="text-slate-400 font-bold text-[11px]">
+                                      第二阶段 · 资金发酵沉淀
+                                    </div>
+                                    <p className="text-slate-300 text-[11px] leading-relaxed">
+                                      {box.step2}
+                                    </p>
+                                  </div>
+                                  <div className="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800 space-y-1">
+                                    <div className="text-cyan-300 font-bold text-[11px]">
+                                      第三阶段 · 临场风控变轨
+                                    </div>
+                                    <p className="text-slate-300 text-[11px] leading-relaxed">
+                                      {box.step3}
+                                    </p>
+                                  </div>
+                                  <div className="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800 space-y-1">
+                                    <div className="text-emerald-300 font-bold text-[11px]">
+                                      第四阶段 · 终局印证与避坑
+                                    </div>
+                                    <p className="text-slate-300 text-[11px] leading-relaxed">
+                                      {box.step4}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* SINGLE OR PRESET MATCH VIEW */
+                  <div className="space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="w-6 h-6 rounded bg-cyan-500/20 text-cyan-300 flex items-center justify-center font-bold text-xs">
+                          🎲
+                        </span>
+                        <h5 className="text-sm font-black text-white">
+                          【{activeSandbox.matchTitle}】真实战役 · 盘赔动态博弈推演沙盘
+                        </h5>
+                        <span className="text-[11px] text-slate-400 font-mono">
+                          {activeSandbox.league}
+                        </span>
+                      </div>
+                      <div className="text-xs font-mono font-bold text-emerald-400 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-800/40 self-start sm:self-auto">
+                        赛果：{activeSandbox.finalScore}
+                      </div>
                     </div>
-                    <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 space-y-1">
-                      <div className="text-slate-400 font-bold text-[11px]">第二阶段 · 资金发酵</div>
-                      <p className="text-slate-300 text-[11px] leading-relaxed">{activeSandbox.step2}</p>
+
+                    {/* Pre-Match Context */}
+                    <div className="text-xs text-slate-300 bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
+                      <strong className="text-amber-300">战意与题材背景：</strong>{activeSandbox.story}
                     </div>
-                    <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 space-y-1">
-                      <div className="text-cyan-300 font-bold text-[11px]">第三阶段 · 临场风控变轨</div>
-                      <p className="text-slate-300 text-[11px] leading-relaxed">{activeSandbox.step3}</p>
+
+                    {/* Odds Transition Card: Early vs Late */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-mono">
+                      {/* Euro Odds Transition */}
+                      <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-1.5">
+                        <span className="text-[11px] text-slate-400 font-sans font-bold flex items-center gap-1">
+                          <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>欧指（百家平均）跳变</span>
+                        </span>
+                        <div className="flex items-center justify-between pt-1 text-[11px]">
+                          <span className="text-slate-400">早盘初赔：</span>
+                          <span className="text-slate-200 font-bold">{activeSandbox.earlyEuro}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-cyan-400 font-bold">临场终赔：</span>
+                          <span className="text-cyan-300 font-black">{activeSandbox.lateEuro}</span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 font-sans pt-1 border-t border-slate-800/60 leading-relaxed">
+                          {activeSandbox.euroShift}
+                        </p>
+                      </div>
+
+                      {/* Asian Handicap Transition */}
+                      <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-1.5">
+                        <span className="text-[11px] text-slate-400 font-sans font-bold flex items-center gap-1">
+                          <Target className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>亚盘（机构风向标）跳变</span>
+                        </span>
+                        <div className="flex items-center justify-between pt-1 text-[11px]">
+                          <span className="text-slate-400">早盘初指：</span>
+                          <span className="text-slate-200 font-bold">{activeSandbox.earlyAsian}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-emerald-400 font-bold">临场终盘：</span>
+                          <span className="text-emerald-300 font-black">{activeSandbox.lateAsian}</span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 font-sans pt-1 border-t border-slate-800/60 leading-relaxed">
+                          {activeSandbox.asianShift}
+                        </p>
+                      </div>
+
+                      {/* Over/Under Transition */}
+                      <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-1.5">
+                        <span className="text-[11px] text-slate-400 font-sans font-bold flex items-center gap-1">
+                          <Flame className="w-3.5 h-3.5 text-amber-400" />
+                          <span>大小球（进球预期）跳变</span>
+                        </span>
+                        <div className="flex items-center justify-between pt-1 text-[11px]">
+                          <span className="text-slate-400">早盘初线：</span>
+                          <span className="text-slate-200 font-bold">{activeSandbox.earlyOU}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-amber-400 font-bold">临场终线：</span>
+                          <span className="text-amber-300 font-black">{activeSandbox.lateOU}</span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 font-sans pt-1 border-t border-slate-800/60 leading-relaxed">
+                          {activeSandbox.ouShift}
+                        </p>
+                      </div>
                     </div>
-                    <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 space-y-1">
-                      <div className="text-emerald-300 font-bold text-[11px]">第四阶段 · 终局印证</div>
-                      <p className="text-slate-300 text-[11px] leading-relaxed">{activeSandbox.step4}</p>
+
+                    {/* Step-by-Step Actuarial Deduction Walkthrough */}
+                    <div className="space-y-2 pt-1 text-xs">
+                      <div className="text-slate-300 font-bold flex items-center gap-1.5">
+                        <Zap className="w-4 h-4 text-cyan-400" />
+                        <span>四步沙盘操盘博弈测谎推演：</span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 space-y-1">
+                          <div className="text-slate-400 font-bold text-[11px]">第一阶段 · 早盘意图</div>
+                          <p className="text-slate-300 text-[11px] leading-relaxed">{activeSandbox.step1}</p>
+                        </div>
+                        <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 space-y-1">
+                          <div className="text-slate-400 font-bold text-[11px]">第二阶段 · 资金发酵</div>
+                          <p className="text-slate-300 text-[11px] leading-relaxed">{activeSandbox.step2}</p>
+                        </div>
+                        <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 space-y-1">
+                          <div className="text-cyan-300 font-bold text-[11px]">第三阶段 · 临场风控变轨</div>
+                          <p className="text-slate-300 text-[11px] leading-relaxed">{activeSandbox.step3}</p>
+                        </div>
+                        <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 space-y-1">
+                          <div className="text-emerald-300 font-bold text-[11px]">第四阶段 · 终局印证</div>
+                          <p className="text-slate-300 text-[11px] leading-relaxed">{activeSandbox.step4}</p>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
           </div>
@@ -864,6 +1841,8 @@ export const ModelKnowledgeBase: React.FC<ModelKnowledgeBaseProps> = ({ onLoadPr
           </div>
         </div>
       </div>
+        </div>
+      )}
     </div>
   );
 };

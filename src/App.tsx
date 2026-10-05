@@ -481,7 +481,7 @@ export default function App() {
       />
 
       {/* Main Terminal Body */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {/* SCENARIO 1: FULL-WIDTH WORKSPACE TABS (Batch Matrix, Post-Match Review, Model KB) */}
         {(activeTab === 'batch' || activeTab === 'review' || activeTab === 'models') && (
           <div className="w-full space-y-6">
@@ -517,7 +517,14 @@ export default function App() {
             )}
 
             {activeTab === 'models' && (
-              <ModelKnowledgeBase onLoadPreset={handleSelectPreset} />
+              <ModelKnowledgeBase
+                onLoadPreset={handleSelectPreset}
+                currentMatch={matchData}
+                currentReport={report}
+                batchQueue={batchQueue}
+                onSelectMatch={handleSelectMatchKeepTab}
+                onNavigateToWorkbench={() => setActiveTab('report')}
+              />
             )}
           </div>
         )}

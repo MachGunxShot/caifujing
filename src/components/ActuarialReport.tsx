@@ -24,6 +24,10 @@ import {
   Maximize2,
   Minimize2,
   Filter,
+  Activity,
+  ChevronDown,
+  ChevronUp,
+  History,
 } from 'lucide-react';
 import { AnalysisReportResult, FullMatchData, BatchMatchItem } from '../types/fortuneActuary';
 import { MarkdownView } from './MarkdownView';
@@ -62,6 +66,8 @@ export const ActuarialReport: React.FC<ActuarialReportProps> = ({
   const [viewMode, setViewMode] = useState<'rendered' | 'markdown'>('rendered');
   const [internalReportMode, setInternalReportMode] = useState<'single' | 'batch'>('single');
   const [selectedMatchIds, setSelectedMatchIds] = useState<string[]>([]);
+  const [isSandboxOpen, setIsSandboxOpen] = useState(true);
+  const [isBatchAllSandboxOpen, setIsBatchAllSandboxOpen] = useState(true);
 
   const reportMode = controlledReportMode !== undefined ? controlledReportMode : internalReportMode;
   const setReportMode = (mode: 'single' | 'batch') => {
@@ -243,6 +249,19 @@ export const ActuarialReport: React.FC<ActuarialReportProps> = ({
                 </button>
                 <button
                   type="button"
+                  onClick={() => setIsBatchAllSandboxOpen(!isBatchAllSandboxOpen)}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                    isBatchAllSandboxOpen
+                      ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
+                      : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+                  }`}
+                  title="一键展开或收起全部批量比赛的四步盘赔博弈沙盘推演"
+                >
+                  <History className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>{isBatchAllSandboxOpen ? '收起四步沙盘' : '展开四步沙盘'}</span>
+                </button>
+                <button
+                  type="button"
                   onClick={handleCopyAllSelectedMarkdown}
                   className="flex items-center gap-1.5 px-3 py-1 bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 cursor-pointer"
                 >
@@ -399,6 +418,93 @@ export const ActuarialReport: React.FC<ActuarialReportProps> = ({
                       </div>
                       <MarkdownView content={rep.threeDimLieDetection} />
                     </div>
+
+                    {/* Dynamic 4-Step Sandbox Game Theory Deduction for this batch match */}
+                    {isBatchAllSandboxOpen && (
+                      <div className="bg-gradient-to-br from-slate-950 via-slate-950 to-slate-900 border border-cyan-500/30 rounded-xl p-3.5 space-y-3">
+                        <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs">🎲</span>
+                            <span className="font-extrabold text-white text-xs">
+                              【实战·四步盘赔博弈推演沙盘】
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-mono text-cyan-400 font-bold">
+                            动态沙盘 · {badge.label.replace(/[【】]/g, '')}
+                          </span>
+                        </div>
+
+                        {/* Odds Comparison */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs font-mono">
+                          <div className="bg-slate-900/80 p-2 rounded border border-slate-800 space-y-1">
+                            <span className="text-[10px] text-slate-400 font-sans font-bold flex items-center gap-1">
+                              <Activity className="w-3 h-3 text-cyan-400" />
+                              <span>欧指初终跳变</span>
+                            </span>
+                            <div className="text-[11px] text-slate-300">
+                              初：{mData.euroOdds.earlyWin.toFixed(2)} ｜ {mData.euroOdds.earlyDraw.toFixed(2)} ｜ {mData.euroOdds.earlyLoss.toFixed(2)}
+                            </div>
+                            <div className="text-[11px] text-cyan-400 font-bold">
+                              终：{mData.euroOdds.lateWin.toFixed(2)} ｜ {mData.euroOdds.lateDraw.toFixed(2)} ｜ {mData.euroOdds.lateLoss.toFixed(2)}
+                            </div>
+                          </div>
+
+                          <div className="bg-slate-900/80 p-2 rounded border border-slate-800 space-y-1">
+                            <span className="text-[10px] text-slate-400 font-sans font-bold flex items-center gap-1">
+                              <Target className="w-3 h-3 text-emerald-400" />
+                              <span>亚盘初终跳变</span>
+                            </span>
+                            <div className="text-[11px] text-slate-300">
+                              初：{mData.asianHandicap.earlyHandicap} ｜ 水 {mData.asianHandicap.earlyHomeOdds.toFixed(2)}
+                            </div>
+                            <div className="text-[11px] text-emerald-400 font-bold">
+                              终：{mData.asianHandicap.lateHandicap} ｜ 水 {mData.asianHandicap.lateHomeOdds.toFixed(2)}
+                            </div>
+                          </div>
+
+                          <div className="bg-slate-900/80 p-2 rounded border border-slate-800 space-y-1">
+                            <span className="text-[10px] text-slate-400 font-sans font-bold flex items-center gap-1">
+                              <Flame className="w-3 h-3 text-amber-400" />
+                              <span>大小球初终跳变</span>
+                            </span>
+                            <div className="text-[11px] text-slate-300">
+                              初：{mData.overUnder.earlyLine}球 ｜ 水 {mData.overUnder.earlyOverOdds.toFixed(2)}
+                            </div>
+                            <div className="text-[11px] text-amber-400 font-bold">
+                              终：{mData.overUnder.lateLine}球 ｜ 水 {mData.overUnder.lateOverOdds.toFixed(2)}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 4 Stages */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                          <div className="bg-slate-900/60 p-2 rounded border border-slate-800/80 space-y-0.5">
+                            <div className="text-slate-400 font-bold text-[10px]">阶段 1 · 早盘基石</div>
+                            <p className="text-slate-300 text-[11px] leading-relaxed">
+                              初盘 {mData.asianHandicap.earlyHandicap} 搭配欧指 {mData.euroOdds.earlyWin.toFixed(2)}，机构设立首道防线平衡两端筹码。
+                            </p>
+                          </div>
+                          <div className="bg-slate-900/60 p-2 rounded border border-slate-800/80 space-y-0.5">
+                            <div className="text-slate-400 font-bold text-[10px]">阶段 2 · 资金发酵</div>
+                            <p className="text-slate-300 text-[11px] leading-relaxed">
+                              受市场题材推动，筹码在主胜与让球盘呈现分流，盘面通过水位微调探寻承受极限。
+                            </p>
+                          </div>
+                          <div className="bg-slate-900/60 p-2 rounded border border-slate-800/80 space-y-0.5">
+                            <div className="text-cyan-300 font-bold text-[10px]">阶段 3 · 临场变轨</div>
+                            <p className="text-slate-300 text-[11px] leading-relaxed">
+                              临场定性为【{badge.label.replace(/[【】]/g, '')}】，重点风控防范 {rep.decision.euroPick} 与 {rep.decision.handicapPick}。
+                            </p>
+                          </div>
+                          <div className="bg-slate-900/60 p-2 rounded border border-slate-800/80 space-y-0.5">
+                            <div className="text-emerald-300 font-bold text-[10px]">阶段 4 · 最终印证</div>
+                            <p className="text-slate-300 text-[11px] leading-relaxed">
+                              {rep.finalVerdict.direction}；{rep.finalVerdict.directionDetail}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     {/* 3. 【财富经最终判定】 */}
                     <div className="bg-emerald-950/30 border border-emerald-500/30 rounded-lg p-3 text-xs space-y-2">
@@ -583,6 +689,154 @@ export const ActuarialReport: React.FC<ActuarialReportProps> = ({
             <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800/60">
               <MarkdownView content={report.threeDimLieDetection} />
             </div>
+          </div>
+
+          {/* Dynamic 4-Step Sandbox Game Theory Deduction for THIS active match! */}
+          <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border border-cyan-500/30 rounded-xl p-4 space-y-4 shadow-xl relative overflow-hidden">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded bg-cyan-500/20 text-cyan-300 flex items-center justify-center font-bold text-xs">
+                  🎲
+                </span>
+                <h4 className="text-sm font-black text-white">
+                  【{matchData.matchInfo.homeTeam} vs {matchData.matchInfo.awayTeam}】实战·盘赔动态博弈推演沙盘
+                </h4>
+                <span className="text-[11px] text-slate-400 font-mono">
+                  {matchData.matchInfo.league || '常规联赛'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono font-bold text-emerald-400 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-800/40">
+                  {modelBadge.label}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsSandboxOpen(!isSandboxOpen)}
+                  className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-cyan-300 text-xs font-bold rounded-lg transition-colors cursor-pointer"
+                >
+                  <History className="w-3.5 h-3.5" />
+                  <span>{isSandboxOpen ? '收起沙盘' : '展开沙盘'}</span>
+                  {isSandboxOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            </div>
+
+            {isSandboxOpen && (
+              <div className="space-y-4 animate-in fade-in duration-200">
+                {/* Pre-Match Context */}
+                <div className="text-xs text-slate-300 bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
+                  <strong className="text-amber-300">战意与题材背景：</strong>
+                  {matchData.matchInfo.marketStory || `${matchData.matchInfo.homeTeam} 与 ${matchData.matchInfo.awayTeam} 战力对碰，临场资金在胜平负与让球盘呈现博弈分流。`}
+                </div>
+
+                {/* Odds Transition Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-mono">
+                  {/* Euro */}
+                  <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-1.5">
+                    <span className="text-[11px] text-slate-400 font-sans font-bold flex items-center gap-1">
+                      <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>欧指（百家平均）跳变</span>
+                    </span>
+                    <div className="flex items-center justify-between pt-1 text-[11px]">
+                      <span className="text-slate-400">早盘初赔：</span>
+                      <span className="text-slate-200 font-bold">
+                        {matchData.euroOdds.earlyWin.toFixed(2)} ｜ {matchData.euroOdds.earlyDraw.toFixed(2)} ｜ {matchData.euroOdds.earlyLoss.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-cyan-400 font-bold">临场终赔：</span>
+                      <span className="text-cyan-300 font-black">
+                        {matchData.euroOdds.lateWin.toFixed(2)} ｜ {matchData.euroOdds.lateDraw.toFixed(2)} ｜ {matchData.euroOdds.lateLoss.toFixed(2)}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 font-sans pt-1 border-t border-slate-800/60 leading-relaxed">
+                      主胜升跌 {(matchData.euroOdds.lateWin - matchData.euroOdds.earlyWin) > 0 ? `+${(matchData.euroOdds.lateWin - matchData.euroOdds.earlyWin).toFixed(2)}` : (matchData.euroOdds.lateWin - matchData.euroOdds.earlyWin).toFixed(2)}，平赔 {matchData.euroOdds.lateDraw.toFixed(2)}
+                    </p>
+                  </div>
+
+                  {/* Asian */}
+                  <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-1.5">
+                    <span className="text-[11px] text-slate-400 font-sans font-bold flex items-center gap-1">
+                      <Target className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>亚盘（机构风向标）跳变</span>
+                    </span>
+                    <div className="flex items-center justify-between pt-1 text-[11px]">
+                      <span className="text-slate-400">早盘初指：</span>
+                      <span className="text-slate-200 font-bold">
+                        {matchData.asianHandicap.earlyHandicap} ｜ 主水 {matchData.asianHandicap.earlyHomeOdds.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-emerald-400 font-bold">临场终盘：</span>
+                      <span className="text-emerald-300 font-black">
+                        {matchData.asianHandicap.lateHandicap} ｜ 主水 {matchData.asianHandicap.lateHomeOdds.toFixed(2)}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 font-sans pt-1 border-t border-slate-800/60 leading-relaxed">
+                      初盘 {matchData.asianHandicap.earlyHandicap} ➔ 终盘 {matchData.asianHandicap.lateHandicap}，主水 {(matchData.asianHandicap.lateHomeOdds - matchData.asianHandicap.earlyHomeOdds) > 0 ? `+${(matchData.asianHandicap.lateHomeOdds - matchData.asianHandicap.earlyHomeOdds).toFixed(2)}` : (matchData.asianHandicap.lateHomeOdds - matchData.asianHandicap.earlyHomeOdds).toFixed(2)}
+                    </p>
+                  </div>
+
+                  {/* OU */}
+                  <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-1.5">
+                    <span className="text-[11px] text-slate-400 font-sans font-bold flex items-center gap-1">
+                      <Flame className="w-3.5 h-3.5 text-amber-400" />
+                      <span>大小球（进球预期）跳变</span>
+                    </span>
+                    <div className="flex items-center justify-between pt-1 text-[11px]">
+                      <span className="text-slate-400">早盘初线：</span>
+                      <span className="text-slate-200 font-bold">
+                        {matchData.overUnder.earlyLine}球 ｜ 大水 {matchData.overUnder.earlyOverOdds.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-amber-400 font-bold">临场终线：</span>
+                      <span className="text-amber-300 font-black">
+                        {matchData.overUnder.lateLine}球 ｜ 大水 {matchData.overUnder.lateOverOdds.toFixed(2)}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 font-sans pt-1 border-t border-slate-800/60 leading-relaxed">
+                      {report.metrics.overUnderVerdict}
+                    </p>
+                  </div>
+                </div>
+
+                {/* 4-Step Deduction Walkthrough */}
+                <div className="space-y-2 pt-1 text-xs">
+                  <div className="text-slate-300 font-bold flex items-center gap-1.5">
+                    <Zap className="w-4 h-4 text-cyan-400" />
+                    <span>四步沙盘操盘博弈测谎推演（结合【{modelBadge.label.replace(/[【】]/g, '')}】法则）：</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 space-y-1">
+                      <div className="text-slate-400 font-bold text-[11px]">第一阶段 · 早盘基石建仓</div>
+                      <p className="text-slate-300 text-[11px] leading-relaxed">
+                        初盘让步 {matchData.asianHandicap.earlyHandicap}（主水 {matchData.asianHandicap.earlyHomeOdds.toFixed(2)}）搭配欧指初赔 {matchData.euroOdds.earlyWin.toFixed(2)}，机构设立初始防线合理平衡双边基石资金，试探市场初探方向。
+                      </p>
+                    </div>
+                    <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 space-y-1">
+                      <div className="text-slate-400 font-bold text-[11px]">第二阶段 · 资金发酵沉淀</div>
+                      <p className="text-slate-300 text-[11px] leading-relaxed">
+                        伴随赛事题材传播与大众主队情怀沉淀，市场筹码在主胜与让球盘持续分流，机构资金池进入第一轮对冲自愈期。
+                      </p>
+                    </div>
+                    <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 space-y-1">
+                      <div className="text-cyan-300 font-bold text-[11px]">第三阶段 · 临场风控变轨</div>
+                      <p className="text-slate-300 text-[11px] leading-relaxed">
+                        临场终盘定性为{modelBadge.label}：{report.firstImpression ? report.firstImpression.slice(0, 120) + '...' : modelBadge.desc}
+                      </p>
+                    </div>
+                    <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 space-y-1">
+                      <div className="text-emerald-300 font-bold text-[11px]">第四阶段 · 终局印证与避坑</div>
+                      <p className="text-slate-300 text-[11px] leading-relaxed">
+                        {report.finalVerdict.direction}；{report.finalVerdict.directionDetail}。{report.finalVerdict.riskWarning}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Section 3: 【财富经最终判定】 */}
