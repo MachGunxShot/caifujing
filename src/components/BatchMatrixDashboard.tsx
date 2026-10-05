@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Layers,
   ArrowRight,
@@ -19,6 +19,10 @@ import {
   Check,
   Percent,
   BarChart3,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { BatchMatchItem, FullMatchData } from '../types/fortuneActuary';
 import { generateActuarialRuleReport } from '../utils/actuaryEngine';
@@ -44,6 +48,8 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
 }) => {
   const [viewStyle, setViewStyle] = useState<'matrix' | 'cards'>('matrix');
   const [starFilter, setStarFilter] = useState<number | 'ALL'>('ALL');
+  const [sortBy, setSortBy] = useState<'stars' | 'time' | 'default'>('stars');
+  const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
   const [copiedBatch, setCopiedBatch] = useState(false);
   const [showD3Chart, setShowD3Chart] = useState(true);
 
@@ -79,33 +85,107 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
     );
   };
 
-  const filteredQueue = queue.filter((item) => {
-    if (starFilter === 'ALL') return true;
-    const report = item.report || generateActuarialRuleReport(item.data);
-    return report.decision.starRating === starFilter;
-  });
+  // Pre-process all items with computed actuarial reports
+  const processedItems = useMemo(() => {
+    return queue.map((item, originalIndex) => {
+      const report = item.report || generateActuarialRuleReport(item.data);
+      const dec = report.decision;
+      const model = report.identifiedModel;
+      const time = item.data.matchInfo.matchTime || '99:99';
+      return {
+        item,
+        originalIndex,
+        report,
+        dec,
+        model,
+        time,
+        stars: dec.starRating,
+      };
+    });
+  }, [queue]);
+
+  const fiveStarCount = useMemo(() => processedItems.filter((p) => p.stars === 5).length, [processedItems]);
+  const fourStarCount = useMemo(() => processedItems.filter((p) => p.stars === 4).length, [processedItems]);
+  const threeStarCount = useMemo(() => processedItems.filter((p) => p.stars === 3).length, [processedItems]);
+
+  // Apply star filter
+  const filteredItems = useMemo(() => {
+    if (starFilter === 'ALL') return processedItems;
+    return processedItems.filter((p) => p.stars === starFilter);
+  }, [processedItems, starFilter]);
+
+  // Apply sorting (stars, time, default)
+  const sortedItems = useMemo(() => {
+    const list = [...filteredItems];
+    list.sort((a, b) => {
+      if (sortBy === 'stars') {
+        const starDiff = sortOrder === 'desc' ? b.stars - a.stars : a.stars - b.stars;
+        if (starDiff !== 0) return starDiff;
+
+        // Sub-sort by model significance:
+        // 5星优先: 极限榨水 (稳胆) -> 平赔低洼 (胆平) -> 高息吸筹 (杀猪盘反选) -> 浅盘满水
+        const modelRank = (m: string) => {
+          if (m === 'POSITIVE_CONTROL') return 4;
+          if (m === 'LOW_DRAW_DEFENSE') return 3;
+          if (m === 'HIGH_INTEREST_TRAP') return 2;
+          if (m === 'SHALLOW_FULL_WATER') return 1;
+          return 0;
+        };
+        const mDiff = modelRank(b.model) - modelRank(a.model);
+        if (mDiff !== 0) return mDiff;
+
+        // Then by kick-off time
+        return a.time.localeCompare(b.time);
+      }
+
+      if (sortBy === 'time') {
+        const tCmp = a.time.localeCompare(b.time);
+        return sortOrder === 'desc' ? -tCmp : tCmp;
+      }
+
+      // Default: original input order
+      return sortOrder === 'desc'
+        ? b.originalIndex - a.originalIndex
+        : a.originalIndex - b.originalIndex;
+    });
+    return list;
+  }, [filteredItems, sortBy, sortOrder]);
+
+  const toggleSort = (field: 'stars' | 'time' | 'default') => {
+    if (sortBy === field) {
+      setSortOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'));
+    } else {
+      setSortBy(field);
+      setSortOrder('desc');
+    }
+  };
 
   const handleExportMarkdownSummary = () => {
-    if (queue.length === 0) return;
-    let md = `# 《财富经》足彩批量决策大盘报告汇总 (${queue.length} 场)\n\n`;
-    md += `> **生成时间**：${new Date().toLocaleString()} ｜ **架构**：单场上下文沙箱隔离 · 0% 上下文溢出\n\n`;
+    if (sortedItems.length === 0) return;
+    let md = `# 《财富经》足彩批量决策大盘报告汇总 (${sortedItems.length} 场)\n\n`;
+    md += `> **生成时间**：${new Date().toLocaleString()} ｜ **排序**：${
+      sortBy === 'stars'
+        ? sortOrder === 'desc'
+          ? '推荐星级从高到低 (5星稳胆优先)'
+          : '推荐星级从低到高'
+        : sortBy === 'time'
+        ? '开赛时间排序'
+        : '原始导入顺序'
+    }\n\n`;
     md += `| 推荐星级 | 联赛/对阵 | 胜平负首选 | 让球首选 | 大小球首选 | 参考比分 | 操盘定性 | 避坑风险提示 |\n`;
     md += `| :---: | :--- | :---: | :--- | :---: | :---: | :---: | :--- |\n`;
 
-    queue.forEach((item) => {
-      const rep = item.report || generateActuarialRuleReport(item.data);
-      const dec = rep.decision;
+    sortedItems.forEach(({ item, report, dec }) => {
       const starStr = '★'.repeat(dec.starRating) + '☆'.repeat(5 - dec.starRating);
-      md += `| ${starStr} | **${item.data.matchInfo.homeTeam}** vs **${item.data.matchInfo.awayTeam}** (${item.data.matchInfo.league}) | **${dec.euroPick}** | \`${dec.handicapPick}\` | ${dec.overUnderPick} | ${dec.predictedScores.join(', ')} | **${rep.modelTitle}** | ${rep.finalVerdict.riskWarning} |\n`;
+      md += `| ${starStr} | **${item.data.matchInfo.homeTeam}** vs **${item.data.matchInfo.awayTeam}** (${item.data.matchInfo.league}) | **${dec.euroPick}** | \`${dec.handicapPick}\` | ${dec.overUnderPick} | ${dec.predictedScores.join(', ')} | **${report.modelTitle}** | ${report.finalVerdict.riskWarning} |\n`;
     });
 
     md += `\n---\n\n## 逐场深度《财富经》三维测谎诊断\n\n`;
-    queue.forEach((item, idx) => {
-      const rep = item.report || generateActuarialRuleReport(item.data);
+    sortedItems.forEach(({ item, report }, idx) => {
       md += `### 【${idx + 1}】${item.data.matchInfo.homeTeam} vs ${item.data.matchInfo.awayTeam} (${item.data.matchInfo.league})\n\n`;
-      md += `1. **【盘面第一印象】**\n${rep.firstImpression}\n\n`;
-      md += `2. **【三维联动测谎】**\n${rep.threeDimLieDetection}\n\n`;
-      md += `3. **【财富经最终判定】**\n- **推荐方向**：${rep.finalVerdict.direction}\n- **比分细化**：${rep.finalVerdict.directionDetail}\n- **避坑提示**：${rep.finalVerdict.riskWarning}\n\n---\n\n`;
+      md += `1. **【盘面第一印象】**\n${report.firstImpression}\n\n`;
+      md += `2. **【三维联动测谎】**\n${report.threeDimLieDetection}\n\n`;
+      md += `3. **【财富经最终判定】**\n- **推荐方向**：${report.finalVerdict.direction}\n- **比分细化**：${report.finalVerdict.directionDetail}\n- **避坑提示**：${report.finalVerdict.riskWarning}\n\n---\n\n`;
     });
 
     navigator.clipboard.writeText(md);
@@ -223,7 +303,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
           <div className="flex items-center gap-1 text-xs">
             <button
               onClick={() => setStarFilter('ALL')}
-              className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+              className={`px-2 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
                 starFilter === 'ALL'
                   ? 'bg-slate-800 text-white border border-slate-600 font-bold'
                   : 'text-slate-400 hover:text-slate-200'
@@ -233,23 +313,77 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
             </button>
             <button
               onClick={() => setStarFilter(5)}
-              className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+              className={`px-2 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
                 starFilter === 5
                   ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              ★★★★★ 5星
+              ★★★★★ 5星 ({fiveStarCount})
             </button>
             <button
               onClick={() => setStarFilter(4)}
-              className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+              className={`px-2 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
                 starFilter === 4
                   ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              ★★★★ 4星
+              ★★★★ 4星 ({fourStarCount})
+            </button>
+          </div>
+
+          {/* Quick Sorting Pills */}
+          <div className="flex items-center gap-1 bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-xs">
+            <span className="text-[10px] text-slate-500 font-bold px-1 flex items-center gap-0.5">
+              <SlidersHorizontal className="w-3 h-3 text-cyan-400" />
+              <span>排序</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => toggleSort('stars')}
+              className={`px-2 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                sortBy === 'stars'
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="按星级高低排序（5星稳胆优先）"
+            >
+              <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+              <span>星级优先</span>
+              {sortBy === 'stars' && (
+                sortOrder === 'desc' ? <ArrowDown className="w-3 h-3" /> : <ArrowUp className="w-3 h-3" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleSort('time')}
+              className={`px-2 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                sortBy === 'time'
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/50 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="按开赛时间排序"
+            >
+              <span>开赛时间</span>
+              {sortBy === 'time' && (
+                sortOrder === 'desc' ? <ArrowDown className="w-3 h-3" /> : <ArrowUp className="w-3 h-3" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleSort('default')}
+              className={`px-2 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                sortBy === 'default'
+                  ? 'bg-slate-800 text-white border border-slate-700 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="按原始导入序号排序"
+            >
+              <span>原始序号</span>
+              {sortBy === 'default' && (
+                sortOrder === 'desc' ? <ArrowDown className="w-3 h-3" /> : <ArrowUp className="w-3 h-3" />
+              )}
             </button>
           </div>
         </div>
@@ -264,7 +398,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
             {copiedBatch ? (
               <>
                 <Check className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="text-emerald-400">已复制大盘 Markdown</span>
+                <span className="text-emerald-400">已复制排序后 Markdown</span>
               </>
             ) : (
               <>
@@ -284,6 +418,42 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
         </div>
       </div>
 
+      {/* Sorting Status Summary Banner */}
+      <div className="bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-2.5 text-xs flex items-center justify-between flex-wrap gap-2 shadow-sm">
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="text-slate-300">
+            {sortBy === 'stars' ? (
+              <>
+                当前已按 <strong className="text-amber-400 font-bold">{sortOrder === 'desc' ? '星级从高到低 (5星稳胆优先)' : '星级从低到高'}</strong> 自动精选排序
+                {sortOrder === 'desc' && (
+                  <span className="text-slate-400 ml-1.5">
+                    — 前 <strong className="text-amber-300 font-extrabold">{fiveStarCount}</strong> 场为 5 星级核心决策赛事（极限榨水正路稳胆 / 平赔低洼精准胆平），后 <strong className="text-slate-300">{threeStarCount}</strong> 场为 3 星级博弈调仓盘
+                  </span>
+                )}
+              </>
+            ) : sortBy === 'time' ? (
+              <>
+                当前已按 <strong className="text-cyan-400 font-bold">开赛时间 ({sortOrder === 'desc' ? '由晚到早' : '由早到晚'})</strong> 排序
+              </>
+            ) : (
+              <>
+                当前按 <strong className="text-slate-200 font-bold">原始导入录入顺序</strong> 呈现
+              </>
+            )}
+          </span>
+        </div>
+        <div className="text-[11px] text-slate-400 font-mono flex items-center gap-2">
+          <span>共 <strong className="text-white">{sortedItems.length}</strong> 场</span>
+          <span>｜</span>
+          <span className="text-amber-400 font-bold">5星: {fiveStarCount} 场</span>
+          <span>｜</span>
+          <span className="text-emerald-400">4星: {fourStarCount} 场</span>
+          <span>｜</span>
+          <span className="text-slate-400">3星: {threeStarCount} 场</span>
+        </div>
+      </div>
+
       {/* D3.js Visualization: Handicap Odds Distribution Chart */}
       {showD3Chart && (
         <HandicapOddsDistributionChart
@@ -298,9 +468,51 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
             <table className="w-full text-left text-xs min-w-[1020px]">
               <thead className="bg-slate-950/90 text-slate-400 text-[11px] uppercase border-b border-slate-800 sticky top-0">
                 <tr>
-                  <th className="py-3 px-3 w-10 text-center whitespace-nowrap">#</th>
-                  <th className="py-3 px-3 w-28 whitespace-nowrap">推荐星级</th>
-                  <th className="py-3 px-4 min-w-[230px] whitespace-nowrap">赛事 / 对阵</th>
+                  <th
+                    onClick={() => toggleSort('default')}
+                    className="py-3 px-3 w-14 text-center whitespace-nowrap cursor-pointer hover:text-white select-none"
+                    title="点击切换原始序号排序"
+                  >
+                    <div className="flex items-center justify-center gap-1">
+                      <span>#</span>
+                      {sortBy === 'default' && (
+                        sortOrder === 'desc' ? <ArrowDown className="w-3 h-3 text-cyan-400" /> : <ArrowUp className="w-3 h-3 text-cyan-400" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => toggleSort('stars')}
+                    className="py-3 px-3 w-32 whitespace-nowrap cursor-pointer hover:text-amber-300 select-none"
+                    title="点击切换星级从高到低/从低到高"
+                  >
+                    <div className="flex items-center gap-1 font-bold">
+                      <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                      <span className={sortBy === 'stars' ? 'text-amber-300' : ''}>推荐星级</span>
+                      {sortBy === 'stars' ? (
+                        sortOrder === 'desc' ? (
+                          <span className="text-[10px] text-amber-400 font-mono ml-0.5">↓(高)</span>
+                        ) : (
+                          <span className="text-[10px] text-amber-400 font-mono ml-0.5">↑(低)</span>
+                        )
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-600" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => toggleSort('time')}
+                    className="py-3 px-4 min-w-[230px] whitespace-nowrap cursor-pointer hover:text-cyan-300 select-none"
+                    title="点击按开赛时间排序"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span className={sortBy === 'time' ? 'text-cyan-300 font-bold' : ''}>赛事 / 对阵</span>
+                      {sortBy === 'time' ? (
+                        sortOrder === 'desc' ? <ArrowDown className="w-3 h-3 text-cyan-400" /> : <ArrowUp className="w-3 h-3 text-cyan-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-600" />
+                      )}
+                    </div>
+                  </th>
                   <th className="py-3 px-3 min-w-[120px] whitespace-nowrap">胜平负首选</th>
                   <th className="py-3 px-3 min-w-[160px] whitespace-nowrap">让球首选</th>
                   <th className="py-3 px-3 min-w-[120px] whitespace-nowrap">大小球首选</th>
@@ -310,28 +522,59 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/70 font-sans">
-                {filteredQueue.map((item, idx) => {
-                  const rep = item.report || generateActuarialRuleReport(item.data);
-                  const dec = rep.decision;
-                  const badge = getBadgeForModel(rep.identifiedModel);
+                {sortedItems.map(({ item, report, dec, originalIndex }, idx) => {
+                  const badge = getBadgeForModel(report.identifiedModel);
+                  const isFiveStar = dec.starRating === 5;
+                  const isFourStar = dec.starRating === 4;
 
                   return (
                     <tr
                       key={item.id}
                       onClick={() => onSelectMatch(item.data)}
-                      className="hover:bg-slate-850/80 transition-colors group cursor-pointer"
+                      className={`transition-colors group cursor-pointer ${
+                        isFiveStar
+                          ? 'border-l-4 border-l-amber-400 bg-gradient-to-r from-amber-500/[0.08] via-amber-500/[0.02] to-transparent hover:bg-amber-500/[0.12]'
+                          : isFourStar
+                          ? 'border-l-4 border-l-emerald-400 bg-gradient-to-r from-emerald-500/[0.05] via-emerald-500/[0.01] to-transparent hover:bg-emerald-500/[0.08]'
+                          : 'border-l-4 border-l-slate-800 hover:bg-slate-850/80'
+                      }`}
                     >
-                      <td className="py-3 px-3 font-mono text-slate-500 text-center">{idx + 1}</td>
+                      {/* Number & Original Rank */}
+                      <td className="py-3 px-3 font-mono text-center">
+                        {isFiveStar ? (
+                          <div className="font-extrabold text-amber-400 text-xs">
+                            TOP {idx + 1}
+                          </div>
+                        ) : (
+                          <div className="font-bold text-slate-400 text-xs">
+                            {idx + 1}
+                          </div>
+                        )}
+                        <div className="text-[9px] text-slate-500 font-mono mt-0.5">
+                          原#{originalIndex + 1}
+                        </div>
+                      </td>
 
                       {/* 1. 推荐星级 */}
                       <td className="py-3 px-3 whitespace-nowrap">
                         {renderStarRating(dec.starRating)}
-                        <span className="text-[10px] text-slate-400 font-mono mt-0.5 block">
-                          {dec.starRating}星置信度
-                        </span>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <span className={`text-[10px] font-mono ${isFiveStar ? 'text-amber-400 font-bold' : 'text-slate-400'}`}>
+                            {dec.starRating}星置信度
+                          </span>
+                          {isFiveStar && (
+                            <span className="px-1 py-0.2 rounded text-[9px] font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                              {report.identifiedModel === 'POSITIVE_CONTROL'
+                                ? '稳胆'
+                                : report.identifiedModel === 'LOW_DRAW_DEFENSE'
+                                ? '胆平'
+                                : '核心'}
+                            </span>
+                          )}
+                        </div>
                       </td>
 
-                      {/* 赛事对阵 (优化排版：横向完整展示，杜绝纵向折字) */}
+                      {/* 赛事对阵 */}
                       <td className="py-3 px-4 min-w-[230px] whitespace-nowrap">
                         <div className="flex items-center gap-1.5 font-bold text-white group-hover:text-emerald-300 transition-colors text-xs sm:text-[13px]">
                           <span className="font-extrabold tracking-wide">{item.data.matchInfo.homeTeam}</span>
@@ -345,7 +588,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
                             {item.data.matchInfo.league || '常规赛事'}
                           </span>
                           {item.data.matchInfo.matchTime && (
-                            <span className="text-slate-400">
+                            <span className="text-slate-300 font-bold">
                               {item.data.matchInfo.matchTime}
                             </span>
                           )}
@@ -417,7 +660,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
                             e.stopPropagation();
                             onSelectMatch(item.data);
                           }}
-                          className="px-2.5 py-1 bg-slate-800 group-hover:bg-emerald-500 group-hover:text-slate-950 text-slate-300 text-[11px] font-bold rounded border border-slate-700 transition-all inline-flex items-center gap-1"
+                          className="px-2.5 py-1 bg-slate-800 group-hover:bg-emerald-500 group-hover:text-slate-950 text-slate-300 text-[11px] font-bold rounded border border-slate-700 transition-all inline-flex items-center gap-1 cursor-pointer"
                         >
                           <span>深度研判</span>
                           <ArrowRight className="w-3 h-3" />
@@ -435,22 +678,25 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
       {/* VIEW STYLE B: FULL RENDERED STREAM CARDS (Batch-rendered all matches) */}
       {viewStyle === 'cards' && (
         <div className="space-y-6">
-          {filteredQueue.map((item, idx) => {
-            const rep = item.report || generateActuarialRuleReport(item.data);
-            const dec = rep.decision;
+          {sortedItems.map(({ item, report: rep, dec, originalIndex }, idx) => {
             const badge = getBadgeForModel(rep.identifiedModel);
+            const isFiveStar = dec.starRating === 5;
 
             return (
               <div
                 key={item.id}
-                className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg space-y-4 hover:border-slate-700 transition-all"
+                className={`bg-slate-900 border rounded-xl p-5 shadow-lg space-y-4 hover:border-slate-700 transition-all ${
+                  isFiveStar
+                    ? 'border-amber-500/50 shadow-amber-500/5 bg-gradient-to-br from-slate-900 via-slate-900 to-amber-950/10'
+                    : 'border-slate-800'
+                }`}
               >
                 {/* Match Card Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono text-emerald-400 font-bold">
-                        #{idx + 1} 场
+                      <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${isFiveStar ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'text-emerald-400 bg-emerald-500/10'}`}>
+                        TOP #{idx + 1} 场（原#{originalIndex + 1}）
                       </span>
                       <span className="text-xs text-slate-400 font-medium">
                         {item.data.matchInfo.league} ｜ {item.data.matchInfo.matchTime || '临场'}
