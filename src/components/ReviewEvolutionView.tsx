@@ -33,6 +33,9 @@ import {
   ChevronUp,
   Clock,
   Filter,
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   FullMatchData,
@@ -56,6 +59,9 @@ import {
   deletePostMatchReview,
   clearAllPostMatchReviews,
   savePostMatchReview,
+  auditRulesHealth,
+  pruneAndClusterExperienceRules,
+  pruneZeroHitRules,
 } from '../utils/experienceStore';
 import { generateActuarialRuleReport } from '../utils/actuaryEngine';
 import { ParsedScoreItem, parseBatchMatchScoresFromText } from '../utils/textParser';
@@ -119,6 +125,10 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
   // Copy status
   const [copiedJson, setCopiedJson] = useState(false);
+
+  // Rule Health & Categorization States
+  const [ruleCategoryFilter, setRuleCategoryFilter] = useState<'ALL' | 'CLASSIC' | 'SYNTHESIZED' | 'BOILERPLATE'>('ALL');
+  const [healthNotification, setHealthNotification] = useState<string | null>(null);
 
   // Import Rules Modal States
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -636,6 +646,52 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     setNewRuleTitle('');
     setNewRuleContent('');
   };
+
+  // Rules Health Audit
+  const rulesHealth = useMemo(() => auditRulesHealth(rules), [rules]);
+
+  // Handle Prune & Cluster experience rules
+  const handlePruneAndCluster = () => {
+    const res = pruneAndClusterExperienceRules();
+    setRules([...res.newRules]);
+    setHealthNotification(
+      `✨ 智能聚类精炼完成！将 ${res.clusteredCount} 条碎片同质化个案聚类升华为 2 套高阶实战通则，并清除重复条目。法则总数由 ${res.beforeCount} 条优化收敛至 ${res.afterCount} 条！`
+    );
+    setTimeout(() => setHealthNotification(null), 8000);
+  };
+
+  // Handle Pruning zero-hit isolated rules
+  const handlePruneZeroHits = () => {
+    if (
+      window.confirm(
+        '确定要清理所有未被二次印证的孤立单场记录（命中次数为0）吗？《财富经》经典法则与高阶经验将 100% 完好保留。'
+      )
+    ) {
+      const res = pruneZeroHitRules();
+      setRules([...res.newRules]);
+      setHealthNotification(`🧹 已清理 ${res.removedCount} 条未被二次印证的孤立单场记录！`);
+      setTimeout(() => setHealthNotification(null), 6000);
+    }
+  };
+
+  // Filtered Rules based on category filter
+  const filteredRules = useMemo(() => {
+    if (ruleCategoryFilter === 'ALL') return rules;
+    return rules.filter((r) => {
+      const isClassic =
+        r.id.startsWith('rule-classic-') ||
+        r.id.startsWith('rule-seed-') ||
+        r.id === 'rule-philosophy-core' ||
+        r.id === 'rule-goals-detector-1';
+      if (ruleCategoryFilter === 'CLASSIC') return isClassic;
+      const isBoilerplate =
+        (r.ruleContent || '').includes('切忌单向押注，需重点防范实际赛果指向的') ||
+        r.title.includes('逆向避险修正法');
+      if (ruleCategoryFilter === 'BOILERPLATE') return !isClassic && isBoilerplate;
+      if (ruleCategoryFilter === 'SYNTHESIZED') return !isClassic && !isBoilerplate;
+      return true;
+    });
+  }, [rules, ruleCategoryFilter]);
 
   // Export JSON
   const handleExportJson = () => {
@@ -1438,50 +1494,246 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
       {/* ===================== SUBTAB 2: CORE RULES KNOWLEDGE BASE ===================== */}
       {activeSubTab === 'rules' && (
         <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900 border border-slate-800 p-3 rounded-xl">
-            <div>
-              <h3 className="text-sm font-black text-white flex items-center gap-1.5">
-                <BookOpen className="w-4 h-4 text-emerald-400" />
-                <span>《财富经》实战法则进化库（共 {rules.length} 条法则，{activeRulesCount} 条生效中）</span>
-              </h3>
-              <p className="text-[11px] text-slate-400 mt-0.5">
-                所有开启状态的法则均会实时注入 AI 研判提示词与精算推理引擎，实现“越复盘越精准、越实战越智能”。
-              </p>
+          {/* Health Notification Banner */}
+          {healthNotification && (
+            <div className="p-3 bg-emerald-500/15 border border-emerald-500/40 rounded-xl text-xs text-emerald-300 font-semibold flex items-center justify-between gap-2 animate-in fade-in">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{healthNotification}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHealthNotification(null)}
+                className="text-emerald-400 hover:text-white text-xs px-2 py-0.5"
+              >
+                关闭
+              </button>
+            </div>
+          )}
+
+          {/* RULES HEALTH AUDIT & CLUSTERING GOVERNANCE SUITE */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg space-y-3.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
+                  <ShieldCheck className="w-4.5 h-4.5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white flex items-center gap-1.5">
+                    <span>《财富经》法则库健康度体检诊断与冗余治理</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    杜绝“单场过度拟合”与“法则爆炸”。通过模式聚类提炼通则，确保注入 AI 的规则精炼有力！
+                  </p>
+                </div>
+              </div>
+
+              {/* Health Score Badge */}
+              <div className="flex items-center gap-2">
+                <div
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-black flex items-center gap-1.5 ${
+                    rulesHealth.healthScore >= 80
+                      ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
+                      : rulesHealth.healthScore >= 60
+                      ? 'bg-amber-500/15 text-amber-400 border-amber-500/40'
+                      : 'bg-rose-500/15 text-rose-400 border-rose-500/40'
+                  }`}
+                >
+                  {rulesHealth.healthScore >= 80 ? (
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  ) : rulesHealth.healthScore >= 60 ? (
+                    <AlertTriangle className="w-4 h-4 text-amber-400" />
+                  ) : (
+                    <ShieldAlert className="w-4 h-4 text-rose-400" />
+                  )}
+                  <span>
+                    健康度: {rulesHealth.healthScore} 分 (
+                    {rulesHealth.healthScore >= 80 ? '优良状态' : rulesHealth.healthScore >= 60 ? '存在冗余' : '急需聚类收敛'}
+                    )
+                  </span>
+                </div>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap">
+            {/* 4 Health Metric Cards */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+              <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 space-y-1">
+                <div className="text-[10px] text-slate-400 font-bold flex items-center justify-between">
+                  <span>📚 法则总库容</span>
+                  <span className="text-emerald-400 font-mono">{activeRulesCount} 条生效</span>
+                </div>
+                <div className="text-lg font-black text-white font-mono">{rulesHealth.totalCount} <span className="text-xs font-normal text-slate-400">条</span></div>
+                <div className="text-[10px] text-slate-400">建议区间: 15 ~ 20 条高精法则</div>
+              </div>
+
+              <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 space-y-1">
+                <div className="text-[10px] text-slate-400 font-bold flex items-center justify-between">
+                  <span>🏛️ 经典基石法则</span>
+                  <span className="text-cyan-400 font-mono">100% 保护</span>
+                </div>
+                <div className="text-lg font-black text-cyan-300 font-mono">{rulesHealth.classicCount} <span className="text-xs font-normal text-slate-400">条</span></div>
+                <div className="text-[10px] text-slate-400">五大操盘模型 + 心法总纲</div>
+              </div>
+
+              <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 space-y-1">
+                <div className="text-[10px] text-slate-400 font-bold flex items-center justify-between">
+                  <span>💡 高阶聚类通则</span>
+                  <span className="text-emerald-400 font-mono">多场印证</span>
+                </div>
+                <div className="text-lg font-black text-emerald-300 font-mono">{rulesHealth.synthesizedCount} <span className="text-xs font-normal text-slate-400">条</span></div>
+                <div className="text-[10px] text-slate-400">高含金量实战行业通则</div>
+              </div>
+
+              <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 space-y-1">
+                <div className="text-[10px] text-slate-400 font-bold flex items-center justify-between">
+                  <span>⚠️ 单场机械同质项</span>
+                  {rulesHealth.boilerplateCount > 3 ? (
+                    <span className="text-rose-400 font-mono font-bold">待收敛</span>
+                  ) : (
+                    <span className="text-emerald-400 font-mono">健康</span>
+                  )}
+                </div>
+                <div className="text-lg font-black text-amber-300 font-mono">
+                  {rulesHealth.boilerplateCount} <span className="text-xs font-normal text-slate-400">条</span>
+                  {rulesHealth.duplicateCount > 0 && (
+                    <span className="text-xs text-rose-400 font-normal ml-1">({rulesHealth.duplicateCount}重复)</span>
+                  )}
+                </div>
+                <div className="text-[10px] text-slate-400">孤立0命中: {rulesHealth.zeroHitCount} 条</div>
+              </div>
+            </div>
+
+            {/* Audit Suggestions Warning Box */}
+            {rulesHealth.suggestions.length > 0 && (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs space-y-1.5">
+                <div className="font-bold text-amber-300 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                  <span>复盘法则库体检建议：</span>
+                </div>
+                <ul className="space-y-1 text-slate-300 pl-4 list-disc text-[11px] leading-relaxed">
+                  {rulesHealth.suggestions.map((s, idx) => (
+                    <li key={idx}>{s}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Governance Action Buttons */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/80">
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handlePruneAndCluster}
+                  className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs rounded-lg shadow-sm flex items-center gap-1.5 cursor-pointer transition-all"
+                  title="将同质化的单场零散规则聚类归纳为行业通则，并清除重复条目"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>✨ 一键智能聚类精炼 (收敛同质规则)</span>
+                </button>
+
+                {rulesHealth.zeroHitCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={handlePruneZeroHits}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-750 text-amber-300 hover:text-amber-200 border border-amber-500/30 font-bold text-xs rounded-lg flex items-center gap-1 cursor-pointer transition-all"
+                    title="清理未被二次命中的孤立单场记录"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-amber-400" />
+                    <span>🧹 清理零命中孤立个案 ({rulesHealth.zeroHitCount}条)</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setIsAddRuleOpen(true)}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-750 text-white font-bold text-xs rounded-lg border border-slate-700 flex items-center gap-1 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>追加经验</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportJson}
+                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs rounded-lg border border-slate-700 flex items-center gap-1 cursor-pointer"
+                  title="复制整套法则 JSON 备份"
+                >
+                  <Download className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>{copiedJson ? '已复制' : '导出备份'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleImportJson}
+                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs rounded-lg border border-slate-700 flex items-center gap-1 cursor-pointer"
+                  title="从外部粘贴导入法则"
+                >
+                  <Upload className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>导入法则</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Filter Chips Bar */}
+            <div className="flex items-center gap-1.5 flex-wrap pt-2 border-t border-slate-800/60 text-xs">
+              <span className="text-[11px] text-slate-400 flex items-center gap-1 mr-1">
+                <Filter className="w-3 h-3 text-cyan-400" />
+                <span>分类过滤:</span>
+              </span>
+
               <button
                 type="button"
-                onClick={() => setIsAddRuleOpen(true)}
-                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs rounded-lg shadow inline-flex items-center gap-1 cursor-pointer"
+                onClick={() => setRuleCategoryFilter('ALL')}
+                className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                  ruleCategoryFilter === 'ALL'
+                    ? 'bg-slate-800 text-white border border-emerald-500 shadow-sm'
+                    : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-white'
+                }`}
               >
-                <Plus className="w-3.5 h-3.5" />
-                <span>手工追加经验</span>
+                全部展示 ({rules.length})
               </button>
+
               <button
                 type="button"
-                onClick={handleExportJson}
-                className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs rounded-lg border border-slate-700 inline-flex items-center gap-1"
-                title="复制整套法则 JSON 备份"
+                onClick={() => setRuleCategoryFilter('CLASSIC')}
+                className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                  ruleCategoryFilter === 'CLASSIC'
+                    ? 'bg-slate-800 text-cyan-300 border border-cyan-500 shadow-sm'
+                    : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-white'
+                }`}
               >
-                <Download className="w-3.5 h-3.5 text-emerald-400" />
-                <span>{copiedJson ? '已复制 JSON' : '导出备份'}</span>
+                🏛️ 经典基石 ({rulesHealth.classicCount})
               </button>
+
               <button
                 type="button"
-                onClick={handleImportJson}
-                className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs rounded-lg border border-slate-700 inline-flex items-center gap-1"
-                title="从外部粘贴导入法则"
+                onClick={() => setRuleCategoryFilter('SYNTHESIZED')}
+                className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                  ruleCategoryFilter === 'SYNTHESIZED'
+                    ? 'bg-slate-800 text-emerald-300 border border-emerald-500 shadow-sm'
+                    : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-white'
+                }`}
               >
-                <Upload className="w-3.5 h-3.5 text-cyan-400" />
-                <span>导入法则</span>
+                💡 精炼通则 ({rulesHealth.synthesizedCount})
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setRuleCategoryFilter('BOILERPLATE')}
+                className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                  ruleCategoryFilter === 'BOILERPLATE'
+                    ? 'bg-slate-800 text-amber-300 border border-amber-500 shadow-sm'
+                    : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-white'
+                }`}
+              >
+                ⚠️ 待聚类单场 ({rulesHealth.boilerplateCount})
               </button>
             </div>
           </div>
 
-          {/* Rules List */}
+          {/* Rules List (Filtered) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {rules.map((rule, idx) => (
+            {filteredRules.map((rule, idx) => (
               <div
                 key={rule.id}
                 className={`bg-slate-900 border rounded-xl p-4 transition-all relative space-y-2.5 ${
@@ -2055,8 +2307,45 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
                                   {/* Evolved Rule Content */}
                                   <div className="text-xs text-slate-300 leading-relaxed bg-slate-950/60 p-3 rounded-lg border border-slate-800/80 space-y-1.5">
-                                    <div className="font-bold text-emerald-400 flex items-center justify-between">
-                                      <span>提炼法则：【{rev.evolvedRuleTitle}】</span>
+                                    <div className="font-bold text-emerald-400 flex items-center justify-between flex-wrap gap-2">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span>提炼法则：【{rev.evolvedRuleTitle}】</span>
+                                        {rules.some(
+                                          (r) =>
+                                            r.title === rev.evolvedRuleTitle ||
+                                            (r.sourceMatch &&
+                                              r.sourceMatch.includes(rev.matchData.matchInfo.homeTeam) &&
+                                              r.sourceMatch.includes(rev.matchData.matchInfo.awayTeam))
+                                        ) ? (
+                                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                            ✓ 核心库生效中
+                                          </span>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              addOrUpdateExperienceRule({
+                                                id: `rule-promoted-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                                                title: rev.evolvedRuleTitle,
+                                                category: rev.ruleCategory || 'GENERAL',
+                                                leagueScope: rev.matchData.matchInfo.league || '全部联赛',
+                                                ruleContent: rev.evolvedRuleContent,
+                                                sourceMatch: `${rev.matchData.matchInfo.homeTeam} vs ${rev.matchData.matchInfo.awayTeam} (完场: ${rev.actualScore})`,
+                                                createdAt: new Date().toISOString().slice(0, 10),
+                                                isActive: true,
+                                                hitCount: rev.outcomeEvaluation.modelVerified ? 1 : 0,
+                                              });
+                                              setRules(getExperienceRules());
+                                              setHealthNotification(`💡 已将【${rev.evolvedRuleTitle}】成功晋升为核心经验法则！`);
+                                            }}
+                                            className="px-2 py-0.5 bg-slate-800 hover:bg-emerald-600 text-slate-300 hover:text-slate-950 text-[10px] font-bold rounded border border-slate-700 hover:border-emerald-500 transition-colors cursor-pointer flex items-center gap-1"
+                                            title="将本场提炼的经验法则收录进《财富经》核心法则库"
+                                          >
+                                            <Sparkles className="w-3 h-3 text-emerald-400" />
+                                            <span>晋升核心库</span>
+                                          </button>
+                                        )}
+                                      </div>
                                       {rev.dissectionText && (
                                         <button
                                           type="button"

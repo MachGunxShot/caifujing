@@ -22,16 +22,55 @@ import {
 } from './utils/experienceStore';
 import { ShieldCheck, Sparkles, TrendingUp, AlertTriangle, HelpCircle, Layers, Brain } from 'lucide-react';
 
+const QUEUE_STORAGE_KEY = 'fortune_actuary_batch_queue_v2';
+const MATCH_STORAGE_KEY = 'fortune_actuary_current_match_v2';
+const REPORT_STORAGE_KEY = 'fortune_actuary_current_report_v2';
+const ACTIVE_TAB_STORAGE_KEY = 'fortune_actuary_active_tab_v2';
+
 export default function App() {
-  // Start with the classic Real Madrid high interest trap or Man City solid case
   const initialPreset = PRESET_CASES[1]; // 【高息吸筹 / 名气诱导】
-  const [matchData, setMatchData] = useState<FullMatchData>(initialPreset.data);
-  const [activeTab, setActiveTab] = useState<'report' | 'calculator' | 'models' | 'batch' | 'review'>('report');
+
+  // Persistent Match Data
+  const [matchData, setMatchData] = useState<FullMatchData>(() => {
+    try {
+      const saved = localStorage.getItem(MATCH_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.matchInfo && parsed.matchInfo.homeTeam) {
+          return parsed;
+        }
+      }
+    } catch (e) {}
+    return initialPreset.data;
+  });
+
+  // Persistent Active Tab
+  const [activeTab, setActiveTab] = useState<'report' | 'calculator' | 'models' | 'batch' | 'review'>(() => {
+    try {
+      const saved = localStorage.getItem(ACTIVE_TAB_STORAGE_KEY);
+      if (saved && ['report', 'calculator', 'models', 'batch', 'review'].includes(saved)) {
+        return saved as any;
+      }
+    } catch (e) {}
+    return 'report';
+  });
+
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [rawAiText, setRawAiText] = useState<string>('');
-  const [report, setReport] = useState<AnalysisReportResult>(() =>
-    generateActuarialRuleReport(initialPreset.data)
-  );
+
+  // Persistent Report
+  const [report, setReport] = useState<AnalysisReportResult>(() => {
+    try {
+      const saved = localStorage.getItem(REPORT_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.identifiedModel) {
+          return parsed;
+        }
+      }
+    } catch (e) {}
+    return generateActuarialRuleReport(initialPreset.data);
+  });
 
   // Attachment upload modal state
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
@@ -50,8 +89,20 @@ export default function App() {
   const [reportMode, setReportMode] = useState<'single' | 'batch'>('single');
   const [calcMode, setCalcMode] = useState<'single' | 'batch'>('single');
 
-  // Batch matches queue (preloaded with the classic cases for immediate testing)
+  // Persistent Batch Queue: load user's real analyzed matches from localStorage!
   const [batchQueue, setBatchQueue] = useState<BatchMatchItem[]>(() => {
+    try {
+      const saved = localStorage.getItem(QUEUE_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load saved batchQueue:', e);
+    }
+    // Only fallback to presets on pristine first open
     return PRESET_CASES.map((c) => ({
       id: c.id,
       sourceName: c.name,
@@ -61,6 +112,57 @@ export default function App() {
       timestamp: Date.now(),
     }));
   });
+
+  // Auto-persist batchQueue
+  useEffect(() => {
+    try {
+      localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(batchQueue));
+    } catch (e) {
+      console.warn('Failed to persist batchQueue:', e);
+    }
+  }, [batchQueue]);
+
+  // Auto-persist matchData
+  useEffect(() => {
+    try {
+      localStorage.setItem(MATCH_STORAGE_KEY, JSON.stringify(matchData));
+    } catch (e) {}
+  }, [matchData]);
+
+  // Auto-persist report
+  useEffect(() => {
+    try {
+      localStorage.setItem(REPORT_STORAGE_KEY, JSON.stringify(report));
+    } catch (e) {}
+  }, [report]);
+
+  // Auto-persist activeTab
+  useEffect(() => {
+    try {
+      localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTab);
+    } catch (e) {}
+  }, [activeTab]);
+
+  // Explicit handler to reload 5 classic teaching presets
+  const handleResetToPresets = () => {
+    if (
+      window.confirm(
+        '确定要载入官方 5 场经典教学预设案例吗？当前队列中的比赛将被重置为教学用例（曼城、皇马、利物浦、拉齐奥、多特蒙德）。'
+      )
+    ) {
+      const presets: BatchMatchItem[] = PRESET_CASES.map((c) => ({
+        id: c.id,
+        sourceName: c.name,
+        data: c.data,
+        report: generateActuarialRuleReport(c.data),
+        status: 'done' as const,
+        timestamp: Date.now(),
+      }));
+      setBatchQueue(presets);
+      setMatchData(PRESET_CASES[1].data);
+      setReport(generateActuarialRuleReport(PRESET_CASES[1].data));
+    }
+  };
 
   // Analyze function calling server-side Gemini 3.8 Flash with actuarial rule engine fallback
   const handleAnalyze = async (dataToAnalyze: FullMatchData = matchData) => {
@@ -500,6 +602,7 @@ export default function App() {
                 onDismissNotification={() => setImportNotification(null)}
                 onRecordScoreAndReview={handleRecordScoreAndReview}
                 onNavigateToReview={() => setActiveTab('review')}
+                onResetToPresets={handleResetToPresets}
               />
             )}
 

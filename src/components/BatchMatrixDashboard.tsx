@@ -37,6 +37,7 @@ import {
   Activity,
   ChevronDown,
   ChevronUp,
+  RotateCcw,
 } from 'lucide-react';
 import { BatchMatchItem, FullMatchData, AnalysisReportResult } from '../types/fortuneActuary';
 import { generateActuarialRuleReport } from '../utils/actuaryEngine';
@@ -47,6 +48,7 @@ interface BatchMatrixDashboardProps {
   queue: BatchMatchItem[];
   onSelectMatch: (match: FullMatchData) => void;
   onClearQueue: () => void;
+  onResetToPresets?: () => void;
   onOpenUploadModal: () => void;
   onBatchAnalyzeAll: () => Promise<void>;
   isBatchAnalyzing: boolean;
@@ -69,6 +71,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
   queue,
   onSelectMatch,
   onClearQueue,
+  onResetToPresets,
   onOpenUploadModal,
   onBatchAnalyzeAll,
   isBatchAnalyzing,
@@ -362,14 +365,26 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
             您可以点击“上传附件”上传赔率截图、导入快照文件或粘贴多场比赛。导入后支持一键批量测谎输出：推荐星级、胜平负首选、让球首选、大小球首选与参考比分！
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onOpenUploadModal}
-          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs rounded-lg shadow-lg inline-flex items-center gap-1.5 cursor-pointer"
-        >
-          <Plus className="w-4 h-4" />
-          <span>立即上传截图或导入批量文件</span>
-        </button>
+        <div className="flex items-center justify-center gap-3 flex-wrap">
+          <button
+            type="button"
+            onClick={onOpenUploadModal}
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs rounded-lg shadow-lg inline-flex items-center gap-1.5 cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>立即上传截图或导入批量文件</span>
+          </button>
+          {onResetToPresets && (
+            <button
+              type="button"
+              onClick={onResetToPresets}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold text-xs rounded-lg border border-slate-700 shadow inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <RotateCcw className="w-4 h-4 text-cyan-400" />
+              <span>载入 5 场经典教学预设案例</span>
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -1448,11 +1463,21 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
               </>
             )}
           </button>
+          {onResetToPresets && (
+            <button
+              type="button"
+              onClick={onResetToPresets}
+              className="p-1.5 text-slate-400 hover:text-cyan-300 bg-slate-800/80 hover:bg-slate-800 border border-slate-700 rounded-lg transition-colors cursor-pointer"
+              title="重置/重新载入 5 场经典教学预设案例"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
+          )}
           <button
             type="button"
             onClick={onClearQueue}
             className="p-1.5 text-slate-400 hover:text-rose-400 bg-slate-800/80 hover:bg-slate-800 border border-slate-700 rounded-lg transition-colors cursor-pointer"
-            title="清空队列"
+            title="清空当前队列"
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
@@ -1487,18 +1512,26 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
             )}
           </span>
         </div>
-        <div className="text-[11px] text-slate-400 font-mono flex items-center gap-2">
-          <span>共 <strong className="text-white">{sortedItems.length}</strong> 场</span>
-          <span>｜</span>
-          <span className="text-amber-400 font-bold">5星: {fiveStarCount} 场</span>
-          <span>｜</span>
-          <span className="text-emerald-400">4星: {fourStarCount} 场</span>
-          <span>｜</span>
-          <span className="text-slate-400">3星: {threeStarCount} 场</span>
-          <span>｜</span>
-          <span className="text-amber-300 font-bold">
-            🔒 锁定: {lockedMatchesCount} 场
-          </span>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="text-[11px] text-slate-400 font-mono flex items-center gap-2">
+            <span>共 <strong className="text-white">{sortedItems.length}</strong> 场</span>
+            <span>｜</span>
+            <span className="text-amber-400 font-bold">5星: {fiveStarCount} 场</span>
+            <span>｜</span>
+            <span className="text-emerald-400">4星: {fourStarCount} 场</span>
+            <span>｜</span>
+            <span className="text-slate-400">3星: {threeStarCount} 场</span>
+            <span>｜</span>
+            <span className="text-amber-300 font-bold">
+              🔒 锁定: {lockedMatchesCount} 场
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 text-[10px] font-mono text-emerald-400/90 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+            <span>实时自动存盘就绪</span>
+          </div>
         </div>
       </div>
 
