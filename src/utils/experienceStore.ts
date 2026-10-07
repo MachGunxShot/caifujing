@@ -77,6 +77,32 @@ export function getExperienceRules(): EvolvedExperienceRule[] {
       const seen = new Set<string>();
       const deduplicated: EvolvedExperienceRule[] = [];
       for (const r of parsed) {
+        // Auto-fix legacy inverted language
+        if (
+          (r.sourceMatch?.includes('法国') && r.sourceMatch?.includes('比利时')) ||
+          (r.ruleContent?.includes('一球/球半') && r.ruleContent?.includes('3.5') && r.ruleContent?.includes('【主胜】冷门反杀'))
+        ) {
+          r.title = '欧国联【法国 vs 比利时】深盘实力穿盘验证法';
+          r.category = 'POSITIVE_CONTROL';
+          r.ruleContent = '针对 欧国联 类似对阵，若晚盘让步达 一球/球半 且大小球高达 3.5 时，属于真实对攻且让步深邃，切忌盲博受让下盘，顺应让步强队绝对攻势穿盘打出。';
+        } else if (
+          (r.sourceMatch?.includes('摩尔多瓦') && r.sourceMatch?.includes('斯洛伐克')) ||
+          (r.ruleContent?.includes('受球半') && r.ruleContent?.includes('【客胜】冷门反杀'))
+        ) {
+          r.title = '欧国联【摩尔多瓦 vs 斯洛伐克】客让深盘实力穿透法则';
+          r.category = 'POSITIVE_CONTROL';
+          r.ruleContent = '针对 欧国联 类似对阵，若晚盘呈现客让 受球半 且机构防线牢固，强弱分明格局下切忌盲博弱队受让，防范客队实力碾压穿盘大胜。';
+        } else if (r.ruleContent?.includes('【主胜】冷门反杀')) {
+          r.ruleContent = r.ruleContent.replace('【主胜】冷门反杀', '【主队实力穿盘】');
+          r.title = r.title.replace('逆向避险修正法', '实力穿盘验证法');
+        } else if (
+          r.ruleContent?.includes('【客胜】冷门反杀') &&
+          (r.ruleContent?.includes('受球半') || r.ruleContent?.includes('受两球') || r.ruleContent?.includes('受一球'))
+        ) {
+          r.ruleContent = r.ruleContent.replace('【客胜】冷门反杀', '【客队实力穿透】');
+          r.title = r.title.replace('逆向避险修正法', '客让实力穿透法');
+        }
+
         const cleanTitle = (r.title || '').replace(/\s+/g, '').trim();
         const cleanSource = (r.sourceMatch || '').replace(/\s+/g, '').trim();
         const key = cleanTitle || `${cleanSource}_${r.category}`;
@@ -415,6 +441,74 @@ export function pruneZeroHitRules(): {
   const removedCount = currentRules.length - preserved.length;
   saveExperienceRules(preserved);
   return { removedCount, newRules: preserved };
+}
+
+/**
+ * Detects and repairs legacy rules that contain contradictory or inverted language,
+ * such as calling a favorite blowout '【主胜】冷门反杀' or '【客胜】冷门反杀'.
+ */
+export function repairInconsistentLanguageRules(): {
+  repairedCount: number;
+  totalRules: number;
+  newRules: EvolvedExperienceRule[];
+} {
+  const currentRules = getExperienceRules();
+  let repairedCount = 0;
+
+  const repaired = currentRules.map((r) => {
+    let title = r.title;
+    let content = r.ruleContent;
+    let category = r.category;
+    let changed = false;
+
+    // Detect inverted language in France vs Belgium (4-1 win by France)
+    if (
+      (r.sourceMatch?.includes('法国') && r.sourceMatch?.includes('比利时')) ||
+      (content.includes('法国') && content.includes('比利时')) ||
+      (content.includes('一球/球半') && content.includes('3.5') && content.includes('【主胜】冷门反杀'))
+    ) {
+      title = '欧国联【法国 vs 比利时】深盘实力穿盘验证法';
+      category = 'POSITIVE_CONTROL';
+      content = '针对 欧国联 类似对阵，若晚盘让步达 一球/球半 且大小球高达 3.5 时，属于真实对攻且让步深邃，切忌盲博受让下盘，顺应让步强队绝对攻势穿盘打出。';
+      changed = true;
+    }
+    // Detect inverted language in Moldova vs Slovakia (0-4 win by Slovakia)
+    else if (
+      (r.sourceMatch?.includes('摩尔多瓦') && r.sourceMatch?.includes('斯洛伐克')) ||
+      (content.includes('摩尔多瓦') && content.includes('斯洛伐克')) ||
+      (content.includes('受球半') && content.includes('【客胜】冷门反杀'))
+    ) {
+      title = '欧国联【摩尔多瓦 vs 斯洛伐克】客让深盘实力穿透法则';
+      category = 'POSITIVE_CONTROL';
+      content = '针对 欧国联 类似对阵，若晚盘呈现客让 受球半 且机构防线牢固，强弱分明格局下切忌盲博弱队受让，防范客队实力碾压穿盘大胜。';
+      changed = true;
+    }
+    // General repair for any remaining inverted rules
+    else if (content.includes('【主胜】冷门反杀')) {
+      content = content.replace('【主胜】冷门反杀', '【主队实力穿盘】');
+      title = title.replace('逆向避险修正法', '实力穿盘验证法');
+      changed = true;
+    } else if (
+      content.includes('【客胜】冷门反杀') &&
+      (content.includes('受球半') || content.includes('受两球') || content.includes('受一球'))
+    ) {
+      content = content.replace('【客胜】冷门反杀', '【客队实力穿透】');
+      title = title.replace('逆向避险修正法', '客让实力穿透法');
+      changed = true;
+    }
+
+    if (changed) {
+      repairedCount++;
+      return { ...r, title, category, ruleContent: content };
+    }
+    return r;
+  });
+
+  if (repairedCount > 0) {
+    saveExperienceRules(repaired);
+  }
+
+  return { repairedCount, totalRules: repaired.length, newRules: repaired };
 }
 
 /**
@@ -1066,21 +1160,31 @@ export function evaluateMatchOutcomeAndExtractLesson(
 3. 核心进化结论：必须将此类特例盘型沉淀到实战战报库，在未来类似盘口时提高防范权重。`;
 
     // Distinguish between actual underdog upset vs heavy favorite blowout vs draw
-    const isHomeBigWin = goalDiff >= 2 && lateHandicapNum <= -0.75;
-    const isAwayBigWin = goalDiff <= -2 && lateHandicapNum >= 0.75;
-    const isUnderdogUpset =
-      (lateHandicapNum <= -0.5 && actualEuroOutcome !== 'WIN') ||
-      (lateHandicapNum >= 0.5 && actualEuroOutcome !== 'LOSS');
+    const isHomeGiving = lateHandicapNum < 0;
+    const isAwayGiving = lateHandicapNum > 0;
+    const favoriteTeam = isHomeGiving ? homeTeam : isAwayGiving ? awayTeam : (matchData.euroOdds.lateWin <= matchData.euroOdds.lateLoss ? homeTeam : awayTeam);
+    const underdogTeam = isHomeGiving ? awayTeam : isAwayGiving ? homeTeam : (matchData.euroOdds.lateWin <= matchData.euroOdds.lateLoss ? awayTeam : homeTeam);
 
-    if (isHomeBigWin || isAwayBigWin) {
-      evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】深盘实力穿盘验证`;
-      evolvedRuleContent = `在 ${league} 对阵中，让步方实力优势在盘口体现（${matchData.asianHandicap.lateHandicap}），临场攻势形成有效穿透（完场 ${actualScoreStr}），实战切忌盲目反选受让，大小球宜顺势走大。`;
-    } else if (isUnderdogUpset) {
-      evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】受让方韧性反杀修正法`;
-      evolvedRuleContent = `针对 ${league} 类似对阵，若晚盘呈现让球 ${matchData.asianHandicap.lateHandicap} 但大小球卡在 ${matchData.overUnder.lateLine} 时，切忌单向冲上盘名气，需重点防范实际赛果指向的【${actualEuroOutcome === 'WIN' ? '主胜' : actualEuroOutcome === 'DRAW' ? '平局' : '客胜'}】冷门反杀。`;
+    const isHomeCover = handicapOutcomeDiff > 0;
+    const isAwayCover = handicapOutcomeDiff < 0;
+
+    const isFavoriteCover = (isHomeGiving && isHomeCover) || (isAwayGiving && isAwayCover);
+    const isFavoriteBlowout = isFavoriteCover && Math.abs(goalDiff) >= 2;
+    const isUnderdogOutrightWin = (isHomeGiving && goalDiff < 0) || (isAwayGiving && goalDiff > 0);
+    const isDraw = goalDiff === 0;
+
+    if (isFavoriteBlowout || isFavoriteCover) {
+      evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】${favoriteTeam}深盘实力打穿验证`;
+      evolvedRuleContent = `在 ${league} 对阵中，让步强队【${favoriteTeam}】具备绝对实力优势并在即时盘口得到体现（${matchData.asianHandicap.lateHandicap}）。实战打出 ${actualScoreStr} 强势穿盘，切忌盲目反选受让下盘，顺应实力盘口穿透。`;
+    } else if (isUnderdogOutrightWin) {
+      evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】受让方【${underdogTeam}】逆向爆冷修正法`;
+      evolvedRuleContent = `针对 ${league} 类似对阵，若晚盘呈现让球 ${matchData.asianHandicap.lateHandicap} 但大小球卡在 ${matchData.overUnder.lateLine} 时，切忌单向盲冲让球方名气，需重点防范受让方【${underdogTeam}】逆向爆冷胜出（完场 ${actualScoreStr}）。`;
+    } else if (isDraw) {
+      evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】平赔低洼/冷平防守验证`;
+      evolvedRuleContent = `在 ${league} 类似对阵中（盘口 ${matchData.asianHandicap.lateHandicap}），机构平赔防守有效兑现，两头对冲下平局（完场 ${actualScoreStr}）具备极高防御价值。`;
     } else {
-      evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】胶着盘面对冲修正法`;
-      evolvedRuleContent = `在 ${league} 类似势均力敌对阵（盘口 ${matchData.asianHandicap.lateHandicap}），两头对冲下平赔与小球具有极高防范价值（完场 ${actualScoreStr}）。`;
+      evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】赢球输盘/小胜卡盘修正法`;
+      evolvedRuleContent = `针对 ${league} 让步 ${matchData.asianHandicap.lateHandicap} 盘口，强队仅取得 1 球微弱优势（完场 ${actualScoreStr}），未能完成深盘穿透，受让方【${underdogTeam}】赢盘守住底线。`;
     }
   }
 

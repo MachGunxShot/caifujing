@@ -38,9 +38,11 @@ import {
   ChevronDown,
   ChevronUp,
   RotateCcw,
+  Upload,
 } from 'lucide-react';
 import { BatchMatchItem, FullMatchData, AnalysisReportResult } from '../types/fortuneActuary';
 import { generateActuarialRuleReport } from '../utils/actuaryEngine';
+import { PRESET_CASES } from '../utils/presetCases';
 import { MarkdownView } from './MarkdownView';
 import { HandicapOddsDistributionChart } from './HandicapOddsDistributionChart';
 
@@ -49,6 +51,8 @@ interface BatchMatrixDashboardProps {
   onSelectMatch: (match: FullMatchData) => void;
   onClearQueue: () => void;
   onResetToPresets?: () => void;
+  onPurgePresets?: () => void;
+  onImportQueue?: (imported: BatchMatchItem[]) => void;
   onOpenUploadModal: () => void;
   onBatchAnalyzeAll: () => Promise<void>;
   isBatchAnalyzing: boolean;
@@ -72,6 +76,8 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
   onSelectMatch,
   onClearQueue,
   onResetToPresets,
+  onPurgePresets,
+  onImportQueue,
   onOpenUploadModal,
   onBatchAnalyzeAll,
   isBatchAnalyzing,
@@ -351,6 +357,40 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
       setReviewTarget(null);
       setReviewSuccessMsg(null);
     }, 1400);
+  };
+
+  const [copiedBackup, setCopiedBackup] = useState(false);
+
+  const hasPresets = useMemo(
+    () => queue.some((item) => item.id.startsWith('preset-') || PRESET_CASES.some((c) => c.id === item.id)),
+    [queue]
+  );
+  const hasRealMatches = useMemo(
+    () => queue.some((item) => !item.id.startsWith('preset-') && !PRESET_CASES.some((c) => c.id === item.id)),
+    [queue]
+  );
+
+  const handleExportQueueJson = () => {
+    const jsonStr = JSON.stringify(queue, null, 2);
+    navigator.clipboard.writeText(jsonStr);
+    setCopiedBackup(true);
+    setTimeout(() => setCopiedBackup(false), 2500);
+  };
+
+  const handleImportQueueJson = () => {
+    const input = prompt('请粘贴先前备份导出的工作台赛事 JSON 数据：');
+    if (!input) return;
+    try {
+      const parsed = JSON.parse(input);
+      if (Array.isArray(parsed) && parsed.length > 0 && onImportQueue) {
+        onImportQueue(parsed);
+        alert(`成功恢复导入 ${parsed.length} 场赛事！`);
+      } else {
+        alert('未能在输入的文本中解析出有效的赛事数组。');
+      }
+    } catch (e: any) {
+      alert(`JSON 解析失败: ${e?.message || '格式错误'}`);
+    }
   };
 
   if (queue.length === 0) {
@@ -1463,6 +1503,37 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
               </>
             )}
           </button>
+          {onPurgePresets && hasPresets && hasRealMatches && (
+            <button
+              type="button"
+              onClick={onPurgePresets}
+              className="px-2.5 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+              title="清理教学预设案例，只保留我分析的实战比赛"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-amber-400" />
+              <span>🧹 清除教学预设 (保留实战)</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handleExportQueueJson}
+            className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 text-xs font-semibold rounded-lg border border-slate-700 transition-colors flex items-center gap-1 cursor-pointer"
+            title="导出备份全部工作台比赛数据 (JSON)"
+          >
+            <Download className="w-3.5 h-3.5 text-cyan-400" />
+            <span>{copiedBackup ? '已复制备份 JSON' : '备份工作台'}</span>
+          </button>
+          {onImportQueue && (
+            <button
+              type="button"
+              onClick={handleImportQueueJson}
+              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 text-xs font-semibold rounded-lg border border-slate-700 transition-colors flex items-center gap-1 cursor-pointer"
+              title="粘贴导入恢复工作台赛事数据 (JSON)"
+            >
+              <Upload className="w-3.5 h-3.5 text-emerald-400" />
+              <span>恢复工作台</span>
+            </button>
+          )}
           {onResetToPresets && (
             <button
               type="button"

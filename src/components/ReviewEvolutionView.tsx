@@ -62,6 +62,7 @@ import {
   auditRulesHealth,
   pruneAndClusterExperienceRules,
   pruneZeroHitRules,
+  repairInconsistentLanguageRules,
 } from '../utils/experienceStore';
 import { generateActuarialRuleReport } from '../utils/actuaryEngine';
 import { ParsedScoreItem, parseBatchMatchScoresFromText } from '../utils/textParser';
@@ -672,6 +673,18 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
       setHealthNotification(`🧹 已清理 ${res.removedCount} 条未被二次印证的孤立单场记录！`);
       setTimeout(() => setHealthNotification(null), 6000);
     }
+  };
+
+  // Handle repairing inconsistent/inverted language (e.g. calling blowout '冷门反杀')
+  const handleRepairLanguage = () => {
+    const res = repairInconsistentLanguageRules();
+    setRules([...res.newRules]);
+    setHealthNotification(
+      res.repairedCount > 0
+        ? `🛠️ 全盘检修完成！成功修正 ${res.repairedCount} 条盘口与观点倒挂的旧规则（将“让球大胜误判为冷门反杀”全面纠错为“深盘实力穿透验证法”）！`
+        : `✅ 全盘检查完成！当前法则库中所有盘口数据与输出观点语言均严格自洽，未发现逻辑倒挂问题。`
+    );
+    setTimeout(() => setHealthNotification(null), 8000);
   };
 
   // Filtered Rules based on category filter
@@ -1629,6 +1642,16 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                 >
                   <Sparkles className="w-3.5 h-3.5" />
                   <span>✨ 一键智能聚类精炼 (收敛同质规则)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleRepairLanguage}
+                  className="px-3.5 py-1.5 bg-cyan-900/40 hover:bg-cyan-850/60 text-cyan-300 border border-cyan-500/40 font-bold text-xs rounded-lg shadow-sm flex items-center gap-1.5 cursor-pointer transition-all"
+                  title="排查并修正任何盘口数据与赛果观点倒挂的语言（如将让球打穿误称冷门反杀）"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>🛠️ 盘口观点自洽检修 (纠错倒挂语言)</span>
                 </button>
 
                 {rulesHealth.zeroHitCount > 0 && (

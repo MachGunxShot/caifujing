@@ -40,6 +40,14 @@ export default function App() {
           return parsed;
         }
       }
+      // If no current single match, check if there's user's real saved batchQueue
+      const savedQueue = localStorage.getItem(QUEUE_STORAGE_KEY);
+      if (savedQueue) {
+        const q = JSON.parse(savedQueue);
+        if (Array.isArray(q) && q.length > 0 && q[0].data?.matchInfo?.homeTeam) {
+          return q[0].data;
+        }
+      }
     } catch (e) {}
     return initialPreset.data;
   });
@@ -304,6 +312,32 @@ export default function App() {
     setBatchQueue((prev) => [newItem, ...prev]);
   };
 
+  // Explicit handler to purge teaching presets and keep only real analyzed matches
+  const handlePurgePresets = () => {
+    setBatchQueue((prev) => {
+      const filtered = prev.filter(
+        (item) =>
+          !item.id.startsWith('preset-') &&
+          !PRESET_CASES.some((c) => c.id === item.id)
+      );
+      if (filtered.length === 0) {
+        alert('当前队列仅包含教学预设案例。请先导入您的实战分析比赛！');
+        return prev;
+      }
+      return filtered;
+    });
+  };
+
+  // Explicit handler to import an entire batch queue backup (JSON)
+  const handleImportQueue = (imported: BatchMatchItem[]) => {
+    if (!Array.isArray(imported) || imported.length === 0) return;
+    setBatchQueue(imported);
+    if (imported[0]?.data) {
+      setMatchData(imported[0].data);
+      setReport(imported[0].report || generateActuarialRuleReport(imported[0].data));
+    }
+  };
+
   // Batch imported callback (Smart Merge with Lock Protection: never overwrites locked/started matches!)
   const handleBatchImported = (matches: FullMatchData[]) => {
     let protectedCount = 0;
@@ -311,7 +345,13 @@ export default function App() {
     let newCount = 0;
 
     setBatchQueue((prevQueue) => {
-      const updatedQueue = [...prevQueue];
+      // If queue is currently ONLY the default teaching presets, replace them with user's real imported matches!
+      const isOnlyPresets = prevQueue.every(
+        (item) =>
+          item.id.startsWith('preset-') ||
+          PRESET_CASES.some((c) => c.id === item.id)
+      );
+      const updatedQueue = isOnlyPresets ? [] : [...prevQueue];
 
       for (const m of matches) {
         const home = m.matchInfo.homeTeam.trim();
@@ -603,6 +643,8 @@ export default function App() {
                 onRecordScoreAndReview={handleRecordScoreAndReview}
                 onNavigateToReview={() => setActiveTab('review')}
                 onResetToPresets={handleResetToPresets}
+                onPurgePresets={handlePurgePresets}
+                onImportQueue={handleImportQueue}
               />
             )}
 

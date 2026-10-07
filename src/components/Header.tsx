@@ -121,9 +121,9 @@ export const Header: React.FC<HeaderProps> = ({
                     : '📂 经典操盘案例...'}
                 </option>
 
-                {/* Priority 1: Imported Markdown / Queue Matches */}
+                {/* Priority 1: Real Analyzed Matches from Queue */}
                 {batchQueue && batchQueue.length > 0 && (
-                  <optgroup label={`📋 已导入比赛队列 (${batchQueue.length} 场)`}>
+                  <optgroup label={`🎯 我的实战分析工作台 (${batchQueue.length} 场)`}>
                     {batchQueue.map((item, idx) => (
                       <option key={item.id} value={`batch-${item.id}`}>
                         #{idx + 1} {item.data.matchInfo.homeTeam} vs {item.data.matchInfo.awayTeam} ({item.data.matchInfo.league || '常规'})
