@@ -14,6 +14,127 @@ export function normalizeWaterOdds(water: number): number {
 }
 
 /**
+ * Accurately extracts league name from text or markdown headers,
+ * strictly prioritizing specific names (e.g. "巴西甲", "巴甲") over substrings (e.g. "西甲")
+ * to prevent bizarre misclassifications.
+ */
+export function extractLeagueFromText(text: string): string | null {
+  if (!text) return null;
+
+  // 1. Explicit league tag: e.g. 联赛：巴西甲, 赛事: 巴甲, 比赛：欧冠
+  const explicitMatch = text.match(/(?:联赛|赛事|级别|比赛)[：:\s]+([^\s|｜\n,，;；()（）[\]【】]{2,12})/);
+  if (explicitMatch) {
+    const name = explicitMatch[1].trim();
+    if (name && !['对阵', '常规', '快照', '列表'].includes(name)) {
+      return normalizeLeagueName(name);
+    }
+  }
+
+  // 2. Bracketed prefix in header or text: e.g. 【巴西甲】, [巴西甲], (巴甲), 【巴乙】
+  const bracketMatch = text.match(/(?:\[|【|\()([^\d\s\n,;，；|/\\#【】（()[\]]{2,10})(?:\]|】|\))/);
+  if (bracketMatch) {
+    const raw = bracketMatch[1].trim();
+    if (/(?:甲|乙|超|冠|联|杯|赛)/.test(raw)) {
+      return normalizeLeagueName(raw);
+    }
+  }
+
+  // 3. Keyword matching - MUST BE ORDERED with longest and specific first!
+  // NOTICE: 巴西甲, 巴西乙, 巴甲, 巴乙 MUST come BEFORE 西甲, 西乙!
+  const SPECIFIC_LEAGUES: Array<{ pattern: RegExp; name: string }> = [
+    // South American & American
+    { pattern: /(?:巴西甲级联赛|巴西甲|巴甲)/i, name: '巴西甲' },
+    { pattern: /(?:巴西乙级联赛|巴西乙|巴乙)/i, name: '巴西乙' },
+    { pattern: /(?:阿根廷甲级联赛|阿根廷甲|阿甲)/i, name: '阿甲' },
+    { pattern: /(?:美职业|美职联|美职|MLS)/i, name: '美职联' },
+    { pattern: /(?:墨超|墨西哥联|墨联)/i, name: '墨超' },
+    { pattern: /(?:解放者杯|南美解放者杯)/i, name: '解放者杯' },
+    { pattern: /(?:南美杯|南美俱乐部杯)/i, name: '南美杯' },
+
+    // European Big 5 & second tiers
+    { pattern: /(?:英格兰超级联赛|英超)/i, name: '英超' },
+    { pattern: /(?:英格兰冠军联赛|英冠)/i, name: '英冠' },
+    { pattern: /(?:英甲)/i, name: '英甲' },
+    { pattern: /(?:西班牙甲级联赛|西甲)/i, name: '西甲' },
+    { pattern: /(?:西班牙乙级联赛|西乙)/i, name: '西乙' },
+    { pattern: /(?:德国甲级联赛|德甲)/i, name: '德甲' },
+    { pattern: /(?:德国乙级联赛|德乙)/i, name: '德乙' },
+    { pattern: /(?:意大利甲级联赛|意甲)/i, name: '意甲' },
+    { pattern: /(?:意大利乙级联赛|意乙)/i, name: '意乙' },
+    { pattern: /(?:法国甲级联赛|法甲)/i, name: '法甲' },
+    { pattern: /(?:法国乙级联赛|法乙)/i, name: '法乙' },
+
+    // European Continental & other European
+    { pattern: /(?:欧洲国家联赛|欧国联)/i, name: '欧国联' },
+    { pattern: /(?:欧洲冠军联赛|欧冠联|欧冠)/i, name: '欧冠' },
+    { pattern: /(?:欧罗巴杯|欧罗巴联赛|欧联杯|欧罗巴)/i, name: '欧联杯' },
+    { pattern: /(?:欧洲协会联赛|欧协联|欧协杯)/i, name: '欧协联' },
+    { pattern: /(?:荷兰甲级联赛|荷甲)/i, name: '荷甲' },
+    { pattern: /(?:葡萄牙超级联赛|葡超)/i, name: '葡超' },
+    { pattern: /(?:苏格兰超级联赛|苏超)/i, name: '苏超' },
+    { pattern: /(?:比利时甲级联赛|比甲)/i, name: '比甲' },
+    { pattern: /(?:俄罗斯超级联赛|俄超)/i, name: '俄超' },
+    { pattern: /(?:土耳其超级联赛|土超)/i, name: '土超' },
+    { pattern: /(?:瑞士超级联赛|瑞士超)/i, name: '瑞士超' },
+    { pattern: /(?:奥地利甲级联赛|奥甲)/i, name: '奥甲' },
+    { pattern: /(?:丹麦超级联赛|丹麦超)/i, name: '丹麦超' },
+    { pattern: /(?:挪威超级联赛|挪超)/i, name: '挪超' },
+    { pattern: /(?:瑞典超级联赛|瑞典超)/i, name: '瑞典超' },
+
+    // Asia & Domestic
+    { pattern: /(?:日本职业联赛|日职联|日职|J1)/i, name: '日职联' },
+    { pattern: /(?:日本乙级联赛|日职乙|J2)/i, name: '日职乙' },
+    { pattern: /(?:韩国K联赛|韩K联|韩K)/i, name: '韩K联' },
+    { pattern: /(?:澳大利亚超级联赛|澳洲甲|澳超)/i, name: '澳超' },
+    { pattern: /(?:沙特超级联赛|沙特联)/i, name: '沙特联' },
+    { pattern: /(?:中国超级联赛|中超)/i, name: '中超' },
+    { pattern: /(?:中国甲级联赛|中甲)/i, name: '中甲' },
+    { pattern: /(?:亚冠精英联赛|亚冠精英|亚冠联|亚冠)/i, name: '亚冠' },
+
+    // International tournaments
+    { pattern: /(?:世界杯)/i, name: '世界杯' },
+    { pattern: /(?:欧洲杯)/i, name: '欧洲杯' },
+    { pattern: /(?:美洲杯)/i, name: '美洲杯' },
+    { pattern: /(?:亚洲杯)/i, name: '亚洲杯' },
+    { pattern: /(?:非洲杯)/i, name: '非洲杯' },
+    { pattern: /(?:足总杯)/i, name: '足总杯' },
+    { pattern: /(?:国王杯)/i, name: '国王杯' },
+    { pattern: /(?:意杯|意大利杯)/i, name: '意杯' },
+    { pattern: /(?:德杯|德国杯)/i, name: '德杯' },
+    { pattern: /(?:国际友谊赛|友谊赛)/i, name: '国际友谊' },
+    { pattern: /(?:北单|北京单场)/i, name: '北单' },
+    { pattern: /(?:竞彩足球|竞彩)/i, name: '竞彩' },
+  ];
+
+  for (const item of SPECIFIC_LEAGUES) {
+    if (item.pattern.test(text)) {
+      return item.name;
+    }
+  }
+
+  return null;
+}
+
+function normalizeLeagueName(name: string): string {
+  const n = name.trim();
+  if (n.includes('巴西甲') || n.includes('巴甲')) return '巴西甲';
+  if (n.includes('巴西乙') || n.includes('巴乙')) return '巴西乙';
+  if (n.includes('阿根廷') || n.includes('阿甲')) return '阿甲';
+  if (n.includes('英超')) return '英超';
+  if (n.includes('西甲')) return '西甲';
+  if (n.includes('德甲')) return '德甲';
+  if (n.includes('意甲')) return '意甲';
+  if (n.includes('法甲')) return '法甲';
+  if (n.includes('日职')) return '日职联';
+  if (n.includes('韩K')) return '韩K联';
+  if (n.includes('美职')) return '美职联';
+  if (n.includes('中超')) return '中超';
+  if (n.includes('欧冠')) return '欧冠';
+  if (n.includes('欧国联')) return '欧国联';
+  return n;
+}
+
+/**
  * Parse a natural string representing match odds for a single match
  */
 export function parseNaturalTextOdds(text: string, currentData: FullMatchData): Partial<FullMatchData> {
@@ -53,18 +174,10 @@ export function parseNaturalTextOdds(text: string, currentData: FullMatchData): 
     }
   }
 
-  // League keywords
-  const leagueMatch = fullText.match(
-    /(欧国联|英超|西甲|德甲|意甲|法甲|欧冠|欧罗巴|英冠|日职|荷甲|葡超|世界杯|亚洲杯|欧洲杯|中超|北单|竞彩)/
-  );
-  if (leagueMatch && result.matchInfo) {
-    result.matchInfo.league =
-      leagueMatch[1] +
-      (leagueMatch[1].includes('联') ||
-      leagueMatch[1].includes('杯') ||
-      leagueMatch[1].includes('单')
-        ? ''
-        : '联赛');
+  // League keywords & explicit extraction (strictly prioritizing specific prefixes like 巴西甲/巴甲 over 西甲)
+  const extractedLeague = extractLeagueFromText(fullText);
+  if (extractedLeague && result.matchInfo) {
+    result.matchInfo.league = extractedLeague;
   }
 
   // 2. Euro odds extraction
@@ -247,8 +360,10 @@ export function parseBatchMatchesFromText(rawText: string): FullMatchData[] {
       if (!isValidTeamName(home) || !isValidTeamName(away)) continue;
 
       // Extract league from section
-      const leagueMatch = section.match(/联赛[：:]\s*([^\s|｜]+)/);
-      const league = leagueMatch ? leagueMatch[1].trim() : '欧国联';
+      const league =
+        extractLeagueFromText(section) ||
+        extractLeagueFromText(firstLine) ||
+        '常规联赛';
 
       // Extract match time
       const timeMatch = section.match(/开赛[：:]\s*([^\s|｜]+)/);
@@ -391,7 +506,7 @@ export function parseBatchMatchesFromText(rawText: string): FullMatchData[] {
     // Line with natural text
     const defaultData: FullMatchData = {
       matchInfo: {
-        league: '欧国联',
+        league: extractLeagueFromText(line) || '常规联赛',
         homeTeam: home,
         awayTeam: away,
         matchTime: '临场',

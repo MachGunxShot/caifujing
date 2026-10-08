@@ -36,6 +36,7 @@ import {
   Shield,
   ShieldAlert,
   ShieldCheck,
+  Star,
 } from 'lucide-react';
 import {
   FullMatchData,
@@ -139,8 +140,67 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
   // Date Grouping and Filter States for Reviews
   const [selectedDateFilter, setSelectedDateFilter] = useState<string>('ALL');
+  const [selectedStarFilter, setSelectedStarFilter] = useState<'ALL' | 5 | 4 | 3>('ALL');
   const [collapsedDateGroups, setCollapsedDateGroups] = useState<Record<string, boolean>>({});
   const [expandedDissections, setExpandedDissections] = useState<Record<string, boolean>>({});
+
+  // Helper to render star rating badge for pre-match analysis
+  const renderStarRatingBadge = (stars?: number, showLabel: boolean = true) => {
+    const safeStars = Math.max(1, Math.min(5, stars || 3));
+    const is5 = safeStars === 5;
+    const is4 = safeStars === 4;
+    const tierColor = is5
+      ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+      : is4
+      ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40'
+      : 'bg-slate-800 text-slate-300 border-slate-700';
+
+    return (
+      <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-extrabold border shadow-sm ${tierColor}`}>
+        <div className="flex items-center text-amber-400">
+          {[1, 2, 3, 4, 5].map((s) => (
+            <Star
+              key={s}
+              className={`w-3 h-3 ${
+                s <= safeStars ? 'fill-amber-400 text-amber-400' : 'text-slate-600 fill-slate-800'
+              }`}
+            />
+          ))}
+        </div>
+        {showLabel && (
+          <span className="font-mono">
+            {safeStars}星{is5 ? '稳胆档' : is4 ? '防冷档' : '博弈档'}
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  // Realization stats across star tiers for analyzing implementation value
+  const starTierRealizationStats = useMemo(() => {
+    const calcTier = (targetStars: number) => {
+      const tierItems = reviews.filter((r) => (r.priorReport?.decision?.starRating || 3) === targetStars);
+      const total = tierItems.length;
+      if (total === 0) return { total: 0, euroHitRate: 0, handicapHitRate: 0, ouHitRate: 0, scoreHitRate: 0 };
+      const euroHits = tierItems.filter((r) => r.outcomeEvaluation?.euroHit).length;
+      const handicapHits = tierItems.filter((r) => r.outcomeEvaluation?.handicapHit).length;
+      const ouHits = tierItems.filter((r) => r.outcomeEvaluation?.overUnderHit).length;
+      const scoreHits = tierItems.filter((r) => r.outcomeEvaluation?.scoreHit).length;
+      return {
+        total,
+        euroHitRate: Math.round((euroHits / total) * 100),
+        handicapHitRate: Math.round((handicapHits / total) * 100),
+        ouHitRate: Math.round((ouHits / total) * 100),
+        scoreHitRate: Math.round((scoreHits / total) * 100),
+      };
+    };
+
+    return {
+      tier5: calcTier(5),
+      tier4: calcTier(4),
+      tier3: calcTier(3),
+    };
+  }, [reviews]);
 
   // Date formatting helper for YYYY-MM-DD grouping
   const formatDateInfo = (timestamp?: number) => {
@@ -1120,7 +1180,17 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                               {idx + 1}
                             </td>
                             <td className="py-2.5 px-3 font-bold text-white">
-                              {item.homeTeam} <span className="text-slate-500 font-normal">vs</span> {item.awayTeam}
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span>{item.homeTeam} <span className="text-slate-500 font-normal">vs</span> {item.awayTeam}</span>
+                                {(() => {
+                                  if (!item.matchedId) return null;
+                                  const mItem = item.matchedId === 'current'
+                                    ? { data: currentMatch, report: currentReport }
+                                    : queue.find((q) => q.id === item.matchedId);
+                                  const stars = mItem?.report?.decision?.starRating || 3;
+                                  return renderStarRatingBadge(stars, true);
+                                })()}
+                              </div>
                             </td>
                             <td className="py-2.5 px-3">
                               <div className="flex items-center justify-center gap-1.5 font-mono">
@@ -1253,7 +1323,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
               </div>
 
               {/* Match Context Preview Card */}
-              <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
+              <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 grid grid-cols-1 sm:grid-cols-5 gap-2 text-xs">
                 <div>
                   <div className="text-[10px] text-slate-400">复盘对阵双方</div>
                   <div className="font-extrabold text-white text-sm mt-0.5">
@@ -1261,6 +1331,16 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                   </div>
                   <div className="text-[10px] text-emerald-400 font-mono mt-0.5">
                     {activeReviewMatchData.matchInfo.league}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-[10px] text-slate-400">当时研判星级档位</div>
+                  <div className="mt-1">
+                    {renderStarRatingBadge(activeReviewReport.decision.starRating, true)}
+                  </div>
+                  <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                    置信度: {activeReviewReport.decision.starRating}星
                   </div>
                 </div>
 
@@ -1286,7 +1366,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
                 <div>
                   <div className="text-[10px] text-slate-400">赛前参考比分</div>
-                  <div className="flex items-center gap-1 mt-0.5 font-mono">
+                  <div className="flex items-center gap-1 mt-0.5 font-mono flex-wrap">
                     {activeReviewReport.decision.predictedScores.slice(0, 3).map((s) => (
                       <span key={s} className="px-1.5 py-0.2 bg-slate-900 border border-slate-800 rounded text-slate-200 text-[10px] font-bold">
                         {s}
@@ -1392,9 +1472,12 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                   </div>
                 </div>
 
-                <span className="px-2.5 py-1 rounded bg-slate-950 text-slate-300 text-xs font-mono border border-slate-800">
-                  法则已同步注入《财富经》核心库
-                </span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {renderStarRatingBadge(latestReviewResult.priorReport?.decision?.starRating, true)}
+                  <span className="px-2.5 py-1 rounded bg-slate-950 text-slate-300 text-xs font-mono border border-slate-800">
+                    法则已同步注入《财富经》核心库
+                  </span>
+                </div>
               </div>
 
               {/* 4-Item Hit/Miss Evaluation Badges */}
@@ -2127,41 +2210,233 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                 </div>
               </div>
 
-              {/* Date Quick Filter Pills (按年月日快速筛选) */}
-              {groupedReviews.length > 1 && (
+              {/* STAR TIER REALIZATION VALUE DASHBOARD */}
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-md space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <Award className="w-4 h-4 text-amber-400" />
+                    <h4 className="text-xs font-black text-white">
+                      实战星级档位实现价值统计看板（辨析各档核心置信度）
+                    </h4>
+                  </div>
+                  <span className="text-[11px] text-slate-400">
+                    统计样本：全量已归档 {reviews.length} 场实战战报
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* Tier 5 Card */}
+                  <div
+                    onClick={() => setSelectedStarFilter(selectedStarFilter === 5 ? 'ALL' : 5)}
+                    className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                      selectedStarFilter === 5
+                        ? 'bg-amber-950/40 border-amber-500 text-amber-200 ring-1 ring-amber-500'
+                        : 'bg-slate-950/80 hover:bg-slate-950 border-amber-500/30 text-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-amber-400 font-black">★★★★★</span>
+                        <span className="text-xs font-black text-amber-300">5星稳胆档</span>
+                      </div>
+                      <span className="text-[11px] font-mono font-bold px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                        {starTierRealizationStats.tier5.total} 场
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1 mt-2 text-center text-[10px]">
+                      <div className="bg-slate-900/90 p-1 rounded">
+                        <span className="text-slate-500 block">胜平负</span>
+                        <span className="font-bold text-emerald-400 font-mono text-xs">
+                          {starTierRealizationStats.tier5.euroHitRate}%
+                        </span>
+                      </div>
+                      <div className="bg-slate-900/90 p-1 rounded">
+                        <span className="text-slate-500 block">让球赢盘</span>
+                        <span className="font-bold text-cyan-400 font-mono text-xs">
+                          {starTierRealizationStats.tier5.handicapHitRate}%
+                        </span>
+                      </div>
+                      <div className="bg-slate-900/90 p-1 rounded">
+                        <span className="text-slate-500 block">大小球</span>
+                        <span className="font-bold text-amber-400 font-mono text-xs">
+                          {starTierRealizationStats.tier5.ouHitRate}%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tier 4 Card */}
+                  <div
+                    onClick={() => setSelectedStarFilter(selectedStarFilter === 4 ? 'ALL' : 4)}
+                    className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                      selectedStarFilter === 4
+                        ? 'bg-cyan-950/40 border-cyan-500 text-cyan-200 ring-1 ring-cyan-500'
+                        : 'bg-slate-950/80 hover:bg-slate-950 border-cyan-500/30 text-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-amber-400 font-black">★★★★☆</span>
+                        <span className="text-xs font-black text-cyan-300">4星防冷档</span>
+                      </div>
+                      <span className="text-[11px] font-mono font-bold px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                        {starTierRealizationStats.tier4.total} 场
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1 mt-2 text-center text-[10px]">
+                      <div className="bg-slate-900/90 p-1 rounded">
+                        <span className="text-slate-500 block">胜平负</span>
+                        <span className="font-bold text-emerald-400 font-mono text-xs">
+                          {starTierRealizationStats.tier4.euroHitRate}%
+                        </span>
+                      </div>
+                      <div className="bg-slate-900/90 p-1 rounded">
+                        <span className="text-slate-500 block">让球赢盘</span>
+                        <span className="font-bold text-cyan-400 font-mono text-xs">
+                          {starTierRealizationStats.tier4.handicapHitRate}%
+                        </span>
+                      </div>
+                      <div className="bg-slate-900/90 p-1 rounded">
+                        <span className="text-slate-500 block">大小球</span>
+                        <span className="font-bold text-amber-400 font-mono text-xs">
+                          {starTierRealizationStats.tier4.ouHitRate}%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tier 3 Card */}
+                  <div
+                    onClick={() => setSelectedStarFilter(selectedStarFilter === 3 ? 'ALL' : 3)}
+                    className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                      selectedStarFilter === 3
+                        ? 'bg-slate-800 border-slate-500 text-white ring-1 ring-slate-500'
+                        : 'bg-slate-950/80 hover:bg-slate-950 border-slate-800 text-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-amber-400 font-black">★★★☆☆</span>
+                        <span className="text-xs font-black text-slate-300">3星博弈档</span>
+                      </div>
+                      <span className="text-[11px] font-mono font-bold px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                        {starTierRealizationStats.tier3.total} 场
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1 mt-2 text-center text-[10px]">
+                      <div className="bg-slate-900/90 p-1 rounded">
+                        <span className="text-slate-500 block">胜平负</span>
+                        <span className="font-bold text-emerald-400 font-mono text-xs">
+                          {starTierRealizationStats.tier3.euroHitRate}%
+                        </span>
+                      </div>
+                      <div className="bg-slate-900/90 p-1 rounded">
+                        <span className="text-slate-500 block">让球赢盘</span>
+                        <span className="font-bold text-cyan-400 font-mono text-xs">
+                          {starTierRealizationStats.tier3.handicapHitRate}%
+                        </span>
+                      </div>
+                      <div className="bg-slate-900/90 p-1 rounded">
+                        <span className="text-slate-500 block">大小球</span>
+                        <span className="font-bold text-amber-400 font-mono text-xs">
+                          {starTierRealizationStats.tier3.ouHitRate}%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Quick Filter Pills (按星级与日期快速筛选) */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                {/* Star Filter Pills */}
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
                   <span className="text-[11px] text-slate-400 font-bold flex items-center gap-1 shrink-0 mr-1">
-                    <Filter className="w-3.5 h-3.5 text-slate-500" />
-                    <span>日期快速筛选：</span>
+                    <Star className="w-3.5 h-3.5 text-amber-400" />
+                    <span>星级筛选：</span>
                   </span>
                   <button
                     type="button"
-                    onClick={() => setSelectedDateFilter('ALL')}
-                    className={`px-3 py-1 rounded-lg font-bold transition-all shrink-0 cursor-pointer ${
-                      selectedDateFilter === 'ALL'
-                        ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                    onClick={() => setSelectedStarFilter('ALL')}
+                    className={`px-2.5 py-1 rounded-lg font-bold transition-all shrink-0 cursor-pointer text-xs ${
+                      selectedStarFilter === 'ALL'
+                        ? 'bg-amber-400 text-slate-950 shadow-sm'
                         : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
                     }`}
                   >
-                    全部日期 ({reviews.length} 场)
+                    全部星级 ({reviews.length})
                   </button>
-                  {groupedReviews.map((g) => (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedStarFilter(5)}
+                    className={`px-2.5 py-1 rounded-lg font-bold transition-all shrink-0 cursor-pointer text-xs ${
+                      selectedStarFilter === 5
+                        ? 'bg-amber-500 text-slate-950 shadow-sm'
+                        : 'bg-slate-900 hover:bg-slate-800 text-amber-400 hover:text-amber-300 border border-amber-500/30'
+                    }`}
+                  >
+                    ★★★★★ 5星稳胆 ({starTierRealizationStats.tier5.total})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedStarFilter(4)}
+                    className={`px-2.5 py-1 rounded-lg font-bold transition-all shrink-0 cursor-pointer text-xs ${
+                      selectedStarFilter === 4
+                        ? 'bg-cyan-500 text-slate-950 shadow-sm'
+                        : 'bg-slate-900 hover:bg-slate-800 text-cyan-400 hover:text-cyan-300 border border-cyan-500/30'
+                    }`}
+                  >
+                    ★★★★☆ 4星防冷 ({starTierRealizationStats.tier4.total})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedStarFilter(3)}
+                    className={`px-2.5 py-1 rounded-lg font-bold transition-all shrink-0 cursor-pointer text-xs ${
+                      selectedStarFilter === 3
+                        ? 'bg-slate-300 text-slate-950 shadow-sm'
+                        : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+                    }`}
+                  >
+                    ★★★☆☆ 3星博弈 ({starTierRealizationStats.tier3.total})
+                  </button>
+                </div>
+
+                {/* Date Quick Filter Pills */}
+                {groupedReviews.length > 1 && (
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+                    <span className="text-[11px] text-slate-400 font-bold flex items-center gap-1 shrink-0 mr-1">
+                      <Filter className="w-3.5 h-3.5 text-slate-500" />
+                      <span>日期：</span>
+                    </span>
                     <button
-                      key={g.dateKey}
                       type="button"
-                      onClick={() => setSelectedDateFilter(g.dateKey)}
-                      className={`px-3 py-1 rounded-lg font-bold transition-all shrink-0 cursor-pointer ${
-                        selectedDateFilter === g.dateKey
+                      onClick={() => setSelectedDateFilter('ALL')}
+                      className={`px-2.5 py-1 rounded-lg font-bold transition-all shrink-0 cursor-pointer text-xs ${
+                        selectedDateFilter === 'ALL'
                           ? 'bg-emerald-500 text-slate-950 shadow-sm'
                           : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
                       }`}
                     >
-                      {g.isToday ? '🔥 今天 · ' : ''}
-                      {g.dateLabel} ({g.items.length} 场)
+                      全日期
                     </button>
-                  ))}
-                </div>
-              )}
+                    {groupedReviews.slice(0, 5).map((g) => (
+                      <button
+                        key={g.dateKey}
+                        type="button"
+                        onClick={() => setSelectedDateFilter(g.dateKey)}
+                        className={`px-2 py-1 rounded-lg font-bold transition-all shrink-0 cursor-pointer text-xs ${
+                          selectedDateFilter === g.dateKey
+                            ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                            : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+                        }`}
+                      >
+                        {g.isToday ? '🔥 ' : ''}
+                        {g.dateKey.slice(5)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               {/* Grouped Reviews Accordion Timeline */}
               <div className="space-y-4">
@@ -2248,7 +2523,12 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                         {/* Match Review Cards under this Date Group */}
                         {!isCollapsed && (
                           <div className="p-3.5 space-y-3 bg-slate-900/50">
-                            {group.items.map((rev) => {
+                            {group.items
+                              .filter((rev) => {
+                                if (selectedStarFilter === 'ALL') return true;
+                                return (rev.priorReport?.decision?.starRating || 3) === selectedStarFilter;
+                              })
+                              .map((rev) => {
                               const timeInfo = formatDateInfo(rev.reviewTimestamp);
                               const isDissectionOpen = !!expandedDissections[rev.id];
 
@@ -2267,6 +2547,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                                       <span className="px-2 py-0.5 bg-slate-950 text-emerald-400 font-mono font-black text-xs rounded border border-slate-800">
                                         完场 {rev.actualScore}
                                       </span>
+                                      {/* Pre-Match Star Rating Tier Badge */}
+                                      {renderStarRatingBadge(rev.priorReport?.decision?.starRating, true)}
                                       <span className="text-[10px] text-slate-400 font-mono">
                                         {rev.matchData.matchInfo.league || '常规赛事'}
                                       </span>
@@ -2325,6 +2607,34 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                                         <Trash2 className="w-3.5 h-3.5 text-rose-400" />
                                         <span>删除</span>
                                       </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Pre-Match Actuarial Decision Snapshot */}
+                                  <div className="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 text-xs grid grid-cols-1 sm:grid-cols-4 gap-2">
+                                    <div>
+                                      <span className="text-[10px] text-slate-400 block">赛前操盘定性</span>
+                                      <span className="font-bold text-cyan-300 truncate block mt-0.5">
+                                        {rev.priorReport?.modelTitle || '操盘分析'}
+                                      </span>
+                                    </div>
+                                    <div>
+                                      <span className="text-[10px] text-slate-400 block">胜平负首选</span>
+                                      <span className="font-bold text-amber-300 truncate block mt-0.5">
+                                        {rev.priorReport?.decision?.euroPick || '-'}
+                                      </span>
+                                    </div>
+                                    <div>
+                                      <span className="text-[10px] text-slate-400 block">让球盘首选</span>
+                                      <span className="font-bold text-amber-300 truncate block mt-0.5">
+                                        {rev.priorReport?.decision?.handicapPick || '-'}
+                                      </span>
+                                    </div>
+                                    <div>
+                                      <span className="text-[10px] text-slate-400 block">参考比分覆盖</span>
+                                      <span className="font-mono text-slate-300 truncate block mt-0.5">
+                                        {(rev.priorReport?.decision?.predictedScores || []).slice(0, 3).join(', ') || '-'}
+                                      </span>
                                     </div>
                                   </div>
 

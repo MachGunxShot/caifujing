@@ -28,12 +28,20 @@ export const Header: React.FC<HeaderProps> = ({
   currentMatch,
   onSelectMatch,
 }) => {
+  // Separate real user matches in queue from presets
+  const realQueueMatches = useMemo(() => {
+    if (!batchQueue) return [];
+    return batchQueue.filter(
+      (item) => !item.id.startsWith('preset-') && !PRESET_CASES.some((c) => c.id === item.id)
+    );
+  }, [batchQueue]);
+
   // Sync selected dropdown value with current active match
   const selectedValue = useMemo(() => {
     if (!currentMatch) return '';
-    // Look in batchQueue (imported from markdown / CSV / upload)
-    if (batchQueue && batchQueue.length > 0) {
-      const foundQueueItem = batchQueue.find(
+    // Look in realQueueMatches first
+    if (realQueueMatches.length > 0) {
+      const foundQueueItem = realQueueMatches.find(
         (b) =>
           b.data.matchInfo.homeTeam === currentMatch.matchInfo.homeTeam &&
           b.data.matchInfo.awayTeam === currentMatch.matchInfo.awayTeam
@@ -48,7 +56,7 @@ export const Header: React.FC<HeaderProps> = ({
     );
     if (foundPreset) return `preset-${foundPreset.id}`;
     return '';
-  }, [currentMatch, batchQueue]);
+  }, [currentMatch, realQueueMatches]);
 
   const handleDropdownChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
@@ -116,15 +124,15 @@ export const Header: React.FC<HeaderProps> = ({
                 className="h-9 appearance-none bg-slate-900/90 text-xs font-bold text-slate-100 border border-emerald-500/40 hover:border-emerald-400 rounded-lg pl-3 pr-8 focus:outline-none focus:ring-1 focus:ring-emerald-400 cursor-pointer hover:bg-slate-850 transition-all min-w-[210px] max-w-[340px] truncate shadow-sm"
               >
                 <option value="" disabled>
-                  {batchQueue && batchQueue.length > 0
-                    ? `📋 切换已导入场次 (${batchQueue.length}场)...`
-                    : '📂 经典操盘案例...'}
+                  {realQueueMatches.length > 0
+                    ? `📋 切换实战分析 (${realQueueMatches.length}场)...`
+                    : '📂 切换比赛场次...'}
                 </option>
 
                 {/* Priority 1: Real Analyzed Matches from Queue */}
-                {batchQueue && batchQueue.length > 0 && (
-                  <optgroup label={`🎯 我的实战分析工作台 (${batchQueue.length} 场)`}>
-                    {batchQueue.map((item, idx) => (
+                {realQueueMatches.length > 0 && (
+                  <optgroup label={`🎯 我的实战分析工作台 (${realQueueMatches.length} 场)`}>
+                    {realQueueMatches.map((item, idx) => (
                       <option key={item.id} value={`batch-${item.id}`}>
                         #{idx + 1} {item.data.matchInfo.homeTeam} vs {item.data.matchInfo.awayTeam} ({item.data.matchInfo.league || '常规'})
                       </option>

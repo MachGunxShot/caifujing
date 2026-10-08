@@ -414,6 +414,17 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
             <Plus className="w-4 h-4" />
             <span>立即上传截图或导入批量文件</span>
           </button>
+          {onImportQueue && (
+            <button
+              type="button"
+              onClick={handleImportQueueJson}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-750 text-emerald-400 font-bold text-xs rounded-lg border border-slate-750 shadow inline-flex items-center gap-1.5 cursor-pointer"
+              title="从导出的 JSON 恢复昨日或先前分析场次"
+            >
+              <Download className="w-4 h-4 text-emerald-400" />
+              <span>恢复工作台历史备份 (JSON)</span>
+            </button>
+          )}
           {onResetToPresets && (
             <button
               type="button"
@@ -421,7 +432,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
               className="px-4 py-2 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold text-xs rounded-lg border border-slate-700 shadow inline-flex items-center gap-1.5 cursor-pointer"
             >
               <RotateCcw className="w-4 h-4 text-cyan-400" />
-              <span>载入 5 场经典教学预设案例</span>
+              <span>载入 5 场经典教学预设 (仅供观摩)</span>
             </button>
           )}
         </div>

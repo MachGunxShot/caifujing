@@ -282,7 +282,17 @@ export function calculateConsistentPredictedScores(
     if (isOver) {
       return ['2-2', '1-1', '3-3'];
     }
-    return ['1-1', '0-0', '1-1'];
+    return ['1-1', '0-0', '2-2'];
+  }
+
+  // Dual-directional hedge: Euro Home Win + Handicap Underdog (protecting against 1-goal margin win)
+  if (euroPick.includes('主胜') && handicapPick.includes('下盘')) {
+    return isOver ? ['2-1', '3-1', '1-1'] : ['1-0', '2-1', '1-1'];
+  }
+
+  // Dual-directional hedge: Euro Away Win + Handicap Underdog (protecting against 1-goal margin win)
+  if (euroPick.includes('客胜') && handicapPick.includes('下盘')) {
+    return isOver ? ['1-2', '1-3', '1-1'] : ['0-1', '1-2', '1-1'];
   }
 
   if (isAwayFavored) {
@@ -488,25 +498,102 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 3. 大小球联动：${metrics.overUnderVerdict}。`;
 
       starRating = 3;
-      euroPick = lateWin <= lateLoss ? '主胜 / 平' : '客队不败';
 
       if (lateHandicapNum === 0) {
-        handicapPick =
-          lateWin <= lateLoss
-            ? `平手盘 ${homeTeam} (0 / 保平争胜)`
-            : `平手盘 ${awayTeam} (0 / 保平争胜)`;
-      } else if (lateHandicapNum < 0) {
-        const goalCount = Math.abs(lateHandicapNum);
-        if (lateHomeOdds <= 1.85) {
-          handicapPick = `上盘 ${homeTeam} (-${goalCount}让球)`;
+        // 平手均势盘
+        if (lateWin <= lateLoss) {
+          euroPick = '主胜 / 平';
+          handicapPick = `平手盘 ${homeTeam} (0 / 保平争胜)`;
+          finalDirection = `【推荐方向】：主队（平手盘 ${homeTeam} 0）及独赢保平争胜`;
+          finalDirectionDetail = `竞彩/盘口：均势平手盘，欧赔主胜相对占优，首选主队保平争胜。`;
         } else {
-          handicapPick = `下盘 ${awayTeam} (+${goalCount}受让)`;
+          euroPick = '客队不败 (平/负)';
+          handicapPick = `平手盘 ${awayTeam} (0 / 保平争胜)`;
+          finalDirection = `【推荐方向】：客队（平手盘 ${awayTeam} 0）及客队不败`;
+          finalDirectionDetail = `竞彩/盘口：均势平手盘，欧赔客队稍占上风，首选客队保平争胜。`;
+        }
+        confidenceReason = '平手均势盘型，结合欧指倾向首选低赔保平争胜。';
+      } else if (lateHandicapNum < 0) {
+        // 主队让球 (Home gives handicap)
+        const goalCount = Math.abs(lateHandicapNum);
+
+        if (goalCount <= 0.75) {
+          // 浅盘区间 (0.25, 0.5, 0.75): 胜负与让球方向必须绝对一致，杜绝“主胜+受让下盘”荒谬倒挂
+          if (lateWin <= lateLoss && lateHomeOdds <= 1.95) {
+            euroPick = '主胜 / 平';
+            handicapPick = `上盘 ${homeTeam} (-${goalCount}让球)`;
+            finalDirection = `【推荐方向】：主队（上盘 ${homeTeam} -${goalCount}）及主胜保平争胜`;
+            finalDirectionDetail = `浅让区间（-${goalCount}），主队胜面占优且让步门槛合理，首选主队上盘顺势打出。`;
+            confidenceReason = `主让浅盘（-${goalCount}），欧亚顺路支持主队，首选上盘。`;
+          } else {
+            euroPick = '平 / 负 (客队受让不败)';
+            handicapPick = `下盘 ${awayTeam} (+${goalCount}受让)`;
+            finalDirection = `【推荐方向】：客队（下盘 ${awayTeam} +${goalCount}受让）`;
+            finalDirectionDetail = `主让浅盘（-${goalCount}）水位阻力偏高或欧赔离散，防范冷平或客胜爆冷，首选客队下盘受让不败。`;
+            confidenceReason = `主让浅盘水位承压，受让方 (+${goalCount}) 具备安全垫。`;
+          }
+        } else {
+          // 深盘区间 (>= 1.0): 存在净胜1球但输盘/走盘的可能，支持合理对冲精算
+          if (lateHomeOdds <= 1.85) {
+            euroPick = '主胜 (稳选)';
+            handicapPick = `上盘 ${homeTeam} (-${goalCount}让球)`;
+            finalDirection = `【推荐方向】：主队（上盘 ${homeTeam} -${goalCount}让球）`;
+            finalDirectionDetail = `主让深盘（-${goalCount}）配以低水控赔，主队实力占优，首选上盘穿盘大胜。`;
+            confidenceReason = `深盘低水机构有效控水，看好主队穿盘。`;
+          } else {
+            euroPick = '主胜独赢 (防1球小胜)';
+            handicapPick = `下盘 ${awayTeam} (+${goalCount}受让)`;
+            finalDirection = `【推荐方向】：双向对冲（竞彩主胜独赢 + 亚指下盘 ${awayTeam} +${goalCount}受让）`;
+            if (goalCount === 1.0) {
+              finalDirectionDetail = `【操盘精算对冲】：胜平负维度主队赢面极大（首选主胜独赢）；但亚盘主让1球门槛偏高（需净胜2球赢全盘，净胜1球仅走盘退款）。实战重点防范主队 1-0 或 2-1 经济型1球小胜走盘，因此让球端首选受让方 (+1.0) 构建双重安全垫！`;
+            } else if (goalCount === 1.25) {
+              finalDirectionDetail = `【操盘精算对冲】：胜平负维度主队实力稳健（首选主胜独赢）；但亚盘主让1.25球门槛极高（需净胜2球赢全盘，净胜1球上盘输半/下盘赢半）。实战重点防范主队 1-0 或 2-1 经济型小胜赢球输半，因此让球端首选下盘受让方 (+1.25)！`;
+            } else {
+              finalDirectionDetail = `【操盘精算对冲】：胜平负维度主队实力更强（首选主胜独赢）；但亚盘主让${goalCount}球门槛过深（净胜1球上盘全输）。实战严防主队控场经济型小胜，因此让球端首选下盘受让方 (+${goalCount}) 赢盘对冲！`;
+            }
+            confidenceReason = `深让步存在小胜赢球输盘风险，采用主胜独赢+受让下盘对冲精算。`;
+          }
         }
       } else {
-        if (lateLoss <= lateWin) {
-          handicapPick = `上盘 ${awayTeam} (-${lateHandicapNum}客让)`;
+        // 客队让球 (Away gives handicap)
+        const goalCount = Math.abs(lateHandicapNum);
+
+        if (goalCount <= 0.75) {
+          // 客让浅盘区间 (0.25, 0.5, 0.75)
+          if (lateLoss <= lateWin && lateAwayOdds <= 1.95) {
+            euroPick = '客胜 / 平 (客队不败)';
+            handicapPick = `上盘 ${awayTeam} (-${goalCount}客让)`;
+            finalDirection = `【推荐方向】：客队（上盘 ${awayTeam} -${goalCount}客让）`;
+            finalDirectionDetail = `客让浅盘（-${goalCount}）门槛合理，客队战力占优，首选客队上盘打出。`;
+            confidenceReason = `客让浅盘欧亚顺向支持客队，首选客让上盘。`;
+          } else {
+            euroPick = '胜 / 平 (主队不败)';
+            handicapPick = `下盘 ${homeTeam} (+${goalCount}受让)`;
+            finalDirection = `【推荐方向】：主队（下盘 ${homeTeam} +${goalCount}受让）`;
+            finalDirectionDetail = `客队浅让阻力不足且水位承压，主场优势凸显，首选主队受让不败。`;
+            confidenceReason = `客让浅盘水位不稳，主队受让具备不败安全垫。`;
+          }
         } else {
-          handicapPick = `下盘 ${homeTeam} (+${lateHandicapNum}受让)`;
+          // 客让深盘区间 (>= 1.0)
+          if (lateAwayOdds <= 1.85) {
+            euroPick = '客胜 (稳选)';
+            handicapPick = `上盘 ${awayTeam} (-${goalCount}客让)`;
+            finalDirection = `【推荐方向】：客队（上盘 ${awayTeam} -${goalCount}客让）`;
+            finalDirectionDetail = `客让深盘（-${goalCount}）低水控赔，客队战力碾压，首选客队穿盘大胜。`;
+            confidenceReason = `客让深盘低水控赔，看好客队穿盘。`;
+          } else {
+            euroPick = '客胜独赢 (防1球小胜)';
+            handicapPick = `下盘 ${homeTeam} (+${goalCount}受让)`;
+            finalDirection = `【推荐方向】：双向对冲（竞彩客胜独赢 + 亚指下盘 ${homeTeam} +${goalCount}受让）`;
+            if (goalCount === 1.0) {
+              finalDirectionDetail = `【操盘精算对冲】：胜平负维度客队赢面大（首选客胜独赢）；但客让1球门槛偏高（需净胜2球赢全盘，净胜1球仅走盘退款）。实战防范客队 0-1 或 1-2 经济型小胜走盘，让球端首选主队受让 (+1.0)！`;
+            } else if (goalCount === 1.25) {
+              finalDirectionDetail = `【操盘精算对冲】：胜平负维度客队实力占优（首选客胜独赢）；但客让1.25球门槛高（需净胜2球赢全盘，净胜1球客让输半/主队赢半）。实战防范客队 0-1 小胜赢球输半，让球端首选主队受让 (+1.25)！`;
+            } else {
+              finalDirectionDetail = `【操盘精算对冲】：胜平负维度客队赢面大（首选客胜独赢）；但客让${goalCount}球门槛过深（净胜1球客让全输）。实战严防客队控场1球小胜赢球输盘，让球端首选主队受让 (+${goalCount})！`;
+            }
+            confidenceReason = `客让深盘存在小胜赢球输盘风险，采用客胜独赢+主队受让下盘对冲精算。`;
+          }
         }
       }
 
@@ -515,17 +602,7 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
           ? `大球 (>=${data.overUnder.lateLine})`
           : `小球 (<=${data.overUnder.lateLine})`;
 
-      finalDirection = `【推荐方向】：${handicapPick}`;
-
-      if (euroPick.includes('主胜') && handicapPick.includes('下盘')) {
-        const absGoal = Math.abs(lateHandicapNum);
-        finalDirectionDetail = `【操盘精算对冲】：胜平负维度主队赢面占优（主胜/平）；但亚盘主让${absGoal}球门槛偏高（必须净胜2球才能赢全盘）。实战重点防范主队 1-0 经济型赢球走盘或 1-1 爆冷冷平，因此让球端首选下盘受让方 (+${absGoal})，双向构筑资金风控安全垫！`;
-      } else {
-        finalDirectionDetail = `根据临场欧亚赔付防线与水位阻诱权衡，首选稳健防守盘口。`;
-      }
-
       riskWarning = `避坑风险提示：注意临场前45分钟是否有反常升水或退盘现象，严格遵循“晚盘看真实风控”原则。`;
-      confidenceReason = '中性博弈盘型，结合胜平负与让球盘口门槛进行对冲精算。';
       break;
     }
   }

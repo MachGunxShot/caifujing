@@ -23,30 +23,111 @@ import {
 import { ShieldCheck, Sparkles, TrendingUp, AlertTriangle, HelpCircle, Layers, Brain } from 'lucide-react';
 
 const QUEUE_STORAGE_KEY = 'fortune_actuary_batch_queue_v2';
+const WORKSPACE_BACKUP_KEY = 'fortune_actuary_user_workspace';
 const MATCH_STORAGE_KEY = 'fortune_actuary_current_match_v2';
 const REPORT_STORAGE_KEY = 'fortune_actuary_current_report_v2';
 const ACTIVE_TAB_STORAGE_KEY = 'fortune_actuary_active_tab_v2';
 
+const LEGACY_STORAGE_KEYS = [
+  'fortune_actuary_user_workspace',
+  'fortune_actuary_batch_queue_v2',
+  'fortune_actuary_batch_queue',
+  'fortune_actuary_batch_queue_v1',
+  'fortune_actuary_queue',
+  'fortune_actuary_matches',
+];
+
+/**
+ * Robust loader that searches all historical storage keys to recover user's real analyzed matches,
+ * while preventing teaching presets from polluting the user's authentic workspace.
+ */
+function loadUserSavedQueue(): BatchMatchItem[] {
+  for (const key of LEGACY_STORAGE_KEYS) {
+    try {
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Filter to user's real analyzed matches (exclude preset cases)
+          const realMatches = parsed.filter(
+            (item: any) =>
+              item &&
+              item.data &&
+              item.data.matchInfo &&
+              item.data.matchInfo.homeTeam &&
+              !item.id?.startsWith('preset-') &&
+              !PRESET_CASES.some((c) => c.id === item.id)
+          );
+          if (realMatches.length > 0) {
+            return realMatches;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`Failed reading saved queue from ${key}:`, e);
+    }
+  }
+
+  // Check if there is a single analyzed match saved from yesterday
+  try {
+    const singleMatch =
+      localStorage.getItem(MATCH_STORAGE_KEY) ||
+      localStorage.getItem('fortune_actuary_current_match');
+    if (singleMatch) {
+      const parsed = JSON.parse(singleMatch);
+      if (
+        parsed &&
+        parsed.matchInfo &&
+        parsed.matchInfo.homeTeam &&
+        !PRESET_CASES.some(
+          (c) =>
+            c.data.matchInfo.homeTeam === parsed.matchInfo.homeTeam &&
+            c.data.matchInfo.awayTeam === parsed.matchInfo.awayTeam
+        )
+      ) {
+        return [
+          {
+            id: `restored-${Date.now()}`,
+            sourceName: `历史实战_${parsed.matchInfo.homeTeam}vs${parsed.matchInfo.awayTeam}`,
+            data: parsed,
+            report: generateActuarialRuleReport(parsed),
+            status: 'done',
+            timestamp: Date.now(),
+          },
+        ];
+      }
+    }
+  } catch (e) {}
+
+  // If no user matches exist at all (clean pristine state), return empty array.
+  // Never silently inject teaching presets into the user's real workspace!
+  return [];
+}
+
 export default function App() {
   const initialPreset = PRESET_CASES[1]; // 【高息吸筹 / 名气诱导】
+
+  // Persistent Batch Queue: load user's real analyzed matches from localStorage!
+  const [batchQueue, setBatchQueue] = useState<BatchMatchItem[]>(() => {
+    return loadUserSavedQueue();
+  });
 
   // Persistent Match Data
   const [matchData, setMatchData] = useState<FullMatchData>(() => {
     try {
-      const saved = localStorage.getItem(MATCH_STORAGE_KEY);
+      const saved =
+        localStorage.getItem(MATCH_STORAGE_KEY) ||
+        localStorage.getItem('fortune_actuary_current_match');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.matchInfo && parsed.matchInfo.homeTeam) {
           return parsed;
         }
       }
-      // If no current single match, check if there's user's real saved batchQueue
-      const savedQueue = localStorage.getItem(QUEUE_STORAGE_KEY);
-      if (savedQueue) {
-        const q = JSON.parse(savedQueue);
-        if (Array.isArray(q) && q.length > 0 && q[0].data?.matchInfo?.homeTeam) {
-          return q[0].data;
-        }
+      // If no single match, check if there's user's real saved match in queue
+      const savedQueue = loadUserSavedQueue();
+      if (savedQueue.length > 0 && savedQueue[0].data?.matchInfo?.homeTeam) {
+        return savedQueue[0].data;
       }
     } catch (e) {}
     return initialPreset.data;
@@ -77,7 +158,7 @@ export default function App() {
         }
       }
     } catch (e) {}
-    return generateActuarialRuleReport(initialPreset.data);
+    return generateActuarialRuleReport(matchData || initialPreset.data);
   });
 
   // Attachment upload modal state
@@ -97,34 +178,11 @@ export default function App() {
   const [reportMode, setReportMode] = useState<'single' | 'batch'>('single');
   const [calcMode, setCalcMode] = useState<'single' | 'batch'>('single');
 
-  // Persistent Batch Queue: load user's real analyzed matches from localStorage!
-  const [batchQueue, setBatchQueue] = useState<BatchMatchItem[]>(() => {
-    try {
-      const saved = localStorage.getItem(QUEUE_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to load saved batchQueue:', e);
-    }
-    // Only fallback to presets on pristine first open
-    return PRESET_CASES.map((c) => ({
-      id: c.id,
-      sourceName: c.name,
-      data: c.data,
-      report: generateActuarialRuleReport(c.data),
-      status: 'done',
-      timestamp: Date.now(),
-    }));
-  });
-
-  // Auto-persist batchQueue
+  // Auto-persist batchQueue to both active key and workspace backup key
   useEffect(() => {
     try {
       localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(batchQueue));
+      localStorage.setItem(WORKSPACE_BACKUP_KEY, JSON.stringify(batchQueue));
     } catch (e) {
       console.warn('Failed to persist batchQueue:', e);
     }
