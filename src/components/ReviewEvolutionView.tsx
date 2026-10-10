@@ -37,6 +37,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Star,
+  CheckCheck,
 } from 'lucide-react';
 import {
   FullMatchData,
@@ -101,8 +102,32 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     setSelectedMatchId(id);
     if (id !== 'current') {
       const found = queue.find((q) => q.id === id);
-      if (found && onSelectMatch) {
-        onSelectMatch(found.data);
+      if (found) {
+        if (onSelectMatch) {
+          onSelectMatch(found.data);
+        }
+        if (found.review) {
+          setActualHomeScore(found.review.actualHomeScore);
+          setActualAwayScore(found.review.actualAwayScore);
+          setIncidents(found.review.matchIncidents || '');
+        } else if (found.finalScore) {
+          const parts = found.finalScore.split(/[-:：]/);
+          if (parts.length === 2) {
+            setActualHomeScore(parseInt(parts[0], 10) || 0);
+            setActualAwayScore(parseInt(parts[1], 10) || 0);
+          }
+        }
+      }
+    } else {
+      const currentRev = reviews.find(
+        (r) =>
+          r.matchData?.matchInfo?.homeTeam === currentMatch.matchInfo.homeTeam &&
+          r.matchData?.matchInfo?.awayTeam === currentMatch.matchInfo.awayTeam
+      );
+      if (currentRev) {
+        setActualHomeScore(currentRev.actualHomeScore);
+        setActualAwayScore(currentRev.actualAwayScore);
+        setIncidents(currentRev.matchIncidents || '');
       }
     }
   };
@@ -298,8 +323,31 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
   // Delete single review
   const handleDeleteReview = (reviewId: string) => {
     if (window.confirm('确定要删除这条复盘战报吗？')) {
+      const targetReview = reviews.find((r) => r.id === reviewId);
       const updated = deletePostMatchReview(reviewId);
       setReviews(updated);
+
+      if (targetReview) {
+        const home = (targetReview.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
+        const away = (targetReview.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+        const updatedQueue = queue.map((item) => {
+          const iHome = (item.data?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
+          const iAway = (item.data?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+          if (
+            item.review?.id === reviewId ||
+            (home && away && iHome && iAway && (home.includes(iHome) || iHome.includes(home)) && (away.includes(iAway) || iAway.includes(away)))
+          ) {
+            return {
+              ...item,
+              isReviewed: false,
+              finalScore: undefined,
+              review: undefined,
+            };
+          }
+          return item;
+        });
+        onUpdateQueue(updatedQueue);
+      }
     }
   };
 
@@ -307,12 +355,37 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
   const handleDeleteDateGroup = (dateKey: string, dateLabel: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (window.confirm(`确定要删除【${dateLabel}】当天的全部战报吗？`)) {
+      const toDelete = reviews.filter((r) => {
+        const { dateKey: rKey } = formatDateInfo(r.reviewTimestamp);
+        return rKey === dateKey;
+      });
       const filtered = reviews.filter((r) => {
         const { dateKey: rKey } = formatDateInfo(r.reviewTimestamp);
         return rKey !== dateKey;
       });
       localStorage.setItem('fortune_actuary_reviews_v1', JSON.stringify(filtered));
       setReviews(filtered);
+
+      const updatedQueue = queue.map((item) => {
+        const isMatched = toDelete.some((r) => {
+          if (r.id === item.review?.id) return true;
+          const rHome = (r.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
+          const rAway = (r.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+          const iHome = (item.data?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
+          const iAway = (item.data?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+          return rHome && rAway && iHome && iAway && (rHome.includes(iHome) || iHome.includes(rHome)) && (rAway.includes(iAway) || iAway.includes(rAway));
+        });
+        if (isMatched) {
+          return {
+            ...item,
+            isReviewed: false,
+            finalScore: undefined,
+            review: undefined,
+          };
+        }
+        return item;
+      });
+      onUpdateQueue(updatedQueue);
     }
   };
 
@@ -321,13 +394,61 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     if (window.confirm(`确定要清空全部 ${reviews.length} 条历史复盘战报吗？（核心法则库将完好保留）`)) {
       clearAllPostMatchReviews();
       setReviews([]);
+      const updatedQueue = queue.map((item) => ({
+        ...item,
+        isReviewed: false,
+        finalScore: undefined,
+        review: undefined,
+      }));
+      onUpdateQueue(updatedQueue);
     }
   };
 
   useEffect(() => {
+    const currentReviews = getPostMatchReviews();
     setRules(getExperienceRules());
-    setReviews(getPostMatchReviews());
-  }, []);
+    setReviews(currentReviews);
+
+    // Auto-heal queue if some matches are in persistent review store but not marked in queue
+    if (queue && queue.length > 0 && currentReviews.length > 0) {
+      let needsHeal = false;
+      const healedQueue = queue.map((item) => {
+        if (item.isReviewed && item.review && item.finalScore) return item;
+
+        const home = (item.data?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
+        const away = (item.data?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+        const matched = currentReviews.find((r) => {
+          if (r.id === item.id || r.id === item.review?.id) return true;
+          const rHome = (r.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
+          const rAway = (r.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+          return (
+            home &&
+            away &&
+            rHome &&
+            rAway &&
+            (home.includes(rHome) || rHome.includes(home)) &&
+            (away.includes(rAway) || rAway.includes(away))
+          );
+        });
+
+        if (matched) {
+          needsHeal = true;
+          return {
+            ...item,
+            isReviewed: true,
+            finalScore: matched.actualScore,
+            isLocked: true,
+            review: matched,
+          };
+        }
+        return item;
+      });
+
+      if (needsHeal) {
+        onUpdateQueue(healedQueue);
+      }
+    }
+  }, [queue.length]);
 
   // Global Clipboard paste listener for screenshot OCR
   useEffect(() => {
@@ -407,16 +528,27 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
   // Helper: auto-generate test scores based on current matches in queue
   const handleLoadQueueScoreSample = () => {
-    const items = [
-      currentMatch,
-      ...queue.map((q) => q.data),
-    ];
+    // Prioritize unreviewed matches first so reviewed matches are not repeatedly filled!
+    const unreviewed = queue.filter((q) => !q.isReviewed && !q.review);
+    const candidateQueue = unreviewed.length > 0 ? unreviewed : queue;
+    const items = candidateQueue.map((q) => q.data);
+
+    // If currentMatch is not in queue and not reviewed, include it
+    const isCurrentReviewed = reviews.some(
+      (r) =>
+        r.matchData?.matchInfo?.homeTeam === currentMatch.matchInfo.homeTeam &&
+        r.matchData?.matchInfo?.awayTeam === currentMatch.matchInfo.awayTeam
+    );
+    if (!isCurrentReviewed && !items.some((m) => m.matchInfo.homeTeam === currentMatch.matchInfo.homeTeam)) {
+      items.unshift(currentMatch);
+    }
+
     const sampleScores = [
       { h: 1, a: 0, inc: '下半场点球破门' },
       { h: 0, a: 1, inc: '临场87分钟客队反击得手' },
       { h: 2, a: 1, inc: '常规攻防对攻' },
       { h: 1, a: 1, inc: '两队握手言和' },
-      { h: 3, a: 0, inc: '主队绝对控场穿盘' },
+      { h: 3, a: 0, inc: '主队控场大胜' },
       { h: 2, a: 2, inc: '补时压哨绝平' },
     ];
 
@@ -556,12 +688,48 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         }
         totalExecuted++;
 
-        // Update in queue
-        if (queueIdx >= 0) {
-          updatedQueue[queueIdx] = {
-            ...updatedQueue[queueIdx],
+        // Persist review to authoritative storage
+        savePostMatchReview(review);
+
+        // Update in queue - strictly mark isReviewed: true, finalScore, isLocked, and review!
+        const finalScoreStr = `${item.homeScore}-${item.awayScore}`;
+        let matchedIdx = queueIdx;
+
+        if (matchedIdx < 0) {
+          matchedIdx = updatedQueue.findIndex((q) => {
+            const qHome = (q.data.matchInfo.homeTeam || '').replace(/\s+/g, '').toLowerCase();
+            const qAway = (q.data.matchInfo.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+            const iHome = (item.homeTeam || '').replace(/\s+/g, '').toLowerCase();
+            const iAway = (item.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+            return (
+              (qHome.includes(iHome) || iHome.includes(qHome)) &&
+              (qAway.includes(iAway) || iAway.includes(qAway))
+            );
+          });
+        }
+
+        if (matchedIdx >= 0) {
+          updatedQueue[matchedIdx] = {
+            ...updatedQueue[matchedIdx],
+            isReviewed: true,
+            finalScore: finalScoreStr,
+            isLocked: true,
             review,
           };
+        } else {
+          // If match wasn't in queue previously, append it as a reviewed match item
+          updatedQueue.push({
+            id: `batch-rev-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            sourceName: `实战复盘_${item.homeTeam}vs${item.awayTeam}`,
+            data: targetMatch,
+            report: targetReport,
+            status: 'done',
+            timestamp: Date.now(),
+            isReviewed: true,
+            finalScore: finalScoreStr,
+            isLocked: true,
+            review,
+          });
         }
       }
 
@@ -570,7 +738,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
       setRules(getExperienceRules());
       setReviews(getPostMatchReviews());
       setBatchReviewSummary(
-        `🎉 成功批量完成 ${totalExecuted} 场赛果深度复盘！其中 ${newlyVerified} 场完全印证《财富经》底牌风控，并已提炼更新核心实战法则库！`
+        `🎉 成功批量完成 ${totalExecuted} 场赛果深度复盘！其中 ${newlyVerified} 场完全印证《财富经》底牌风控，已归档沉淀核心经验法则！`
       );
       setParsedScores([]);
     } catch (err: any) {
@@ -657,19 +825,59 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           isActive: true,
           hitCount: localReview.outcomeEvaluation.modelVerified ? 1 : 0,
         });
+      } else {
+        savePostMatchReview(localReview);
       }
 
       setLatestReviewResult(localReview);
       setRules(getExperienceRules());
       setReviews(getPostMatchReviews());
 
-      // Update in queue
-      if (selectedMatchId !== 'current') {
-        const updated = queue.map((item) =>
-          item.id === selectedMatchId ? { ...item, review: localReview } : item
-        );
-        onUpdateQueue(updated);
+      // Update in queue - strictly mark isReviewed: true, finalScore, isLocked, and review!
+      const finalScoreStr = `${actualHomeScore}-${actualAwayScore}`;
+      const targetHome = (activeReviewMatchData.matchInfo.homeTeam || '').replace(/\s+/g, '').toLowerCase();
+      const targetAway = (activeReviewMatchData.matchInfo.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+
+      let matchedInQueue = false;
+      const updated = queue.map((item) => {
+        const itemHome = (item.data.matchInfo.homeTeam || '').replace(/\s+/g, '').toLowerCase();
+        const itemAway = (item.data.matchInfo.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+        const isMatched =
+          item.id === selectedMatchId ||
+          (targetHome && targetAway && itemHome && itemAway &&
+            (itemHome.includes(targetHome) || targetHome.includes(itemHome)) &&
+            (itemAway.includes(targetAway) || targetAway.includes(itemAway)));
+
+        if (isMatched) {
+          matchedInQueue = true;
+          return {
+            ...item,
+            isReviewed: true,
+            finalScore: finalScoreStr,
+            isLocked: true,
+            review: localReview,
+          };
+        }
+        return item;
+      });
+
+      // If selectedMatchId was 'current' and not yet in queue, push it to queue
+      if (!matchedInQueue && selectedMatchId === 'current') {
+        updated.push({
+          id: `current-reviewed-${Date.now()}`,
+          sourceName: `精算实战_${activeReviewMatchData.matchInfo.homeTeam}vs${activeReviewMatchData.matchInfo.awayTeam}`,
+          data: activeReviewMatchData,
+          report: activeReviewReport,
+          status: 'done',
+          timestamp: Date.now(),
+          isReviewed: true,
+          finalScore: finalScoreStr,
+          isLocked: true,
+          review: localReview,
+        });
       }
+
+      onUpdateQueue(updated);
     } finally {
       setIsReviewing(false);
     }
@@ -960,11 +1168,23 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
               >
                 <Layers className="w-3.5 h-3.5" />
                 <span>⚡ 批量录入赛果 (支持截图/文本自动识别)</span>
-                {queue.length > 0 && (
-                  <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-slate-900 text-emerald-400 border border-emerald-500/30">
-                    待复盘 {queue.length} 场
-                  </span>
-                )}
+                {queue.length > 0 && (() => {
+                  const unreviewedCount = queue.filter((q) => !q.isReviewed && !q.review).length;
+                  const reviewedCount = queue.filter((q) => q.isReviewed || q.review).length;
+                  return (
+                    <span
+                      className={`ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-mono border ${
+                        unreviewedCount > 0
+                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                          : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                      }`}
+                    >
+                      {unreviewedCount > 0
+                        ? `待复盘 ${unreviewedCount} 场 (已完赛 ${reviewedCount} 场)`
+                        : `全部已复盘 (${queue.length} 场)`}
+                    </span>
+                  );
+                })()}
               </button>
               <button
                 type="button"
@@ -977,6 +1197,17 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
               >
                 <FileText className="w-3.5 h-3.5" />
                 <span>📝 单场逐场精细复盘</span>
+                {(() => {
+                  const unreviewedCount = queue.filter((q) => !q.isReviewed && !q.review).length;
+                  if (unreviewedCount > 0) {
+                    return (
+                      <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-slate-900 text-amber-400 border border-amber-500/30">
+                        {unreviewedCount} 场待办
+                      </span>
+                    );
+                  }
+                  return null;
+                })()}
               </button>
             </div>
 
@@ -1311,16 +1542,61 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                     >
                       <option value="current">
                         当前精算台：{currentMatch.matchInfo.homeTeam} vs {currentMatch.matchInfo.awayTeam}
+                        {reviews.some((r) => r.matchData?.matchInfo?.homeTeam === currentMatch.matchInfo.homeTeam && r.matchData?.matchInfo?.awayTeam === currentMatch.matchInfo.awayTeam)
+                          ? ' [✅ 已复盘]'
+                          : ' [⏳ 待复盘]'}
                       </option>
-                      {queue.map((q, idx) => (
-                        <option key={q.id} value={q.id}>
-                          #{idx + 1} 场：{q.data.matchInfo.homeTeam} vs {q.data.matchInfo.awayTeam}
-                        </option>
-                      ))}
+                      {queue.map((q, idx) => {
+                        const isDone = q.isReviewed || q.review;
+                        return (
+                          <option key={q.id} value={q.id}>
+                            #{idx + 1} 场：{q.data.matchInfo.homeTeam} vs {q.data.matchInfo.awayTeam}{' '}
+                            {isDone ? `[✅ 已复盘 ${q.finalScore ? `(${q.finalScore})` : ''}]` : '[⏳ 待复盘]'}
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
                 )}
               </div>
+
+              {/* Match Existing Review Status Notice */}
+              {(() => {
+                const isCurrent = selectedMatchId === 'current';
+                const queueItem = !isCurrent ? queue.find((q) => q.id === selectedMatchId) : null;
+                const existingReview =
+                  queueItem?.review ||
+                  (queueItem?.isReviewed && queueItem.finalScore ? { actualScore: queueItem.finalScore } : null) ||
+                  reviews.find((r) => {
+                    const h = activeReviewMatchData.matchInfo.homeTeam;
+                    const a = activeReviewMatchData.matchInfo.awayTeam;
+                    return (
+                      r.matchData?.matchInfo?.homeTeam === h &&
+                      r.matchData?.matchInfo?.awayTeam === a
+                    );
+                  });
+
+                if (existingReview) {
+                  return (
+                    <div className="bg-emerald-950/40 border border-emerald-500/40 rounded-lg p-2.5 flex items-center justify-between text-xs text-emerald-300">
+                      <div className="flex items-center gap-2">
+                        <CheckCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>
+                          <strong className="text-white">该比赛已完成复盘</strong> (已记录完场比分:{' '}
+                          <span className="font-mono font-black text-emerald-400">{existingReview.actualScore}</span>)。您可在下方修改比分或补充事件后重新保存更新。
+                        </span>
+                      </div>
+                    </div>
+                  );
+                } else {
+                  return (
+                    <div className="bg-slate-950/60 border border-slate-800 rounded-lg p-2.5 flex items-center gap-2 text-xs text-slate-400">
+                      <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>该比赛当前处于 <strong className="text-amber-400">⏳ 待复盘</strong> 状态，请录入真实赛果后触发归因精算。</span>
+                    </div>
+                  );
+                }
+              })()}
 
               {/* Match Context Preview Card */}
               <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 grid grid-cols-1 sm:grid-cols-5 gap-2 text-xs">

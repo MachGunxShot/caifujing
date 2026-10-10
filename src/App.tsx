@@ -19,6 +19,7 @@ import {
   getActiveExperiencePromptText,
   evaluateMatchOutcomeAndExtractLesson,
   savePostMatchReview,
+  getPostMatchReviews,
 } from './utils/experienceStore';
 import { ShieldCheck, Sparkles, TrendingUp, AlertTriangle, HelpCircle, Layers, Brain } from 'lucide-react';
 
@@ -36,6 +37,55 @@ const LEGACY_STORAGE_KEYS = [
   'fortune_actuary_queue',
   'fortune_actuary_matches',
 ];
+
+/**
+ * Cross-references matches in the queue against the persistent PostMatchReview store,
+ * guaranteeing that any match ever reviewed retains its finalScore, isReviewed flag,
+ * and review object even after page reloads or cache re-evaluations.
+ */
+function syncQueueWithSavedReviews(queue: BatchMatchItem[]): BatchMatchItem[] {
+  try {
+    const reviews = getPostMatchReviews();
+    if (!reviews || reviews.length === 0) return queue;
+
+    return queue.map((item) => {
+      // If already fully populated with review and finalScore, keep it
+      if (item.isReviewed && item.finalScore && item.review) return item;
+
+      const home = (item.data?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
+      const away = (item.data?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+
+      const matchedReview = reviews.find((r) => {
+        if (r.id === item.id || r.id === item.review?.id) return true;
+        const rHome = (r.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
+        const rAway = (r.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+        return (
+          home &&
+          away &&
+          rHome &&
+          rAway &&
+          (home.includes(rHome) || rHome.includes(home)) &&
+          (away.includes(rAway) || rAway.includes(away))
+        );
+      });
+
+      if (matchedReview) {
+        return {
+          ...item,
+          isReviewed: true,
+          finalScore: matchedReview.actualScore,
+          isLocked: true,
+          review: matchedReview,
+        };
+      }
+
+      return item;
+    });
+  } catch (e) {
+    console.warn('syncQueueWithSavedReviews error:', e);
+    return queue;
+  }
+}
 
 /**
  * Robust loader that searches all historical storage keys to recover user's real analyzed matches,
@@ -59,7 +109,7 @@ function loadUserSavedQueue(): BatchMatchItem[] {
               !PRESET_CASES.some((c) => c.id === item.id)
           );
           if (realMatches.length > 0) {
-            return realMatches;
+            return syncQueueWithSavedReviews(realMatches);
           }
         }
       }
@@ -85,7 +135,7 @@ function loadUserSavedQueue(): BatchMatchItem[] {
             c.data.matchInfo.awayTeam === parsed.matchInfo.awayTeam
         )
       ) {
-        return [
+        return syncQueueWithSavedReviews([
           {
             id: `restored-${Date.now()}`,
             sourceName: `历史实战_${parsed.matchInfo.homeTeam}vs${parsed.matchInfo.awayTeam}`,
@@ -94,7 +144,7 @@ function loadUserSavedQueue(): BatchMatchItem[] {
             status: 'done',
             timestamp: Date.now(),
           },
-        ];
+        ]);
       }
     }
   } catch (e) {}
@@ -422,8 +472,8 @@ export default function App() {
 
         if (existingIndex >= 0) {
           const existing = updatedQueue[existingIndex];
-          if (existing.isLocked) {
-            // 🔒 LOCKED! Strictly preserve the frozen pre-match snapshot & predictions!
+          if (existing.isLocked || existing.isReviewed || existing.review) {
+            // 🔒 LOCKED or REVIEWED! Strictly preserve the frozen pre-match snapshot & predictions!
             protectedCount++;
             continue;
           } else {
@@ -483,6 +533,10 @@ export default function App() {
               report: updatedReport,
               status: 'done',
               timestamp: Date.now(),
+              isReviewed: existing.isReviewed,
+              finalScore: existing.finalScore,
+              isLocked: existing.isLocked,
+              review: existing.review,
             };
           }
         } else {

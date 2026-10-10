@@ -16,16 +16,6 @@ export function parseHandicapValue(line: string): number {
   if (!line) return 0;
   const cleaned = line.trim();
 
-  // Explicit signed numbers
-  if (cleaned.startsWith('-')) {
-    const num = parseFloat(cleaned);
-    return isNaN(num) ? 0 : -Math.abs(num);
-  }
-  if (cleaned.startsWith('+')) {
-    const num = parseFloat(cleaned);
-    return isNaN(num) ? 0 : Math.abs(num);
-  }
-
   // Common Chinese football handicap mappings
   const isSuffer = cleaned.includes('受') || cleaned.includes('受让') || cleaned.includes('客让');
   let base = 0;
@@ -49,7 +39,21 @@ export function parseHandicapValue(line: string): number {
     }
   }
 
-  return isSuffer ? base : -base;
+  if (isSuffer) {
+    return base;
+  }
+
+  // Explicit signed numbers
+  if (cleaned.startsWith('+')) {
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? 0 : Math.abs(num);
+  }
+  if (cleaned.startsWith('-')) {
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? 0 : -Math.abs(num);
+  }
+
+  return -base;
 }
 
 export function parseOverUnderValue(line: string): number {
