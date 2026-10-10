@@ -5,6 +5,7 @@ import {
   EvolvedExperienceRule,
 } from '../types/fortuneActuary';
 import { parseHandicapValue, parseOverUnderValue } from './actuaryEngine';
+import { calculateSalesDate } from './salesDayUtils';
 
 const RULES_STORAGE_KEY = 'fortune_actuary_evolved_rules_v1';
 const REVIEWS_STORAGE_KEY = 'fortune_actuary_reviews_v1';
@@ -1314,6 +1315,9 @@ export function evaluateMatchOutcomeAndExtractLesson(
   const safeHome = (homeTeam || 'Home').replace(/\s+/g, '_');
   const safeAway = (awayTeam || 'Away').replace(/\s+/g, '_');
 
+  const kickoffTime = matchData.matchInfo?.matchTime || '临场';
+  const salesInfo = calculateSalesDate(kickoffTime, Date.now());
+
   const review: PostMatchReview = {
     id: `rev-${safeHome}-${safeAway}-${actualScoreStr}`,
     matchData,
@@ -1323,6 +1327,10 @@ export function evaluateMatchOutcomeAndExtractLesson(
     actualAwayScore,
     matchIncidents,
     reviewTimestamp: Date.now(),
+    salesDate: salesInfo.salesDate,
+    salesDateLabel: salesInfo.salesDateLabel,
+    salesCycleText: salesInfo.salesCycleText,
+    kickoffTime: salesInfo.kickoffTimeFormatted,
     outcomeEvaluation: {
       euroHit,
       handicapHit,

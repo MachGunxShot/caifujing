@@ -68,6 +68,7 @@ import {
 } from '../utils/experienceStore';
 import { generateActuarialRuleReport } from '../utils/actuaryEngine';
 import { ParsedScoreItem, parseBatchMatchScoresFromText } from '../utils/textParser';
+import { calculateSalesDate, extractKickoffTime, SalesDateInfo } from '../utils/salesDayUtils';
 
 interface ReviewEvolutionViewProps {
   queue: BatchMatchItem[];
@@ -253,13 +254,20 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     return { dateKey, dateLabel, dayOfWeek, isToday, timeStr };
   };
 
-  // Group reviews hierarchically by Year-Month-Day
+  // Helper to determine the Sales Day (竞彩销售日：当日11:00至次日11:00) for a review item
+  const getReviewSalesInfo = (rev: PostMatchReview): SalesDateInfo => {
+    const kickoff = rev.kickoffTime || rev.matchData?.matchInfo?.matchTime || '临场';
+    return calculateSalesDate(kickoff, rev.reviewTimestamp);
+  };
+
+  // Group reviews hierarchically by Sports Lottery Sales Day (当日 11:00 至次日 11:00 为一个销售日)
   const groupedReviews = useMemo(() => {
     const groupsMap = new Map<
       string,
       {
         dateKey: string;
         dateLabel: string;
+        salesCycleText: string;
         dayOfWeek: string;
         isToday: boolean;
         items: PostMatchReview[];
@@ -274,13 +282,16 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     >();
 
     for (const rev of reviews) {
-      const { dateKey, dateLabel, dayOfWeek, isToday } = formatDateInfo(rev.reviewTimestamp);
-      if (!groupsMap.has(dateKey)) {
-        groupsMap.set(dateKey, {
-          dateKey,
-          dateLabel,
+      const salesInfo = getReviewSalesInfo(rev);
+      const { salesDate, salesDateLabel, salesCycleText, dayOfWeek, isCurrentSalesDay } = salesInfo;
+
+      if (!groupsMap.has(salesDate)) {
+        groupsMap.set(salesDate, {
+          dateKey: salesDate,
+          dateLabel: salesDateLabel,
+          salesCycleText,
           dayOfWeek,
-          isToday,
+          isToday: isCurrentSalesDay,
           items: [],
           stats: {
             total: 0,
@@ -292,13 +303,25 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         });
       }
 
-      const g = groupsMap.get(dateKey)!;
+      const g = groupsMap.get(salesDate)!;
       g.items.push(rev);
       g.stats.total += 1;
       if (rev.outcomeEvaluation.euroHit) g.stats.euroHits += 1;
       if (rev.outcomeEvaluation.handicapHit) g.stats.handicapHits += 1;
       if (rev.outcomeEvaluation.overUnderHit) g.stats.ouHits += 1;
       if (rev.outcomeEvaluation.scoreHit) g.stats.scoreHits += 1;
+    }
+
+    // Sort items within each group chronologically by match kickoff time
+    for (const g of groupsMap.values()) {
+      g.items.sort((a, b) => {
+        const timeA = a.kickoffTime || a.matchData?.matchInfo?.matchTime || '';
+        const timeB = b.kickoffTime || b.matchData?.matchInfo?.matchTime || '';
+        if (timeA && timeB && timeA !== '临场' && timeB !== '临场') {
+          return timeA.localeCompare(timeB);
+        }
+        return (a.reviewTimestamp || 0) - (b.reviewTimestamp || 0);
+      });
     }
 
     return Array.from(groupsMap.values()).sort((a, b) => b.dateKey.localeCompare(a.dateKey));
@@ -351,16 +374,16 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     }
   };
 
-  // Delete all reviews of a specific date
+  // Delete all reviews of a specific sales day
   const handleDeleteDateGroup = (dateKey: string, dateLabel: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (window.confirm(`确定要删除【${dateLabel}】当天的全部战报吗？`)) {
+    if (window.confirm(`确定要删除【${dateLabel}】的全部战报吗？`)) {
       const toDelete = reviews.filter((r) => {
-        const { dateKey: rKey } = formatDateInfo(r.reviewTimestamp);
+        const { salesDate: rKey } = getReviewSalesInfo(r);
         return rKey === dateKey;
       });
       const filtered = reviews.filter((r) => {
-        const { dateKey: rKey } = formatDateInfo(r.reviewTimestamp);
+        const { salesDate: rKey } = getReviewSalesInfo(r);
         return rKey !== dateKey;
       });
       localStorage.setItem('fortune_actuary_reviews_v1', JSON.stringify(filtered));
@@ -1042,9 +1065,15 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                   <span>动态进化学习已启用</span>
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">
-                赛后录入实际比分进行归因测谎 · 自动提炼核心经验法则 · 永久反哺后续赛事研判
-              </p>
+              <div className="flex items-center gap-2 flex-wrap mt-1">
+                <p className="text-xs text-slate-400">
+                  赛后录入实际比分进行归因测谎 · 自动提炼核心经验法则 · 永久反哺后续赛事研判
+                </p>
+                <span className="text-[10px] text-cyan-300 font-mono bg-cyan-950/70 px-2 py-0.5 rounded border border-cyan-800/60 flex items-center gap-1">
+                  <Clock className="w-3 h-3 text-cyan-400" />
+                  <span>竞彩销售日规则：当日 11:00 至次日 11:00（自动按开赛时间归档对齐每日赛果）</span>
+                </span>
+              </div>
             </div>
           </div>
 
@@ -1548,9 +1577,10 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                       </option>
                       {queue.map((q, idx) => {
                         const isDone = q.isReviewed || q.review;
+                        const mTime = q.data.matchInfo.matchTime || '临场';
                         return (
                           <option key={q.id} value={q.id}>
-                            #{idx + 1} 场：{q.data.matchInfo.homeTeam} vs {q.data.matchInfo.awayTeam}{' '}
+                            #{idx + 1} 场：{q.data.matchInfo.homeTeam} vs {q.data.matchInfo.awayTeam} ({mTime}){' '}
                             {isDone ? `[✅ 已复盘 ${q.finalScore ? `(${q.finalScore})` : ''}]` : '[⏳ 待复盘]'}
                           </option>
                         );
@@ -1559,6 +1589,35 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                   </div>
                 )}
               </div>
+
+              {/* Kickoff & Sales Day Banner */}
+              {(() => {
+                const kickoff = activeReviewMatchData.matchInfo.matchTime || '临场';
+                const sInfo = calculateSalesDate(kickoff, Date.now());
+                return (
+                  <div className="bg-slate-950/80 px-3 py-2 rounded-lg border border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="flex items-center gap-1.5 text-cyan-300 font-mono font-bold bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/60">
+                        <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>比赛开赛时间：{kickoff}</span>
+                      </span>
+                      <span className="text-slate-600">|</span>
+                      <span className="flex items-center gap-1.5 text-emerald-400 font-bold bg-emerald-950/50 px-2 py-0.5 rounded border border-emerald-800/50">
+                        <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>归属销售日：{sInfo.salesDateLabel}（{sInfo.dayOfWeek}）</span>
+                      </span>
+                      <span className="text-slate-400 font-mono text-[11px]">
+                        (周期: {sInfo.salesCycleText})
+                      </span>
+                    </div>
+                    {sInfo.isCurrentSalesDay && (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                        🔥 归入当前销售日复盘
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Match Existing Review Status Notice */}
               {(() => {
@@ -2695,7 +2754,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                     >
                       全日期
                     </button>
-                    {groupedReviews.slice(0, 5).map((g) => (
+                    {groupedReviews.slice(0, 6).map((g) => (
                       <button
                         key={g.dateKey}
                         type="button"
@@ -2707,7 +2766,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                         }`}
                       >
                         {g.isToday ? '🔥 ' : ''}
-                        {g.dateKey.slice(5)}
+                        {g.dateKey.slice(5)} 销售日
                       </button>
                     ))}
                   </div>
@@ -2742,9 +2801,13 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                             <span className="text-xs text-slate-400 font-mono">
                               （{group.dayOfWeek}）
                             </span>
+                            <span className="px-2 py-0.5 rounded text-[10px] font-mono text-cyan-300 bg-cyan-950/70 border border-cyan-800/60 flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-cyan-400" />
+                              <span>销售周期: {group.salesCycleText}</span>
+                            </span>
                             {group.isToday && (
                               <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
-                                🔥 当日实战复盘
+                                🔥 当前销售日
                               </span>
                             )}
                             <span className="text-xs text-slate-300 font-bold bg-slate-900 px-2 py-0.5 rounded border border-slate-800 font-mono">
@@ -2779,7 +2842,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                                 handleDeleteDateGroup(group.dateKey, group.dateLabel, e)
                               }
                               className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-900 hover:bg-rose-950/40 text-slate-400 hover:text-rose-300 border border-slate-800 hover:border-rose-500/30 text-[11px] font-semibold transition-all cursor-pointer"
-                              title={`删除 ${group.dateLabel} 当天全部战报`}
+                              title={`删除 ${group.dateLabel} 全部战报`}
                             >
                               <Trash2 className="w-3 h-3 text-rose-400" />
                               <span className="hidden sm:inline">删除当日</span>
@@ -2828,9 +2891,12 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                                       <span className="text-[10px] text-slate-400 font-mono">
                                         {rev.matchData.matchInfo.league || '常规赛事'}
                                       </span>
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-950/70 text-cyan-300 border border-cyan-800/60 flex items-center gap-1">
+                                        <Clock className="w-3 h-3 text-cyan-400" />
+                                        <span>开赛: {rev.kickoffTime || rev.matchData.matchInfo.matchTime || '临场'}</span>
+                                      </span>
                                       <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
-                                        <Clock className="w-3 h-3 text-slate-500" />
-                                        <span>{timeInfo.timeStr}</span>
+                                        <span>(复盘: {timeInfo.timeStr})</span>
                                       </span>
                                     </div>
 

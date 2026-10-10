@@ -348,23 +348,37 @@ export const AttachmentUploadModal: React.FC<AttachmentUploadModalProps> = ({
               </div>
 
               {/* Multi-Import & Kickoff Lock Protection Notice */}
-              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2 flex items-center justify-between text-xs text-amber-300">
-                <div className="flex items-center gap-2">
-                  <span className="text-amber-400 font-bold">🔒 终盘快照差量更新保护：</span>
-                  <span className="text-[11px] text-slate-300">
-                    若您已锁定/已封盘早先开赛的场次（如 00:00 场次），再次导入包含全量赛事的 Markdown 时，系统将<strong>自动免疫覆盖</strong>，完整保留开赛前预测与终盘快照，仅更新未开赛场次的最新盘赔！
-                  </span>
+              <div className="space-y-1.5">
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2 flex items-center justify-between text-xs text-amber-300">
+                  <div className="flex items-center gap-2">
+                    <span className="text-amber-400 font-bold">🔒 终盘快照差量更新保护：</span>
+                    <span className="text-[11px] text-slate-300">
+                      若您已锁定/已封盘早先开赛的场次，再次导入全量 Markdown 时将<strong>自动免疫覆盖</strong>，保留终盘快照！
+                    </span>
+                  </div>
+                </div>
+                <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-xl px-3 py-2 flex items-center justify-between text-xs text-cyan-300">
+                  <div className="flex items-center gap-2">
+                    <span className="text-cyan-400 font-bold">⏱️ 开赛时间识别 & 销售日映射：</span>
+                    <span className="text-[11px] text-slate-300">
+                      自动提取 Markdown 中的开赛时间（如 <code>开赛时间: 2026-03-28 23:00</code> 或 <code>03-29 03:00</code>），严格按<strong>当日 11:00 至次日 11:00 划定竞彩销售日</strong>，复盘归档严密对齐赛果！
+                    </span>
+                  </div>
                 </div>
               </div>
 
               <textarea
                 value={batchRawText}
                 onChange={(e) => handleBatchTextChange(e.target.value)}
-                placeholder="直接粘贴多行赛事数据或 CSV 内容，例如：
-英超,曼彻斯特城,埃弗顿,-1.75,1.95,-1.75,1.76,1.22,6.80,12.0,3.25,极限榨水
-西甲,皇家马德里,赫塔菲,-1.0,1.86,-1.25,2.06,1.42,4.60,7.20,2.5,升盘满水诱上
-德甲,多特蒙德,波鸿,-0.5,1.92,-0.25,2.05,2.15,3.45,3.30,2.75,浅盘满水
-意甲,拉齐奥,佛罗伦萨,-0.25,1.98,-0.25,1.94,2.50,2.90,2.95,2.25,平赔低洼"
+                placeholder="直接粘贴 Markdown 分析报告、表格或 CSV 内容。系统智能识别开赛时间，例如：
+# 2026-03-28 竞彩足球大盘分析
+## 【1】曼彻斯特城 vs 埃弗顿
+- 联赛：英超 ｜ 开赛时间：2026-03-28 23:00
+- 亚盘让步：-1.75 ｜ 欧指走势：1.22 6.80 12.0 ｜ 大小球：3.25
+
+## 【2】皇家马德里 vs 赫塔菲
+- 联赛：西甲 ｜ 开赛时间：2026-03-29 03:00 (自动归属 03-28 销售日)
+- 亚盘让步：-1.25 ｜ 欧指走势：1.42 4.60 7.20 ｜ 大小球：2.5"
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-200 font-mono h-44 focus:outline-none focus:ring-1 focus:ring-emerald-500"
               />
 

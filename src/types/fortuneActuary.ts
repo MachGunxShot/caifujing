@@ -127,6 +127,12 @@ export interface PostMatchReview {
   matchIncidents?: string;       // 比赛转折点 (红牌、点球、补时绝杀、主力早退等)
   reviewTimestamp: number;
   
+  // Sports lottery sales day (竞彩销售日：当日11:00至次日11:00)
+  salesDate?: string;            // e.g. "2026-03-28"
+  salesDateLabel?: string;       // e.g. "2026年03月28日 销售日"
+  salesCycleText?: string;       // e.g. "03-28 11:00 ~ 03-29 11:00"
+  kickoffTime?: string;          // 识别的比赛开赛时间 (如 "2026-03-28 23:00")
+  
   // Evaluation results
   outcomeEvaluation: {
     euroHit: boolean;            // 胜平负命中

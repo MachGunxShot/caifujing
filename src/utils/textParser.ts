@@ -1,4 +1,5 @@
 import { FullMatchData } from '../types/fortuneActuary';
+import { extractKickoffTime } from './salesDayUtils';
 
 /**
  * Standardize handicap string to numeric handicap from Home perspective
@@ -179,6 +180,12 @@ export function parseNaturalTextOdds(text: string, currentData: FullMatchData): 
   const extractedLeague = extractLeagueFromText(fullText);
   if (extractedLeague && result.matchInfo) {
     result.matchInfo.league = extractedLeague;
+  }
+
+  // Kickoff time extraction
+  const extractedTime = extractKickoffTime(fullText);
+  if (extractedTime && extractedTime !== '临场' && result.matchInfo) {
+    result.matchInfo.matchTime = extractedTime;
   }
 
   // 2. Euro odds extraction
@@ -366,9 +373,8 @@ export function parseBatchMatchesFromText(rawText: string): FullMatchData[] {
         extractLeagueFromText(firstLine) ||
         '常规联赛';
 
-      // Extract match time
-      const timeMatch = section.match(/开赛[：:]\s*([^\s|｜]+)/);
-      const matchTime = timeMatch ? timeMatch[1].trim() : '临场';
+      // Extract match time (intelligent recognition of Markdown datetime formats)
+      const matchTime = extractKickoffTime(section, rawText);
 
       const matchItem: FullMatchData = {
         matchInfo: {
@@ -465,6 +471,8 @@ export function parseBatchMatchesFromText(rawText: string): FullMatchData[] {
       ? line.split(',').map(c => c.trim().replace(/^["']|["']$/g, ''))
       : [];
 
+    const rowMatchTime = extractKickoffTime(line, rawText);
+
     if (cols.length >= 7 && !line.includes('家')) {
       // Full CSV / Markdown row with odds
       const defaultMatch: FullMatchData = {
@@ -472,7 +480,7 @@ export function parseBatchMatchesFromText(rawText: string): FullMatchData[] {
           league: normalizeLeagueName(cols[0] || '常规联赛'),
           homeTeam: cols[1] || home,
           awayTeam: cols[2] || away,
-          matchTime: '临场',
+          matchTime: rowMatchTime,
           marketStory: cols[11] || cols[10] || '',
         },
         asianHandicap: {
@@ -510,7 +518,7 @@ export function parseBatchMatchesFromText(rawText: string): FullMatchData[] {
         league: extractLeagueFromText(line) || '常规联赛',
         homeTeam: home,
         awayTeam: away,
-        matchTime: '临场',
+        matchTime: rowMatchTime,
         marketStory: '',
       },
       asianHandicap: {
@@ -587,14 +595,39 @@ export const SAMPLE_BATCH_CSV = `联赛,主队,客队,初盘,初水,即时盘,�
 法甲,巴黎圣日耳曼,朗斯,-1.5,1.98,-1.5,1.88,1.32,5.40,8.50,2.25,深让步配浅大小球防1-0
 英超,布莱顿,托特纳姆热刺,0,1.91,0,1.93,2.50,3.75,2.65,3.25,浅盘配深大小球两队对攻刷大`;
 
-export const SAMPLE_BATCH_MARKDOWN = `| 联赛 | 主队 | 客队 | 初盘 | 初水 | 即时盘 | 即水 | 胜 | 平 | 负 | 大小球 | 题材 |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 英超 | 曼彻斯特城 | 埃弗顿 | -1.75 | 1.95 | -1.75 | 1.76 | 1.22 | 6.80 | 12.0 | 3.25 | 争冠极限榨水稳胆 |
-| 西甲 | 皇家马德里 | 赫塔菲 | -1.0 | 1.86 | -1.25 | 2.06 | 1.42 | 4.60 | 7.20 | 2.5 | 豪门名气拉满升盘满水诱上 |
-| 德甲 | 多特蒙德 | 波鸿 | -0.5 | 1.92 | -0.25 | 2.05 | 2.15 | 3.45 | 3.30 | 2.75 | 主场浅盘满水丢分死穴 |
-| 意甲 | 拉齐奥 | 佛罗伦萨 | -0.25 | 1.98 | -0.25 | 1.94 | 2.50 | 2.90 | 2.95 | 2.25 | 平赔低洼死压2.90首选胆平 |
-| 法甲 | 巴黎圣日耳曼 | 朗斯 | -1.5 | 1.98 | -1.5 | 1.88 | 1.32 | 5.40 | 8.50 | 2.25 | 深让步配浅大小球防1-0 |
-| 英超 | 布莱顿 | 托特纳姆热刺 | 0 | 1.91 | 0 | 1.93 | 2.50 | 3.75 | 2.65 | 3.25 | 浅盘配深大小球两队对攻刷大 |`;
+export const SAMPLE_BATCH_MARKDOWN = `# 2026-03-28 竞彩足球大盘分析 (竞彩销售日: 03-28 11:00 ~ 03-29 11:00)
+
+## 【1】曼彻斯特城 vs 埃弗顿
+- 联赛：英超
+- 开赛时间：2026-03-28 23:00
+- 亚盘让步：-1.75 (初盘 1.95 / 即时 1.76)
+- 欧指走势：1.22 6.80 12.0
+- 大小球：3.25 (大水 1.90 / 小水 1.90)
+- 题材：争冠极限榨水稳胆
+
+## 【2】皇家马德里 vs 赫塔菲
+- 联赛：西甲
+- 开赛时间：2026-03-29 03:00
+- 亚盘让步：-1.25 (初盘 -1.0 1.86 / 即时 -1.25 2.06)
+- 欧指走势：1.42 4.60 7.20
+- 大小球：2.5 (大水 1.90 / 小水 1.90)
+- 题材：豪门名气拉满升盘满水诱上
+
+## 【3】多特蒙德 vs 波鸿
+- 联赛：德甲
+- 开赛时间：2026-03-28 22:30
+- 亚盘让步：-0.25 (初盘 -0.5 1.92 / 即时 -0.25 2.05)
+- 欧指走势：2.15 3.45 3.30
+- 大小球：2.75 (大水 1.90 / 小水 1.90)
+- 题材：主场浅盘满水丢分死穴
+
+## 【4】拉齐奥 vs 佛罗伦萨
+- 联赛：意甲
+- 开赛时间：2026-03-29 03:45
+- 亚盘让步：-0.25 (初盘 1.98 / 即时 1.94)
+- 欧指走势：2.50 2.90 2.95
+- 大小球：2.25 (大水 1.90 / 小水 1.90)
+- 题材：平赔低洼死压2.90首选胆平`;
 
 export function generateMatchMarkdown(
   matchData: FullMatchData,
