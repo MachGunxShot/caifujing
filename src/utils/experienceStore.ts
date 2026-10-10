@@ -1159,7 +1159,7 @@ export function evaluateMatchOutcomeAndExtractLesson(
 2. 欧亚指标再检视：初盘欧指 ${matchData.euroOdds.earlyWin}/${matchData.euroOdds.earlyDraw}/${matchData.euroOdds.earlyLoss} 调整至 ${matchData.euroOdds.lateWin}/${matchData.euroOdds.lateDraw}/${matchData.euroOdds.lateLoss}，平赔实际承受了极大对冲压力。
 3. 核心进化结论：必须将此类特例盘型沉淀到实战战报库，在未来类似盘口时提高防范权重。`;
 
-    // Distinguish between actual underdog upset vs heavy favorite blowout vs draw
+    // Distinguish between actual underdog upset vs heavy favorite blowout vs 1-goal small win vs push vs draw
     const isHomeGiving = lateHandicapNum < 0;
     const isAwayGiving = lateHandicapNum > 0;
     const favoriteTeam = isHomeGiving ? homeTeam : isAwayGiving ? awayTeam : (matchData.euroOdds.lateWin <= matchData.euroOdds.lateLoss ? homeTeam : awayTeam);
@@ -1167,15 +1167,25 @@ export function evaluateMatchOutcomeAndExtractLesson(
 
     const isHomeCover = handicapOutcomeDiff > 0;
     const isAwayCover = handicapOutcomeDiff < 0;
+    const isPush = Math.abs(handicapOutcomeDiff) < 0.01;
 
     const isFavoriteCover = (isHomeGiving && isHomeCover) || (isAwayGiving && isAwayCover);
     const isFavoriteBlowout = isFavoriteCover && Math.abs(goalDiff) >= 2;
     const isUnderdogOutrightWin = (isHomeGiving && goalDiff < 0) || (isAwayGiving && goalDiff > 0);
     const isDraw = goalDiff === 0;
 
-    if (isFavoriteBlowout || isFavoriteCover) {
-      evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】${favoriteTeam}深盘实力打穿验证`;
-      evolvedRuleContent = `在 ${league} 对阵中，让步强队【${favoriteTeam}】具备绝对实力优势并在即时盘口得到体现（${matchData.asianHandicap.lateHandicap}）。实战打出 ${actualScoreStr} 强势穿盘，切忌盲目反选受让下盘，顺应实力盘口穿透。`;
+    if (isFavoriteBlowout) {
+      // 净胜 2 球及以上，且成功打穿深盘
+      evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】${favoriteTeam}深盘实力穿盘大胜验证`;
+      evolvedRuleContent = `在 ${league} 对阵中，让步强队【${favoriteTeam}】具备绝对实力优势并在即时盘口得到体现（${matchData.asianHandicap.lateHandicap}）。实战打出 ${actualScoreStr}（净胜 ${Math.abs(goalDiff)} 球）强势穿盘大胜，切忌盲目反选受让下盘，顺应深盘打穿实力。`;
+    } else if (isFavoriteCover && Math.abs(goalDiff) === 1) {
+      // 仅净胜 1 球（如 1-0, 2-1），在浅盘（平半、半球、半一）下实现赢盘，明确属于“一球小胜赢盘”而非“穿盘”
+      evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】${favoriteTeam}一球小胜经济型赢盘验证`;
+      evolvedRuleContent = `在 ${league} 对阵中，让步方【${favoriteTeam}】盘口为 ${matchData.asianHandicap.lateHandicap}。实战打出 ${actualScoreStr} 经济型小胜（净胜 1 球），虽未打穿深盘但稳稳收下让球盘口。属于典型的一球小胜赢盘，绝非深盘穿盘。`;
+    } else if (isPush) {
+      // 恰好卡在让球线上走盘（如 让一球 打出 1-0）
+      evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】恰卡盘口走盘退款验证`;
+      evolvedRuleContent = `针对 ${league} 类似对阵，让球盘口为 ${matchData.asianHandicap.lateHandicap}，实际完场比分 ${actualScoreStr}（净胜 ${Math.abs(goalDiff)} 球）恰好卡在盘口临界点走盘退还本金。实战需警惕机构精准控盘防范全赢。`;
     } else if (isUnderdogOutrightWin) {
       evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】受让方【${underdogTeam}】逆向爆冷修正法`;
       evolvedRuleContent = `针对 ${league} 类似对阵，若晚盘呈现让球 ${matchData.asianHandicap.lateHandicap} 但大小球卡在 ${matchData.overUnder.lateLine} 时，切忌单向盲冲让球方名气，需重点防范受让方【${underdogTeam}】逆向爆冷胜出（完场 ${actualScoreStr}）。`;
@@ -1183,8 +1193,8 @@ export function evaluateMatchOutcomeAndExtractLesson(
       evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】平赔低洼/冷平防守验证`;
       evolvedRuleContent = `在 ${league} 类似对阵中（盘口 ${matchData.asianHandicap.lateHandicap}），机构平赔防守有效兑现，两头对冲下平局（完场 ${actualScoreStr}）具备极高防御价值。`;
     } else {
-      evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】赢球输盘/小胜卡盘修正法`;
-      evolvedRuleContent = `针对 ${league} 让步 ${matchData.asianHandicap.lateHandicap} 盘口，强队仅取得 1 球微弱优势（完场 ${actualScoreStr}），未能完成深盘穿透，受让方【${underdogTeam}】赢盘守住底线。`;
+      evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】强队赢球输盘/小胜卡盘修正法`;
+      evolvedRuleContent = `针对 ${league} 让步 ${matchData.asianHandicap.lateHandicap} 深盘，强队仅取得 1 球微弱优势（完场 ${actualScoreStr}），未能完成深盘穿盘，受让方【${underdogTeam}】赢盘守住底线。`;
     }
   }
 

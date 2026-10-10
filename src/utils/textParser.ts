@@ -43,8 +43,8 @@ export function extractLeagueFromText(text: string): string | null {
   // NOTICE: 巴西甲, 巴西乙, 巴甲, 巴乙 MUST come BEFORE 西甲, 西乙!
   const SPECIFIC_LEAGUES: Array<{ pattern: RegExp; name: string }> = [
     // South American & American
-    { pattern: /(?:巴西甲级联赛|巴西甲|巴甲)/i, name: '巴西甲' },
-    { pattern: /(?:巴西乙级联赛|巴西乙|巴乙)/i, name: '巴西乙' },
+    { pattern: /(?:巴西甲级联赛|巴西甲级|巴西甲|巴西A|巴甲联赛|巴甲)/i, name: '巴西甲' },
+    { pattern: /(?:巴西乙级联赛|巴西乙级|巴西乙|巴西B|巴乙联赛|巴乙)/i, name: '巴西乙' },
     { pattern: /(?:阿根廷甲级联赛|阿根廷甲|阿甲)/i, name: '阿甲' },
     { pattern: /(?:美职业|美职联|美职|MLS)/i, name: '美职联' },
     { pattern: /(?:墨超|墨西哥联|墨联)/i, name: '墨超' },
@@ -55,8 +55,8 @@ export function extractLeagueFromText(text: string): string | null {
     { pattern: /(?:英格兰超级联赛|英超)/i, name: '英超' },
     { pattern: /(?:英格兰冠军联赛|英冠)/i, name: '英冠' },
     { pattern: /(?:英甲)/i, name: '英甲' },
-    { pattern: /(?:西班牙甲级联赛|西甲)/i, name: '西甲' },
-    { pattern: /(?:西班牙乙级联赛|西乙)/i, name: '西乙' },
+    { pattern: /(?:西班牙甲级联赛|西班牙甲|(?<!巴)西甲)/i, name: '西甲' },
+    { pattern: /(?:西班牙乙级联赛|西班牙乙|(?<!巴)西乙)/i, name: '西乙' },
     { pattern: /(?:德国甲级联赛|德甲)/i, name: '德甲' },
     { pattern: /(?:德国乙级联赛|德乙)/i, name: '德乙' },
     { pattern: /(?:意大利甲级联赛|意甲)/i, name: '意甲' },
@@ -117,11 +117,12 @@ export function extractLeagueFromText(text: string): string | null {
 
 function normalizeLeagueName(name: string): string {
   const n = name.trim();
-  if (n.includes('巴西甲') || n.includes('巴甲')) return '巴西甲';
-  if (n.includes('巴西乙') || n.includes('巴乙')) return '巴西乙';
+  if (n.includes('巴西甲') || n.includes('巴甲') || n.includes('巴西A')) return '巴西甲';
+  if (n.includes('巴西乙') || n.includes('巴乙') || n.includes('巴西B')) return '巴西乙';
   if (n.includes('阿根廷') || n.includes('阿甲')) return '阿甲';
   if (n.includes('英超')) return '英超';
-  if (n.includes('西甲')) return '西甲';
+  if (n.includes('西甲') && !n.includes('巴西甲') && !n.includes('巴甲') && !n.includes('巴西')) return '西甲';
+  if (n.includes('西乙') && !n.includes('巴西乙') && !n.includes('巴乙') && !n.includes('巴西')) return '西乙';
   if (n.includes('德甲')) return '德甲';
   if (n.includes('意甲')) return '意甲';
   if (n.includes('法甲')) return '法甲';
@@ -468,7 +469,7 @@ export function parseBatchMatchesFromText(rawText: string): FullMatchData[] {
       // Full CSV / Markdown row with odds
       const defaultMatch: FullMatchData = {
         matchInfo: {
-          league: cols[0] || '常规联赛',
+          league: normalizeLeagueName(cols[0] || '常规联赛'),
           homeTeam: cols[1] || home,
           awayTeam: cols[2] || away,
           matchTime: '临场',

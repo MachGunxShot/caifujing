@@ -371,12 +371,20 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
         euroPick = '主胜 (稳胆)';
         handicapPick = `上盘 ${homeTeam} (${lateHandicap})`;
         finalDirection = `【推荐方向】：主队（上盘 ${homeTeam} ${lateHandicap}）及主胜稳胆`;
-        finalDirectionDetail = `竞彩/盘口：主胜独赢 / 亚指上盘；机构真实避险控赔，首选上盘净胜穿盘。`;
+        finalDirectionDetail = handicapGoals >= 1.25
+          ? `竞彩/盘口：主胜独赢 / 亚指上盘；机构真实避险控赔，首选上盘净胜穿盘大胜。`
+          : handicapGoals === 1.0
+          ? `竞彩/盘口：主胜独赢 / 亚指上盘；机构真实避险控赔，首选主胜赢球保走争穿。`
+          : `竞彩/盘口：主胜独赢 / 亚指上盘；机构真实避险控赔，首选上盘正路赢盘打出。`;
       } else if (isAwayGiving) {
         euroPick = '客胜 (稳胆)';
         handicapPick = `上盘 ${awayTeam} (-${handicapGoals}客让)`;
         finalDirection = `【推荐方向】：客队（上盘 ${awayTeam} 客让${handicapGoals}球）及客胜稳胆`;
-        finalDirectionDetail = `竞彩/盘口：客胜独赢 / 亚指客让上盘；机构真实避险控赔，首选客队赢球穿盘。`;
+        finalDirectionDetail = handicapGoals >= 1.25
+          ? `竞彩/盘口：客胜独赢 / 亚指客让上盘；机构真实避险控赔，首选客队净胜穿盘大胜。`
+          : handicapGoals === 1.0
+          ? `竞彩/盘口：客胜独赢 / 亚指客让上盘；机构真实避险控赔，首选客队赢球保走争穿。`
+          : `竞彩/盘口：客胜独赢 / 亚指客让上盘；机构真实避险控赔，首选客队正路赢盘打出。`;
       } else {
         euroPick = lateWin <= lateLoss ? '主胜 (稳胆)' : '客胜 (稳胆)';
         handicapPick = `平手盘 ${givingTeam} (0)`;

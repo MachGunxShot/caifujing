@@ -2611,7 +2611,13 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                                   </div>
 
                                   {/* Pre-Match Actuarial Decision Snapshot */}
-                                  <div className="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 text-xs grid grid-cols-1 sm:grid-cols-4 gap-2">
+                                  <div className="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 text-xs grid grid-cols-1 sm:grid-cols-5 gap-2">
+                                    <div>
+                                      <span className="text-[10px] text-slate-400 block">当时研判星级</span>
+                                      <div className="mt-0.5">
+                                        {renderStarRatingBadge(rev.priorReport?.decision?.starRating, true)}
+                                      </div>
+                                    </div>
                                     <div>
                                       <span className="text-[10px] text-slate-400 block">赛前操盘定性</span>
                                       <span className="font-bold text-cyan-300 truncate block mt-0.5">
