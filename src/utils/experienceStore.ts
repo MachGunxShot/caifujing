@@ -168,6 +168,111 @@ export function addOrUpdateExperienceRule(rule: EvolvedExperienceRule): void {
 }
 
 /**
+ * 查漏补缺：将历史已复盘战报批量同步沉淀至《财富经》核心法则库
+ * 
+ * 核心功能：
+ * 1. 自动对全量或指定批次的历史复盘进行扫描查漏补缺
+ * 2. 深度调用去重与合并引擎：已有同名/同特征法则不重复新增，而是强化更新内容
+ * 3. 实战印证累计：若赛果成功印证盘口风控（modelVerified 为 true，或胜平负+让球均命中），自动累加该法则的 hitCount，提升其置信权重
+ * 4. 查漏补缺：若此前复盘时未勾选同步核心库，一键将漏掉的法则提炼收录进核心库
+ * 
+ * @param targetReviews 可选，若不传则扫描全量历史复盘战报
+ * @returns 同步统计结果
+ */
+export function syncAndPromoteReviewsToCoreRules(targetReviews?: PostMatchReview[]): {
+  addedCount: number;
+  updatedCount: number;
+  verifiedHitsCount: number;
+  totalProcessed: number;
+} {
+  const reviewsToProcess = targetReviews || getPostMatchReviews();
+  const rules = getExperienceRules();
+
+  let addedCount = 0;
+  let updatedCount = 0;
+  let verifiedHitsCount = 0;
+
+  for (const rev of reviewsToProcess) {
+    const homeTeam = rev.matchData?.matchInfo?.homeTeam || '主队';
+    const awayTeam = rev.matchData?.matchInfo?.awayTeam || '客队';
+    const league = rev.matchData?.matchInfo?.league || '全部联赛';
+    const safeHome = homeTeam.replace(/\s+/g, '_');
+    const safeAway = awayTeam.replace(/\s+/g, '_');
+
+    const title = (rev.evolvedRuleTitle || `【${homeTeam}实战盘口法则】`).trim();
+    const category = rev.ruleCategory || rev.priorReport?.identifiedModel || 'GENERAL';
+    const content = (rev.evolvedRuleContent || rev.dissectionText || rev.outcomeEvaluation?.summaryNote || '实战复盘验证法则').trim();
+    const sourceMatch = `${homeTeam} vs ${awayTeam} (完场: ${rev.actualScore || '已完场'})`;
+
+    const isVerified = !!rev.outcomeEvaluation?.modelVerified || 
+      (!!rev.outcomeEvaluation?.euroHit && !!rev.outcomeEvaluation?.handicapHit);
+
+    const cleanTitle = title.replace(/\s+/g, '');
+    const cleanSource = sourceMatch.replace(/\s+/g, '');
+
+    // 寻找法则库中是否已存在该法则（匹配标题、源赛事对阵或ID）
+    const existingIdx = rules.findIndex((r) => {
+      if (r.id === `rule-${safeHome}-${safeAway}-${category}`) return true;
+      const rTitle = (r.title || '').replace(/\s+/g, '');
+      if (rTitle && cleanTitle && (rTitle === cleanTitle || rTitle.includes(cleanTitle) || cleanTitle.includes(rTitle))) {
+        return true;
+      }
+      const rSource = (r.sourceMatch || '').replace(/\s+/g, '');
+      if (rSource && cleanSource && rSource.includes(cleanSource)) {
+        return true;
+      }
+      return false;
+    });
+
+    if (existingIdx >= 0) {
+      // 已存在该法则：更新强化，若本次复盘属于印证命中，则累加命中次数
+      const existing = rules[existingIdx];
+      const prevHitCount = existing.hitCount || 0;
+      const newHitCount = isVerified ? prevHitCount + 1 : prevHitCount;
+
+      rules[existingIdx] = {
+        ...existing,
+        title: existing.title || title,
+        category: existing.category || category,
+        leagueScope: existing.leagueScope || league,
+        ruleContent: existing.ruleContent && existing.ruleContent.length > content.length ? existing.ruleContent : content,
+        hitCount: Math.max(1, newHitCount),
+        isActive: existing.isActive ?? true,
+      };
+
+      updatedCount++;
+      if (isVerified) verifiedHitsCount++;
+    } else {
+      // 核心库中尚无该法则：新增沉淀该经验法则
+      const initialHitCount = isVerified ? 1 : 0;
+      rules.unshift({
+        id: `rule-${safeHome}-${safeAway}-${category}`,
+        title,
+        category,
+        leagueScope: league,
+        ruleContent: content,
+        sourceMatch,
+        createdAt: new Date(rev.reviewTimestamp || Date.now()).toISOString().slice(0, 10),
+        isActive: true,
+        hitCount: initialHitCount,
+      });
+
+      addedCount++;
+      if (isVerified) verifiedHitsCount++;
+    }
+  }
+
+  saveExperienceRules(rules);
+
+  return {
+    addedCount,
+    updatedCount,
+    verifiedHitsCount,
+    totalProcessed: reviewsToProcess.length,
+  };
+}
+
+/**
  * Audit health and redundancy of the current experience rules database
  */
 export interface RulesHealthAudit {

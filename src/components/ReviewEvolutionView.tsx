@@ -65,6 +65,7 @@ import {
   pruneAndClusterExperienceRules,
   pruneZeroHitRules,
   repairInconsistentLanguageRules,
+  syncAndPromoteReviewsToCoreRules,
 } from '../utils/experienceStore';
 import { generateActuarialRuleReport } from '../utils/actuaryEngine';
 import { ParsedScoreItem, parseBatchMatchScoresFromText } from '../utils/textParser';
@@ -477,6 +478,17 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     } else {
       setHealthNotification('✅ 当前所有历史复盘战报的销售日归属均已精准对齐，无跳日异常！');
     }
+  };
+
+  // Retroactively sync reviews to core rules library (查漏补缺)
+  const handleRetroactiveSyncRules = (targetReviews?: PostMatchReview[]) => {
+    const res = syncAndPromoteReviewsToCoreRules(targetReviews);
+    setRules(getExperienceRules());
+    setReviews(getPostMatchReviews());
+
+    setHealthNotification(
+      `🎉 查漏补缺完成！共扫描 ${res.totalProcessed} 场历史战报：新增提炼收录 ${res.addedCount} 条核心法则，强化合并 ${res.updatedCount} 条已有法则，累计沉淀实战印证 ${res.verifiedHitsCount} 次！`
+    );
   };
 
   useEffect(() => {
@@ -2676,6 +2688,16 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                 <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap">
                   <button
                     type="button"
+                    onClick={() => handleRetroactiveSyncRules()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 text-xs font-bold transition-all shadow-sm cursor-pointer"
+                    title="全量扫描已复盘历史战报，查漏补缺沉淀进核心法则库，并自动累加盘口验证命中次数"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>查漏补缺沉淀核心库</span>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={handleCalibrateSalesDates}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-bold transition-colors cursor-pointer"
                     title="重新依据开赛时间与竞彩11:00销售日法则智能对齐归正所有历史复盘，消除跨天误分"
@@ -2986,6 +3008,20 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                               </span>
                             </div>
 
+                            {/* Retroactively Sync Rules for this Date Group */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRetroactiveSyncRules(group.items);
+                              }}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-semibold transition-all cursor-pointer"
+                              title={`将【${group.dateLabel}】的 ${group.items.length} 场战报查漏补缺同步沉淀至核心法则库`}
+                            >
+                              <Sparkles className="w-3 h-3 text-emerald-400" />
+                              <span className="hidden sm:inline">沉淀当日法则</span>
+                            </button>
+
                             {/* Delete Group Action */}
                             <button
                               type="button"
@@ -3142,41 +3178,40 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                                     <div className="font-bold text-emerald-400 flex items-center justify-between flex-wrap gap-2">
                                       <div className="flex items-center gap-2 flex-wrap">
                                         <span>提炼法则：【{rev.evolvedRuleTitle}】</span>
-                                        {rules.some(
-                                          (r) =>
-                                            r.title === rev.evolvedRuleTitle ||
-                                            (r.sourceMatch &&
-                                              r.sourceMatch.includes(rev.matchData.matchInfo.homeTeam) &&
-                                              r.sourceMatch.includes(rev.matchData.matchInfo.awayTeam))
-                                        ) ? (
-                                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                                            ✓ 核心库生效中
-                                          </span>
-                                        ) : (
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              addOrUpdateExperienceRule({
-                                                id: `rule-promoted-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                                                title: rev.evolvedRuleTitle,
-                                                category: rev.ruleCategory || 'GENERAL',
-                                                leagueScope: rev.matchData.matchInfo.league || '全部联赛',
-                                                ruleContent: rev.evolvedRuleContent,
-                                                sourceMatch: `${rev.matchData.matchInfo.homeTeam} vs ${rev.matchData.matchInfo.awayTeam} (完场: ${rev.actualScore})`,
-                                                createdAt: new Date().toISOString().slice(0, 10),
-                                                isActive: true,
-                                                hitCount: rev.outcomeEvaluation.modelVerified ? 1 : 0,
-                                              });
-                                              setRules(getExperienceRules());
-                                              setHealthNotification(`💡 已将【${rev.evolvedRuleTitle}】成功晋升为核心经验法则！`);
-                                            }}
-                                            className="px-2 py-0.5 bg-slate-800 hover:bg-emerald-600 text-slate-300 hover:text-slate-950 text-[10px] font-bold rounded border border-slate-700 hover:border-emerald-500 transition-colors cursor-pointer flex items-center gap-1"
-                                            title="将本场提炼的经验法则收录进《财富经》核心法则库"
-                                          >
-                                            <Sparkles className="w-3 h-3 text-emerald-400" />
-                                            <span>晋升核心库</span>
-                                          </button>
-                                        )}
+                                        {(() => {
+                                          const matched = rules.find(
+                                            (r) =>
+                                              r.title === rev.evolvedRuleTitle ||
+                                              (r.sourceMatch &&
+                                                r.sourceMatch.includes(rev.matchData.matchInfo.homeTeam) &&
+                                                r.sourceMatch.includes(rev.matchData.matchInfo.awayTeam))
+                                          );
+                                          if (matched) {
+                                            return (
+                                              <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 font-normal">
+                                                <span>✓ 核心库生效中</span>
+                                                {matched.hitCount ? (
+                                                  <span className="font-mono font-bold text-amber-300">
+                                                    (累计印证 {matched.hitCount} 次)
+                                                  </span>
+                                                ) : null}
+                                              </span>
+                                            );
+                                          }
+                                          return (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                handleRetroactiveSyncRules([rev]);
+                                              }}
+                                              className="px-2 py-0.5 bg-slate-800 hover:bg-emerald-600 text-slate-300 hover:text-slate-950 text-[10px] font-bold rounded border border-slate-700 hover:border-emerald-500 transition-colors cursor-pointer flex items-center gap-1"
+                                              title="将本场提炼的经验法则查漏补缺收录进《财富经》核心法则库"
+                                            >
+                                              <Sparkles className="w-3 h-3 text-emerald-400" />
+                                              <span>查漏补缺收录核心库</span>
+                                            </button>
+                                          );
+                                        })()}
                                       </div>
                                       {rev.dissectionText && (
                                         <button
