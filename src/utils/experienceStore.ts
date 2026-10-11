@@ -1204,7 +1204,9 @@ export function evaluateMatchOutcomeAndExtractLesson(
   actualHomeScore: number,
   actualAwayScore: number,
   matchIncidents: string = '',
-  persistToCoreRules: boolean = false
+  persistToCoreRules: boolean = false,
+  preferredSalesDate?: string,
+  fallbackTimestamp?: number
 ): PostMatchReview {
   const { homeTeam, awayTeam, league } = matchData.matchInfo;
   const actualScoreStr = `${actualHomeScore}-${actualAwayScore}`;
@@ -1315,8 +1317,9 @@ export function evaluateMatchOutcomeAndExtractLesson(
   const safeHome = (homeTeam || 'Home').replace(/\s+/g, '_');
   const safeAway = (awayTeam || 'Away').replace(/\s+/g, '_');
 
+  const effectiveTimestamp = fallbackTimestamp || Date.now();
   const kickoffTime = matchData.matchInfo?.matchTime || '临场';
-  const salesInfo = calculateSalesDate(kickoffTime, Date.now());
+  const salesInfo = calculateSalesDate(kickoffTime, effectiveTimestamp, preferredSalesDate);
 
   const review: PostMatchReview = {
     id: `rev-${safeHome}-${safeAway}-${actualScoreStr}`,
@@ -1326,7 +1329,7 @@ export function evaluateMatchOutcomeAndExtractLesson(
     actualHomeScore,
     actualAwayScore,
     matchIncidents,
-    reviewTimestamp: Date.now(),
+    reviewTimestamp: effectiveTimestamp,
     salesDate: salesInfo.salesDate,
     salesDateLabel: salesInfo.salesDateLabel,
     salesCycleText: salesInfo.salesCycleText,

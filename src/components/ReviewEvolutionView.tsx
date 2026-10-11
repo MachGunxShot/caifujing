@@ -68,7 +68,14 @@ import {
 } from '../utils/experienceStore';
 import { generateActuarialRuleReport } from '../utils/actuaryEngine';
 import { ParsedScoreItem, parseBatchMatchScoresFromText } from '../utils/textParser';
-import { calculateSalesDate, extractKickoffTime, SalesDateInfo } from '../utils/salesDayUtils';
+import {
+  calculateSalesDate,
+  extractKickoffTime,
+  extractDocumentGlobalDate,
+  detectDominantSalesDate,
+  SalesDateInfo,
+  matchTeamsFuzzy,
+} from '../utils/salesDayUtils';
 
 interface ReviewEvolutionViewProps {
   queue: BatchMatchItem[];
@@ -142,6 +149,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
   const [isBatchReviewing, setIsBatchReviewing] = useState<boolean>(false);
   const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(null);
   const [batchReviewSummary, setBatchReviewSummary] = useState<string | null>(null);
+  const [batchSyncToCoreRules, setBatchSyncToCoreRules] = useState<boolean>(true);
+  const [batchTargetSalesDate, setBatchTargetSalesDate] = useState<string>('');
   const scoreFileInputRef = useRef<HTMLInputElement>(null);
 
   // Manual Rule Modal
@@ -256,6 +265,20 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
   // Helper to determine the Sales Day (竞彩销售日：当日11:00至次日11:00) for a review item
   const getReviewSalesInfo = (rev: PostMatchReview): SalesDateInfo => {
+    // If the review item ALREADY has a persisted salesDate, strictly preserve it
+    if (rev.salesDate && /^\d{4}-\d{2}-\d{2}$/.test(rev.salesDate)) {
+      const days = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+      const [y, m, d] = rev.salesDate.split('-').map(Number);
+      const dayOfWeek = days[new Date(y, m - 1, d).getDay()] || '星期六';
+      return {
+        salesDate: rev.salesDate,
+        salesDateLabel: rev.salesDateLabel || `${rev.salesDate} 销售日`,
+        salesCycleText: rev.salesCycleText || '',
+        dayOfWeek,
+        isCurrentSalesDay: false,
+        kickoffTimeFormatted: rev.kickoffTime || rev.matchData?.matchInfo?.matchTime || '临场',
+      };
+    }
     const kickoff = rev.kickoffTime || rev.matchData?.matchInfo?.matchTime || '临场';
     return calculateSalesDate(kickoff, rev.reviewTimestamp);
   };
@@ -424,6 +447,35 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         review: undefined,
       }));
       onUpdateQueue(updatedQueue);
+    }
+  };
+
+  // Calibrate sales dates for all existing reviews
+  const handleCalibrateSalesDates = () => {
+    let calibratedCount = 0;
+    const dominantDate = detectDominantSalesDate(queue) || undefined;
+    const updatedReviews = reviews.map((rev) => {
+      const kickoff = rev.kickoffTime || rev.matchData?.matchInfo?.matchTime || '临场';
+      const updatedInfo = calculateSalesDate(kickoff, rev.reviewTimestamp, dominantDate);
+      if (rev.salesDate !== updatedInfo.salesDate) {
+        calibratedCount++;
+        return {
+          ...rev,
+          salesDate: updatedInfo.salesDate,
+          salesDateLabel: updatedInfo.salesDateLabel,
+          salesCycleText: updatedInfo.salesCycleText,
+          kickoffTime: updatedInfo.kickoffTimeFormatted,
+        };
+      }
+      return rev;
+    });
+
+    if (calibratedCount > 0) {
+      updatedReviews.forEach((r) => savePostMatchReview(r));
+      setReviews(getPostMatchReviews());
+      setHealthNotification(`✅ 已智能校准 ${calibratedCount} 场比赛的销售日归属，跨天归类混乱已消除！`);
+    } else {
+      setHealthNotification('✅ 当前所有历史复盘战报的销售日归属均已精准对齐，无跳日异常！');
     }
   };
 
@@ -612,7 +664,19 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     try {
       let newlyVerified = 0;
       let totalExecuted = 0;
+      let rulesEvolvedCount = 0;
       const updatedQueue = [...queue];
+
+      // 1. Determine anchor batch sales date (统领性批次销售日)
+      // 优先顺序: 用户手动选择 > 赛果文本标头日期 > 队列主流销售日 > 当前活跃销售日
+      const rawTextDate = extractDocumentGlobalDate(batchRawText);
+      const dominantQueueSalesDate = detectDominantSalesDate(updatedQueue);
+      const currentActiveSalesDate = calculateSalesDate().salesDate;
+      const batchSalesDate =
+        batchTargetSalesDate ||
+        rawTextDate ||
+        dominantQueueSalesDate ||
+        currentActiveSalesDate;
 
       for (let i = 0; i < parsedScores.length; i++) {
         const item = parsedScores[i];
@@ -631,12 +695,16 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           }
         }
 
-        // If not matched by ID, try matching by team name
+        // If not matched by ID, try matching with high-confidence fuzzy matching
         if (!targetMatch) {
           queueIdx = updatedQueue.findIndex(
             (q) =>
-              (q.data.matchInfo.homeTeam.includes(item.homeTeam) || item.homeTeam.includes(q.data.matchInfo.homeTeam)) &&
-              (q.data.matchInfo.awayTeam.includes(item.awayTeam) || item.awayTeam.includes(q.data.matchInfo.awayTeam))
+              (matchTeamsFuzzy(q.data.matchInfo.homeTeam, item.homeTeam) ||
+                item.homeTeam.includes(q.data.matchInfo.homeTeam) ||
+                q.data.matchInfo.homeTeam.includes(item.homeTeam)) &&
+              (matchTeamsFuzzy(q.data.matchInfo.awayTeam, item.awayTeam) ||
+                item.awayTeam.includes(q.data.matchInfo.awayTeam) ||
+                q.data.matchInfo.awayTeam.includes(item.awayTeam))
           );
           if (queueIdx >= 0) {
             targetMatch = updatedQueue[queueIdx].data;
@@ -647,22 +715,26 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         // Check against currentMatch
         if (!targetMatch) {
           if (
-            (currentMatch.matchInfo.homeTeam.includes(item.homeTeam) || item.homeTeam.includes(currentMatch.matchInfo.homeTeam)) &&
-            (currentMatch.matchInfo.awayTeam.includes(item.awayTeam) || item.awayTeam.includes(currentMatch.matchInfo.awayTeam))
+            (matchTeamsFuzzy(currentMatch.matchInfo.homeTeam, item.homeTeam) ||
+              item.homeTeam.includes(currentMatch.matchInfo.homeTeam) ||
+              currentMatch.matchInfo.homeTeam.includes(item.homeTeam)) &&
+            (matchTeamsFuzzy(currentMatch.matchInfo.awayTeam, item.awayTeam) ||
+              item.awayTeam.includes(currentMatch.matchInfo.awayTeam) ||
+              currentMatch.matchInfo.awayTeam.includes(item.awayTeam))
           ) {
             targetMatch = currentMatch;
             targetReport = currentReport;
           }
         }
 
-        // If still not matched, synthesize baseline match
+        // If still not matched, synthesize baseline match with explicit anchor batch sales date
         if (!targetMatch) {
           targetMatch = {
             matchInfo: {
               league: '实战复盘录入',
               homeTeam: item.homeTeam,
               awayTeam: item.awayTeam,
-              matchTime: '已完场',
+              matchTime: `${batchSalesDate} 临场`,
               marketStory: '批量实战赛果导入',
             },
             asianHandicap: {
@@ -697,19 +769,45 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           targetReport = generateActuarialRuleReport(targetMatch);
         }
 
-        // Evaluate deterministically
+        // Evaluate deterministically with preferred sales date & timestamp
+        const queueTimestamp = queueIdx >= 0 ? updatedQueue[queueIdx].timestamp : Date.now();
         const review = evaluateMatchOutcomeAndExtractLesson(
           targetMatch,
           targetReport,
           item.homeScore,
           item.awayScore,
-          item.incidents || '批量赛果智能归因'
+          item.incidents || '批量赛果智能归因',
+          batchSyncToCoreRules, // 是否沉淀进《财富经》核心法则库
+          batchSalesDate,       // 强制锚定批次销售日，彻底根除跨天跳动
+          queueTimestamp        // 后备时间戳使用队列创建/导入时间戳
         );
 
         if (review.outcomeEvaluation.modelVerified) {
           newlyVerified++;
         }
         totalExecuted++;
+
+        // If user requested sync to core rules, ensure it is added/updated in the core law database
+        if (batchSyncToCoreRules) {
+          const safeHome = (targetMatch.matchInfo.homeTeam || 'Home').replace(/\s+/g, '_');
+          const safeAway = (targetMatch.matchInfo.awayTeam || 'Away').replace(/\s+/g, '_');
+          const ruleCategory = targetReport.identifiedModel || 'GENERAL';
+          const ruleTitle = review.evolvedRuleTitle || `【${targetMatch.matchInfo.homeTeam}实战复盘法则】`;
+          const ruleContent = review.evolvedRuleContent || review.dissectionText || '实战复盘验证法则';
+
+          addOrUpdateExperienceRule({
+            id: `rule-${safeHome}-${safeAway}-${ruleCategory}`,
+            title: ruleTitle,
+            category: ruleCategory,
+            leagueScope: targetMatch.matchInfo.league || '常规联赛',
+            ruleContent: ruleContent,
+            sourceMatch: `${targetMatch.matchInfo.homeTeam} vs ${targetMatch.matchInfo.awayTeam} (完场: ${item.homeScore}-${item.awayScore})`,
+            createdAt: new Date().toISOString().slice(0, 10),
+            isActive: true,
+            hitCount: review.outcomeEvaluation.modelVerified ? 1 : 0,
+          });
+          rulesEvolvedCount++;
+        }
 
         // Persist review to authoritative storage
         savePostMatchReview(review);
@@ -725,8 +823,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
             const iHome = (item.homeTeam || '').replace(/\s+/g, '').toLowerCase();
             const iAway = (item.awayTeam || '').replace(/\s+/g, '').toLowerCase();
             return (
-              (qHome.includes(iHome) || iHome.includes(qHome)) &&
-              (qAway.includes(iAway) || iAway.includes(qAway))
+              (matchTeamsFuzzy(qHome, iHome) || qHome.includes(iHome) || iHome.includes(qHome)) &&
+              (matchTeamsFuzzy(qAway, iAway) || qAway.includes(iAway) || iAway.includes(qAway))
             );
           });
         }
@@ -760,8 +858,14 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
       onUpdateQueue(updatedQueue);
       setRules(getExperienceRules());
       setReviews(getPostMatchReviews());
+
+      const batchSalesDateInfo = calculateSalesDate(undefined, undefined, batchSalesDate);
       setBatchReviewSummary(
-        `🎉 成功批量完成 ${totalExecuted} 场赛果深度复盘！其中 ${newlyVerified} 场完全印证《财富经》底牌风控，已归档沉淀核心经验法则！`
+        `🎉 成功批量完成 ${totalExecuted} 场赛果深度复盘！全部场次精准锚定并归入【${batchSalesDateInfo.salesDateLabel} (${batchSalesDateInfo.salesCycleText})】！其中 ${newlyVerified} 场完全印证盘口风控${
+          batchSyncToCoreRules
+            ? `，已同步将 ${rulesEvolvedCount} 条实战提炼法则沉淀入《财富经》核心法则库！`
+            : '（未勾选同步法则库，仅留存归档战报）'
+        }`
       );
       setParsedScores([]);
     } catch (err: any) {
@@ -1516,33 +1620,70 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                     </table>
                   </div>
 
-                  {/* Batch Review Action Button */}
-                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-950 p-3.5 rounded-xl border border-emerald-500/30">
-                    <div className="text-xs text-slate-300">
-                      <span className="font-bold text-white">准备执行复盘：</span>
-                      <span>共 {parsedScores.length} 场赛事将一次性完成三维测谎赛后核准，并沉淀入核心法则库！</span>
+                  {/* Batch Review Action Control & Settings Panel */}
+                  <div className="bg-slate-950 p-4 rounded-xl border border-emerald-500/30 space-y-3.5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Calendar className="w-4 h-4 text-emerald-400" />
+                        <span className="text-xs font-bold text-slate-200">
+                          批量复盘统领销售日：
+                        </span>
+                        <span className="px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                          {(() => {
+                            const rawDate = extractDocumentGlobalDate(batchRawText);
+                            const dominant = detectDominantSalesDate(queue);
+                            const dateToUse = batchTargetSalesDate || rawDate || dominant || calculateSalesDate().salesDate;
+                            const info = calculateSalesDate(undefined, undefined, dateToUse);
+                            return `${info.salesDateLabel} (${info.salesCycleText})`;
+                          })()}
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-slate-400">
+                        ⚡ 竞彩销售周期锁定：全批次赛事（含次日凌晨00:00~10:59开赛）严格锚定于此，彻底杜绝跨天跳日
+                      </span>
                     </div>
 
-                    <button
-                      type="button"
-                      disabled={isBatchReviewing}
-                      onClick={handleBatchExecuteReview}
-                      className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/20 flex items-center gap-2 cursor-pointer disabled:opacity-50"
-                    >
-                      {isBatchReviewing ? (
-                        <>
-                          <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
-                          <span>
-                            批量精算归因中... ({batchProgress?.current || 0}/{batchProgress?.total || parsedScores.length})
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="w-4 h-4 text-slate-950" />
-                          <span>⚡ 一键批量完成复盘并沉淀进化法则</span>
-                        </>
-                      )}
-                    </button>
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      {/* Sync to Core Rules Library Checkbox */}
+                      <label className="flex items-center gap-2.5 text-xs text-slate-200 cursor-pointer select-none bg-slate-900/80 hover:bg-slate-900 px-3 py-2 rounded-lg border border-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={batchSyncToCoreRules}
+                          onChange={(e) => setBatchSyncToCoreRules(e.target.checked)}
+                          className="w-4 h-4 text-emerald-500 rounded bg-slate-950 border-slate-700 focus:ring-emerald-500 cursor-pointer"
+                        />
+                        <div>
+                          <div className="font-bold text-white flex items-center gap-1.5">
+                            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                            <span>同步提炼经验并沉淀至《财富经》核心法则库</span>
+                          </div>
+                          <div className="text-[11px] text-slate-400">
+                            批量复盘时自动提取每场核心经验、去重收录进核心法则库并累积实战印证胜率
+                          </div>
+                        </div>
+                      </label>
+
+                      <button
+                        type="button"
+                        disabled={isBatchReviewing}
+                        onClick={handleBatchExecuteReview}
+                        className="px-6 py-3 rounded-lg bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/20 flex items-center gap-2 cursor-pointer disabled:opacity-50 shrink-0"
+                      >
+                        {isBatchReviewing ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                            <span>
+                              批量精算归因中... ({batchProgress?.current || 0}/{batchProgress?.total || parsedScores.length})
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-4 h-4 text-slate-950" />
+                            <span>⚡ 一键批量完成复盘并沉淀进化法则</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -2532,7 +2673,17 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 self-end sm:self-auto">
+                <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleCalibrateSalesDates}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-bold transition-colors cursor-pointer"
+                    title="重新依据开赛时间与竞彩11:00销售日法则智能对齐归正所有历史复盘，消除跨天误分"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>销售日智能校准</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={handleClearAllReviews}

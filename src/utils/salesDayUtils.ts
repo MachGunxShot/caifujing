@@ -14,6 +14,8 @@
  *    - 复盘严格以比赛所属销售日为基准归类，彻底杜绝“跨天复盘导致同轮次赛事被分割到两天”的混乱。
  */
 
+import type { PostMatchReview } from '../types/fortuneActuary';
+
 export interface SalesDateInfo {
   salesDate: string;             // YYYY-MM-DD, e.g. "2026-03-28"
   salesDateLabel: string;        // e.g. "2026年03月28日 销售日"
@@ -21,6 +23,118 @@ export interface SalesDateInfo {
   dayOfWeek: string;             // e.g. "星期六"
   isCurrentSalesDay: boolean;    // 当前系统时间是否在此销售周期内
   kickoffTimeFormatted: string;  // 格式化后的开赛时间
+}
+
+export const TEAM_ALIASES: Array<[string, string]> = [
+  // Premier League
+  ['曼城', '曼彻斯特城'],
+  ['曼联', '曼彻斯特联'],
+  ['热刺', '托特纳姆热刺'],
+  ['纽卡', '纽卡斯尔联'],
+  ['纽卡', '纽卡斯尔'],
+  ['狼队', '伍尔弗汉普顿流浪者'],
+  ['狼队', '伍尔弗汉普顿'],
+  ['西汉姆', '西汉姆联'],
+  ['诺丁汉', '诺丁汉森林'],
+  ['森林', '诺丁汉森林'],
+  ['维拉', '阿斯顿维拉'],
+  ['莱斯特', '莱斯特城'],
+  ['布莱顿', '海鸥'],
+
+  // La Liga
+  ['皇马', '皇家马德里'],
+  ['马竞', '马德里竞技'],
+  ['巴萨', '巴塞罗那'],
+  ['毕尔巴鄂', '毕尔巴鄂竞技'],
+  ['毕巴', '毕尔巴鄂竞技'],
+  ['毕巴', '毕尔巴鄂'],
+  ['皇家社会', '皇社'],
+  ['贝蒂斯', '皇家贝蒂斯'],
+  ['塞维利亚', '塞维'],
+  ['西班牙人', '皇家西班牙人'],
+  ['赫塔菲', '赫塔费'],
+  ['塞尔塔', '维戈塞尔塔'],
+
+  // Serie A
+  ['国米', '国际米兰'],
+  ['AC米兰', '米兰'],
+  ['尤文', '尤文图斯'],
+  ['那不勒斯', '拿坡里'],
+  ['罗马', '罗马'],
+  ['拉齐奥', '拉齐奥'],
+  ['佛罗伦萨', '紫百合'],
+  ['亚特兰大', '亚特兰大'],
+
+  // Bundesliga
+  ['拜仁', '拜仁慕尼黑'],
+  ['多特', '多特蒙德'],
+  ['莱比锡', 'RB莱比锡'],
+  ['莱比锡', '莱比锡红牛'],
+  ['勒沃库森', '药厂'],
+  ['勒沃库森', '拜耳勒沃库森'],
+  ['门兴', '门兴格拉德巴赫'],
+  ['不来梅', '云达不来梅'],
+  ['狼堡', '沃尔夫斯堡'],
+
+  // Ligue 1
+  ['巴黎', '巴黎圣日耳曼'],
+  ['摩纳哥', '摩纳哥'],
+  ['马赛', '马赛'],
+  ['里昂', '奥林匹克里昂'],
+  ['里尔', '里尔'],
+  ['雷恩', '雷恩'],
+  ['尼斯', '尼斯'],
+  ['朗斯', '朗斯'],
+];
+
+export function normalizeTeamName(name: string): string {
+  if (!name) return '';
+  return name
+    .toLowerCase()
+    .replace(/[队fc俱乐部联城\s·\-_\/]/g, '')
+    .trim();
+}
+
+/**
+ * Intelligent Team Matching with Aliases, Substrings and Character Overlap
+ */
+export function matchTeamsFuzzy(nameA: string, nameB: string): boolean {
+  if (!nameA || !nameB) return false;
+  const rawA = nameA.trim();
+  const rawB = nameB.trim();
+  if (rawA === rawB) return true;
+
+  const normA = normalizeTeamName(rawA);
+  const normB = normalizeTeamName(rawB);
+  if (normA && normA === normB) return true;
+
+  if (normA.length >= 2 && normB.length >= 2) {
+    if (normA.includes(normB) || normB.includes(normA)) return true;
+  }
+
+  // Alias dictionary check
+  for (const [aliasA, aliasB] of TEAM_ALIASES) {
+    const isA1 = rawA.includes(aliasA) || aliasA.includes(rawA);
+    const isB2 = rawB.includes(aliasB) || aliasB.includes(rawB);
+    if (isA1 && isB2) return true;
+
+    const isA2 = rawA.includes(aliasB) || aliasB.includes(rawA);
+    const isB1 = rawB.includes(aliasA) || aliasA.includes(rawB);
+    if (isA2 && isB1) return true;
+  }
+
+  // Character overlap ratio
+  const setA = new Set(normA.split(''));
+  let overlap = 0;
+  for (const ch of normB) {
+    if (setA.has(ch)) overlap++;
+  }
+  const minLen = Math.min(normA.length, normB.length);
+  if (minLen >= 2 && overlap / minLen >= 0.6) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -197,10 +311,12 @@ function cleanKickoffTime(raw: string): string {
  * 
  * @param kickoffTime 开赛时间 (如 "2026-03-28 23:00" 或 "2026-03-29 03:00" 或 "23:00" 或 "临场")
  * @param fallbackTimestamp 若未识别出开赛日期时的后备时间戳 (如比赛导入/复盘创建的时间戳)
+ * @param preferredSalesDate 优先绑定的批次销售日 (如已有队列主销售日 "2026-03-28"，防止同轮次比赛跳跃到次日)
  */
 export function calculateSalesDate(
   kickoffTime?: string,
-  fallbackTimestamp?: number
+  fallbackTimestamp?: number,
+  preferredSalesDate?: string
 ): SalesDateInfo {
   const daysOfWeek = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
   const now = new Date();
@@ -220,14 +336,71 @@ export function calculateSalesDate(
     currentActiveSalesDate = `${y}-${m}-${d}`;
   }
 
+  const timeStr = (kickoffTime || '').trim();
+
+  // 若提供了批次绑定的 preferredSalesDate (YYYY-MM-DD)
+  if (preferredSalesDate && /^\d{4}-\d{2}-\d{2}$/.test(preferredSalesDate)) {
+    const [py, pm, pd] = preferredSalesDate.split('-').map(Number);
+    const salesBaseDate = new Date(py, pm - 1, pd);
+    const nextSalesDate = new Date(salesBaseDate.getTime() + 24 * 3600 * 1000);
+    const sm = String(pm).padStart(2, '0');
+    const sd = String(pd).padStart(2, '0');
+    const nsm = String(nextSalesDate.getMonth() + 1).padStart(2, '0');
+    const nsd = String(nextSalesDate.getDate()).padStart(2, '0');
+    const salesCycleText = `${sm}-${sd} 11:00 ~ ${nsm}-${nsd} 11:00`;
+    const salesDateLabel = `${py}年${sm}月${sd}日 销售日`;
+    const dayOfWeek = daysOfWeek[salesBaseDate.getDay()];
+    const isCurrentSalesDay = preferredSalesDate === currentActiveSalesDate;
+
+    // 格式化输出开赛时间
+    let kickoffTimeFormatted = timeStr;
+    if (!kickoffTimeFormatted || kickoffTimeFormatted === '临场' || kickoffTimeFormatted === '已完场') {
+      kickoffTimeFormatted = `${sm}-${sd} 临场`;
+    } else {
+      const timeOnly = timeStr.match(/^(\d{1,2}):(\d{2})$/);
+      if (timeOnly) {
+        const h = parseInt(timeOnly[1], 10);
+        // 如果是凌晨0~10点开赛，属于销售日次日凌晨
+        if (h < 11) {
+          kickoffTimeFormatted = `${nsm}-${nsd} ${timeStr}`;
+        } else {
+          kickoffTimeFormatted = `${sm}-${sd} ${timeStr}`;
+        }
+      }
+    }
+
+    // 若开赛时间没有发生跨销售周期的大跨度跳跃，强制归属 preferredSalesDate
+    // 检查是否明文写了另一个完全不同的日期 (超过2天的差异)
+    const explicitDate = timeStr.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+    let isFarDate = false;
+    if (explicitDate) {
+      const ey = parseInt(explicitDate[1], 10);
+      const em = parseInt(explicitDate[2], 10);
+      const ed = parseInt(explicitDate[3], 10);
+      const diffDays = Math.abs((new Date(ey, em - 1, ed).getTime() - salesBaseDate.getTime()) / (24 * 3600 * 1000));
+      if (diffDays >= 2) {
+        isFarDate = true;
+      }
+    }
+
+    if (!isFarDate) {
+      return {
+        salesDate: preferredSalesDate,
+        salesDateLabel,
+        salesCycleText,
+        dayOfWeek,
+        isCurrentSalesDay,
+        kickoffTimeFormatted,
+      };
+    }
+  }
+
   // 1. 解析开赛时间
   let kickoffYear: number | null = null;
   let kickoffMonth: number | null = null;
   let kickoffDay: number | null = null;
   let kickoffHour: number | null = null;
   let kickoffMinute: number | null = null;
-
-  const timeStr = (kickoffTime || '').trim();
 
   // Check if kickoffTime has full date and time: YYYY-MM-DD HH:mm
   const fullMatch = timeStr.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?/);
@@ -257,6 +430,16 @@ export function calculateSalesDate(
         kickoffDay = base.getDate();
         kickoffHour = parseInt(timeOnlyMatch[1], 10);
         kickoffMinute = parseInt(timeOnlyMatch[2], 10);
+
+        // 注意：若用户在同一轮次中仅写 "03:00"，这是指当晚/次日凌晨03:00开赛！
+        // 若此时 base 是当天日期，则 03:00 属于次日凌晨，但依然属于当天的销售日！
+        // 故在此锚定：00:00~10:59 的比赛开赛日是 base 的次日
+        if (kickoffHour < 11) {
+          const nextCalendarDay = new Date(base.getTime() + 24 * 3600 * 1000);
+          kickoffYear = nextCalendarDay.getFullYear();
+          kickoffMonth = nextCalendarDay.getMonth() + 1;
+          kickoffDay = nextCalendarDay.getDate();
+        }
       }
     }
   }
@@ -309,7 +492,7 @@ export function calculateSalesDate(
 
   // 格式化输出开赛时间
   let kickoffTimeFormatted = timeStr;
-  if (!kickoffTimeFormatted || kickoffTimeFormatted === '临场') {
+  if (!kickoffTimeFormatted || kickoffTimeFormatted === '临场' || kickoffTimeFormatted === '已完场') {
     const kh = String(kickoffHour).padStart(2, '0');
     const km = String(kickoffMinute || 0).padStart(2, '0');
     kickoffTimeFormatted = `${sm}-${sd} ${kh}:${km}`;
@@ -322,5 +505,72 @@ export function calculateSalesDate(
     dayOfWeek,
     isCurrentSalesDay,
     kickoffTimeFormatted,
+  };
+}
+
+/**
+ * 智能检测比赛列表或队列中主流的竞彩销售日 (Dominant Sales Date)
+ * 用于当批量复盘或解析赛果时，为整个批次提供统领性的锚定销售日，防止散落比赛因时间缺省或跨夜跳入次日
+ */
+export function detectDominantSalesDate(
+  items: Array<{
+    matchInfo?: { matchTime?: string };
+    data?: { matchInfo?: { matchTime?: string } };
+    timestamp?: number;
+    salesDate?: string;
+  }>
+): string | null {
+  if (!items || items.length === 0) return null;
+
+  const dateCounts = new Map<string, number>();
+
+  for (const item of items) {
+    if (item.salesDate && /^\d{4}-\d{2}-\d{2}$/.test(item.salesDate)) {
+      dateCounts.set(item.salesDate, (dateCounts.get(item.salesDate) || 0) + 3);
+      continue;
+    }
+
+    const matchTime = item.data?.matchInfo?.matchTime || item.matchInfo?.matchTime;
+    const ts = item.timestamp;
+
+    if (matchTime && matchTime !== '临场' && matchTime !== '已完场') {
+      const salesInfo = calculateSalesDate(matchTime, ts);
+      dateCounts.set(salesInfo.salesDate, (dateCounts.get(salesInfo.salesDate) || 0) + 2);
+    } else if (ts) {
+      const salesInfo = calculateSalesDate('临场', ts);
+      dateCounts.set(salesInfo.salesDate, (dateCounts.get(salesInfo.salesDate) || 0) + 1);
+    }
+  }
+
+  if (dateCounts.size === 0) return null;
+
+  let maxCount = -1;
+  let dominantDate: string | null = null;
+  for (const [date, count] of dateCounts.entries()) {
+    if (count > maxCount) {
+      maxCount = count;
+      dominantDate = date;
+    }
+  }
+
+  return dominantDate;
+}
+
+/**
+ * 校准所有历史复盘记录中的销售日归属，修复此前因跨天复盘或时间格式差异误跳到次日的场次
+ */
+export function calibrateReviewSalesDate(
+  review: PostMatchReview,
+  anchorSalesDate?: string
+): PostMatchReview {
+  const kickoff = review.kickoffTime || review.matchData?.matchInfo?.matchTime || '临场';
+  const updatedInfo = calculateSalesDate(kickoff, review.reviewTimestamp, anchorSalesDate);
+
+  return {
+    ...review,
+    salesDate: updatedInfo.salesDate,
+    salesDateLabel: updatedInfo.salesDateLabel,
+    salesCycleText: updatedInfo.salesCycleText,
+    kickoffTime: updatedInfo.kickoffTimeFormatted,
   };
 }

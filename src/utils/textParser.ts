@@ -1,5 +1,5 @@
 import { FullMatchData } from '../types/fortuneActuary';
-import { extractKickoffTime } from './salesDayUtils';
+import { extractKickoffTime, matchTeamsFuzzy } from './salesDayUtils';
 
 /**
  * Standardize handicap string to numeric handicap from Home perspective
@@ -811,19 +811,9 @@ export function parseBatchMatchScoresFromText(
       let matchedName: string | undefined = undefined;
       let confidence: 'HIGH' | 'MEDIUM' | 'MANUAL' = 'MEDIUM';
 
-      const normHome = normalizeTeamForMatch(home);
-      const normAway = normalizeTeamForMatch(away);
-
       for (const cand of candidates) {
-        const candNormHome = normalizeTeamForMatch(cand.home);
-        const candNormAway = normalizeTeamForMatch(cand.away);
-
-        const homeMatch =
-          normHome &&
-          (candNormHome.includes(normHome) || normHome.includes(candNormHome) || cand.home === home);
-        const awayMatch =
-          normAway &&
-          (candNormAway.includes(normAway) || normAway.includes(candNormAway) || cand.away === away);
+        const homeMatch = matchTeamsFuzzy(home, cand.home);
+        const awayMatch = matchTeamsFuzzy(away, cand.away);
 
         if (homeMatch && awayMatch) {
           matchedId = cand.id;
