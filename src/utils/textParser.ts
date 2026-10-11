@@ -695,6 +695,7 @@ export interface ParsedScoreItem {
   homeScore: number;
   awayScore: number;
   incidents?: string;
+  matchTime?: string;
   matchedId?: string; // 'current' or batch item id
   matchedName?: string;
   confidence: 'HIGH' | 'MEDIUM' | 'MANUAL';
@@ -806,6 +807,14 @@ export function parseBatchMatchScoresFromText(
 
     if (homeScore >= 0 && awayScore >= 0 && (home || away)) {
       itemCounter++;
+
+      // Extract matchTime / date / weekday if present in the raw text line
+      let matchTime: string | undefined = undefined;
+      const timeMatch = rawLine.match(/(?:(?:20\d{2}[-/.]|\d{1,2}[-/.])\d{1,2}(?:\s+\d{1,2}:\d{2})?|(?:周|星期)[一二三四五六日天](?:\d{1,3})?(?:\s+\d{1,2}:\d{2})?|\b\d{1,2}:\d{2}\b)/);
+      if (timeMatch) {
+        matchTime = timeMatch[0].trim();
+      }
+
       // Fuzzy matching with candidate matches in queue
       let matchedId: string | undefined = undefined;
       let matchedName: string | undefined = undefined;
@@ -834,6 +843,7 @@ export function parseBatchMatchScoresFromText(
         homeScore,
         awayScore,
         incidents,
+        matchTime,
         matchedId,
         matchedName,
         confidence,

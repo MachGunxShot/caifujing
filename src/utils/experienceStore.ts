@@ -246,12 +246,13 @@ export function getExperienceRules(): EvolvedExperienceRule[] {
 }
 
 /**
- * Save an updated list of experience rules
+ * Save an updated list of experience rules (Always auto-consolidates to prevent bloat)
  */
 export function saveExperienceRules(rules: EvolvedExperienceRule[]): void {
   try {
     if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
-    localStorage.setItem(RULES_STORAGE_KEY, JSON.stringify(rules));
+    const cleanConsolidated = consolidateRulesToCoreMaster(rules);
+    localStorage.setItem(RULES_STORAGE_KEY, JSON.stringify(cleanConsolidated));
   } catch (e) {
     console.error('Error saving experience rules:', e);
   }

@@ -460,11 +460,18 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     }
   };
 
-  // Calibrate sales dates for all existing reviews
+  // Calibrate sales dates for all existing reviews (按各场真实开赛时间与竞彩11:00法则独立归纳)
   const handleCalibrateSalesDates = () => {
     setIsCalibratingDates(true);
     let calibratedCount = 0;
     const dateGroupsSet = new Set<string>();
+
+    // 基准参考日（仅用作周/月/年份上下文参考，不强制覆盖各场独立时间）
+    const referenceBaseDate =
+      batchTargetSalesDate ||
+      detectDominantSalesDate(queue) ||
+      reviews[0]?.salesDate ||
+      calculateSalesDate().salesDate;
 
     const updatedReviews = reviews.map((rev) => {
       // 深度反查队列中的原始开赛时间（如 周六 20:30、周日 03:00、周一 04:00 等）
@@ -489,7 +496,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
             }
           : rev;
 
-      const calibrated = calibrateReviewSalesDate(reviewToCalibrate);
+      const calibrated = calibrateReviewSalesDate(reviewToCalibrate, referenceBaseDate);
       if (calibrated.salesDate !== rev.salesDate) {
         calibratedCount++;
       }
@@ -501,12 +508,26 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
     updatedReviews.forEach((r) => savePostMatchReview(r));
     setReviews(getPostMatchReviews());
+
+    // 同步更新队列中的已复盘战报
+    const updatedQueue = queue.map((item) => {
+      if (item.review) {
+        return {
+          ...item,
+          review: calibrateReviewSalesDate(item.review, referenceBaseDate),
+        };
+      }
+      return item;
+    });
+    onUpdateQueue(updatedQueue);
+
     setIsCalibratingDates(false);
 
     const dateLabels = Array.from(dateGroupsSet).sort().join('、');
     setHealthNotification(
-      `✅ 销售日智能校准恢复完成！已严格按各场真实开赛时间与竞彩11:00法则划分为 ${dateGroupsSet.size} 个独立销售日周期（涉及: ${dateLabels || '多日归档'}，共覆盖 ${updatedReviews.length} 场历史战报，校准修复 ${calibratedCount} 场）！`
+      `✅ 销售日各场次独立校准归档完成！已按各场真实开赛时间与竞彩11:00法则，分别归入 ${dateGroupsSet.size} 个独立销售日周期（涉及: ${dateLabels || '多日归档'}，共覆盖 ${updatedReviews.length} 场历史战报，校准修复 ${calibratedCount} 场）！便于每日分段对照验证。`
     );
+    setTimeout(() => setHealthNotification(null), 8000);
   };
 
   // Retroactively sync reviews to core rules library (查漏补缺)
@@ -797,14 +818,14 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           }
         }
 
-        // If still not matched, synthesize baseline match with explicit anchor batch sales date
+        // If still not matched, synthesize baseline match with parsed matchTime or anchor batch sales date
         if (!targetMatch) {
           targetMatch = {
             matchInfo: {
               league: '实战复盘录入',
               homeTeam: item.homeTeam,
               awayTeam: item.awayTeam,
-              matchTime: `${batchSalesDate} 临场`,
+              matchTime: item.matchTime || `${batchSalesDate} 临场`,
               marketStory: '批量实战赛果导入',
             },
             asianHandicap: {
@@ -833,17 +854,21 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
             },
           };
           targetReport = generateActuarialRuleReport(targetMatch);
+        } else if (item.matchTime && (!targetMatch.matchInfo?.matchTime || targetMatch.matchInfo.matchTime === '临场' || targetMatch.matchInfo.matchTime === '已完场')) {
+          targetMatch = {
+            ...targetMatch,
+            matchInfo: {
+              ...targetMatch.matchInfo,
+              matchTime: item.matchTime,
+            },
+          };
         }
 
         if (!targetReport) {
           targetReport = generateActuarialRuleReport(targetMatch);
         }
 
-        // Evaluate deterministically: if match has its own explicit date, use it; only use batchSalesDate if time-only or absent
-        const matchTimeStr = targetMatch.matchInfo?.matchTime || '';
-        const hasOwnExplicitDate = /(?:20\d{2}[-/.]|\d{1,2}[-/.])\d{1,2}/.test(matchTimeStr);
-        const effectivePreferredDate = hasOwnExplicitDate ? undefined : batchSalesDate;
-
+        // Evaluate deterministically: 依各场真实开赛时间与竞彩销售日法则独立精算归属（方便分销售日对照验证）
         const queueTimestamp = queueIdx >= 0 ? updatedQueue[queueIdx].timestamp : Date.now();
         const review = evaluateMatchOutcomeAndExtractLesson(
           targetMatch,
@@ -852,7 +877,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           item.awayScore,
           item.incidents || '批量赛果智能归因',
           batchSyncToCoreRules, // 是否沉淀进《财富经》核心法则库
-          effectivePreferredDate, // 仅在缺少明确日期时锚定批次销售日，保留多天赛事的真实独立归属
+          batchSalesDate,       // 作为周/月基准参考锚点，保留各场自身真实开赛时间的独立销售日归属
           queueTimestamp        // 后备时间戳使用队列创建/导入时间戳
         );
 
@@ -920,7 +945,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
       const cleanRules = getExperienceRules();
 
       setBatchReviewSummary(
-        `🎉 成功批量完成 ${totalExecuted} 场赛果深度复盘！已按真实开赛时间与竞彩销售日法则归档入库（共覆盖 ${distinctSalesDates.size} 个销售日周期）！其中 ${newlyVerified} 场完全印证盘口风控${
+        `🎉 成功批量完成 ${totalExecuted} 场赛果深度复盘！已按真实开赛时间与竞彩销售日法则分别独立归档（共覆盖 ${distinctSalesDates.size} 个独立销售日周期，支持分日精准对照复盘）！其中 ${newlyVerified} 场完全印证盘口风控${
           batchSyncToCoreRules
             ? `，已全量调用去重合并引擎收敛沉淀入《财富经》核心法则库（累加实战印证命中并收纳最新样板，核心法则库保持 ${cleanRules.length} 套权威通则）！`
             : '（未勾选同步法则库，仅留存归档战报）'
@@ -1147,6 +1172,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     if (ruleCategoryFilter === 'ALL') return rules;
     return rules.filter((r) => {
       const isClassic =
+        r.id.startsWith('rule-model-') ||
         r.id.startsWith('rule-classic-') ||
         r.id.startsWith('rule-seed-') ||
         r.id === 'rule-philosophy-core' ||
@@ -1790,7 +1816,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                       <div className="flex items-center gap-2 flex-wrap">
                         <Calendar className="w-4 h-4 text-emerald-400" />
                         <span className="text-xs font-bold text-slate-200">
-                          批量复盘统领销售日：
+                          批次参考基准销售日：
                         </span>
                         <span className="px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                           {(() => {
@@ -1803,7 +1829,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                         </span>
                       </div>
                       <span className="text-[11px] text-slate-400">
-                        ⚡ 竞彩销售周期锁定：全批次赛事（含次日凌晨00:00~10:59开赛）严格锚定于此，彻底杜绝跨天跳日
+                        ⚡ 各场次依真实开赛时间与竞彩11:00法则独立归纳（周五/周六/周日/周一分别建档，方便分日对照验证）
                       </span>
                     </div>
 
@@ -2874,7 +2900,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                     disabled={isCalibratingDates}
                     onClick={handleCalibrateSalesDates}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
-                    title="重新依据真实开赛时间与竞彩11:00销售日法则智能对齐归正所有历史复盘，消除跨天误分"
+                    title="重新依据真实开赛时间与竞彩11:00销售日法则独立归纳校准所有历史复盘，消除跨天误分，便于每日精准对照复盘"
                   >
                     {isCalibratingDates ? (
                       <>

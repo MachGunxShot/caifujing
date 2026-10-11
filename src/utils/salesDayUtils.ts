@@ -338,6 +338,36 @@ export function calculateSalesDate(
 
   const timeStr = (kickoffTime || '').trim();
 
+  // 若开赛时间完全为空、仅为“临场”或“已完场”，且明确指定了基准销售日 preferredSalesDate，作为兜底归属
+  const hasTimeContent = /(?:20\d{2}[-/.]|\d{1,2}[-/.月]|(?:周|星期)[一二三四五六日天]|\b\d{1,2}:\d{2}\b)/.test(timeStr);
+  if (!hasTimeContent && preferredSalesDate && /^\d{4}-\d{2}-\d{2}$/.test(preferredSalesDate)) {
+    const [py, pm, pd] = preferredSalesDate.split('-').map(Number);
+    const sy = String(py);
+    const sm = String(pm).padStart(2, '0');
+    const sd = String(pd).padStart(2, '0');
+    const salesDate = `${sy}-${sm}-${sd}`;
+    const salesDateLabel = `${sy}年${sm}月${sd}日 销售日`;
+
+    const salesBaseDate = new Date(py, pm - 1, pd);
+    const nextSalesDate = new Date(salesBaseDate.getTime() + 24 * 3600 * 1000);
+    const startM = String(salesBaseDate.getMonth() + 1).padStart(2, '0');
+    const startD = String(salesBaseDate.getDate()).padStart(2, '0');
+    const endM = String(nextSalesDate.getMonth() + 1).padStart(2, '0');
+    const endD = String(nextSalesDate.getDate()).padStart(2, '0');
+    const salesCycleText = `${startM}-${startD} 11:00 ~ ${endM}-${endD} 11:00`;
+    const dayOfWeek = daysOfWeek[salesBaseDate.getDay()];
+    const isCurrentSalesDay = salesDate === currentActiveSalesDate;
+
+    return {
+      salesDate,
+      salesDateLabel,
+      salesCycleText,
+      dayOfWeek,
+      isCurrentSalesDay,
+      kickoffTimeFormatted: timeStr || `${salesDate} 临场`,
+    };
+  }
+
   // 1. 深度解析开赛时间（支持完整日期、月日、周几+时间、独立时间等全场景）
   let kickoffYear: number | null = null;
   let kickoffMonth: number | null = null;
@@ -613,4 +643,17 @@ export function calibrateReviewSalesDate(
     salesCycleText: updatedInfo.salesCycleText,
     kickoffTime: updatedInfo.kickoffTimeFormatted,
   };
+}
+
+/**
+ * 将全量或指定批次复盘战报强制统一归入同一个指定的竞彩销售日周期中
+ */
+export function unifyReviewsToOneSalesDay(
+  reviews: PostMatchReview[],
+  targetSalesDate: string
+): PostMatchReview[] {
+  if (!targetSalesDate || !/^\d{4}-\d{2}-\d{2}$/.test(targetSalesDate)) {
+    return reviews;
+  }
+  return reviews.map((r) => calibrateReviewSalesDate(r, targetSalesDate));
 }
