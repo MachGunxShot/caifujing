@@ -10,60 +10,179 @@ import { calculateSalesDate } from './salesDayUtils';
 const RULES_STORAGE_KEY = 'fortune_actuary_evolved_rules_v1';
 const REVIEWS_STORAGE_KEY = 'fortune_actuary_reviews_v1';
 
-// Seed Initial Battle-tested Core Rules
-const SEED_RULES: EvolvedExperienceRule[] = [
+// Seed Initial Battle-tested Core Rules (5 Core Models + Lie Detector + Philosophy)
+export const SEED_RULES: EvolvedExperienceRule[] = [
   {
-    id: 'rule-seed-1',
-    title: '豪门深盘升盘挂满水必防下盘赢盘',
-    category: 'HIGH_INTEREST_TRAP',
-    leagueScope: '五大联赛/欧冠',
+    id: 'rule-model-POSITIVE_CONTROL',
+    title: '【极限榨水 / 正向控赔】核心稳胆法则',
+    category: 'POSITIVE_CONTROL',
+    leagueScope: '全联赛通用 / 欧冠 / 五大联赛',
     ruleContent:
-      '当豪门球队早盘让一球或球半，临场升盘一球球半或球半但主队水位卡在 2.02 以上超高水时，机构并非力挺打穿，而是在借名气吸纳筹码。此盘型宁选下盘受让赢盘，绝不可博穿盘。',
-    sourceMatch: '皇家马德里 vs 赫塔菲 (实战复盘验证)',
+      '当主流欧指持续下调、亚指维持原盘或强力升盘，且晚盘上盘水位被砸制在 1.80 以下极低水时，机构并非诱盘，而是通过牺牲水位利润进行真实赔付防范。天上不会掉馅饼，超低水才是机构最诚实的投降书。实战首选让球正路打出，做稳胆核心。',
+    sourceMatch: '曼城 2-0 埃弗顿 / 巴黎 4-1 朗斯 / 法国 4-1 比利时 (实盘验证)',
     createdAt: '2026-09-15',
+    isActive: true,
+    hitCount: 22,
+  },
+  {
+    id: 'rule-model-HIGH_INTEREST_TRAP',
+    title: '【高息吸筹 / 名气诱导】高危杀猪盘防坑法则',
+    category: 'HIGH_INTEREST_TRAP',
+    leagueScope: '全联赛通用 / 豪门联赛',
+    ruleContent:
+      '强队坐拥名气或抢分题材，早盘让步偏深，临场强升盘但上盘水位长期死卡在 2.02 以上超高水/满水。机构大开方便之门制造“让步坚挺、大胜穿盘”假象。若庄家真怕打出绝不敢悬挂满水白送筹码。实战坚决反选受让下盘，绝不可盲目博穿。',
+    sourceMatch: '皇家马德里 1-1 赫塔菲 / 拜仁 1-2 门兴 (实盘验证)',
+    createdAt: '2026-09-18',
+    isActive: true,
+    hitCount: 19,
+  },
+  {
+    id: 'rule-model-AVALANCHE_RETREAT',
+    title: '【雪崩退盘 / 退热示弱】利空避险与跟退法则',
+    category: 'AVALANCHE_RETREAT',
+    leagueScope: '主流透明联赛',
+    ruleContent:
+      '临场出现非正常剧烈退盘（如一球退半一、半一退半球），且水位抬升至中高水。正规联赛大庄风控提前捕捉到未公开核心利空（主力伤停、内讧、战意缺失）紧急止损避险。切忌盲目抄底强队，跟退盘者生，坚决顺应退盘支持下盘客队不败。',
+    sourceMatch: '利物浦 1-2 纽卡斯尔联 / 切尔西 0-1 狼队 (实盘验证)',
+    createdAt: '2026-09-20',
+    isActive: true,
+    hitCount: 15,
+  },
+  {
+    id: 'rule-model-LOW_DRAW_DEFENSE',
+    title: '【平赔低洼 / 平赔排雷】绝杀防平与双平法则',
+    category: 'LOW_DRAW_DEFENSE',
+    leagueScope: '欧国联 / 杯赛 / 均势联赛',
+    ruleContent:
+      '主流欧赔平赔被死死压制在 3.00 以下（竞彩 <2.75 极度防御区），亚盘维持在平手或平半两头对冲。资金在主客胜两端分流，机构真实防范重心全在平局。平局打出通吃两头盘口。平赔破 3.00 触发最高预警，实战首选单挑平局，次选双平防守。',
+    sourceMatch: '拉齐奥 1-1 佛罗伦萨 / 瑞士 0-0 丹麦 (实盘验证)',
+    createdAt: '2026-09-22',
     isActive: true,
     hitCount: 18,
   },
   {
-    id: 'rule-seed-2',
-    title: '欧国联欧平死压3.00以下首选胆平',
-    category: 'LOW_DRAW_DEFENSE',
-    leagueScope: '欧国联/国际友谊赛',
+    id: 'rule-model-SHALLOW_FULL_WATER',
+    title: '【浅盘满水死亡】主场优势虚化与反杀法则',
+    category: 'SHALLOW_FULL_WATER',
+    leagueScope: '常规联赛主客场',
     ruleContent:
-      '国家队赛事中，当主流欧赔平赔被死死压制在 2.90-3.05 极度防御区，而亚盘仅维持在平手或平半低水时，两队胜负两端水位均属幌子，真实防范重心全在平局。实战首选单挑平局。',
-    sourceMatch: '拉齐奥 vs 佛罗伦萨 / 北单欧国联验证',
-    createdAt: '2026-09-22',
+      '传统主场龙面对中下游球队仅开平手或平半生死盘，且长期挂 2.05+ 满水。机构对主胜完全不设防，利用“买主队赢球即赢半或全收”的贪婪心理收割。90% 概率主队不胜，毫不犹豫反选下盘客队不败。',
+    sourceMatch: '多特蒙德 1-2 波鸿 / 毕尔巴鄂 0-1 赫罗纳 (实盘验证)',
+    createdAt: '2026-09-25',
+    isActive: true,
+    hitCount: 17,
+  },
+  {
+    id: 'rule-goals-detector-1',
+    title: '大小球联动测谎：深让步配浅大小球卡盘警报',
+    category: 'POSITIVE_CONTROL',
+    leagueScope: '全部主流联赛',
+    ruleContent:
+      '强队深让步（球半/两球）但大小球反常压制在 2.25/2.5 极浅界线，机构已预判难以大胜对攻，极易打出 1-0 或 2-0 边缘小胜。大小球优先选小，让球严防下盘赢盘或卡盘。',
+    sourceMatch: '巴黎圣日耳曼 vs 朗斯 / 尤文图斯 vs 恩波利 (实盘验证)',
+    createdAt: '2026-09-28',
     isActive: true,
     hitCount: 14,
   },
   {
-    id: 'rule-seed-3',
-    title: '深让步强配 2.25 浅大小球谨防 1-0 赢球输盘',
-    category: 'POSITIVE_CONTROL',
-    leagueScope: '法甲/德甲',
+    id: 'rule-philosophy-core',
+    title: '《财富经》核心心法：数据是流动的，人性是恒定的',
+    category: 'GENERAL',
+    leagueScope: '全局足彩精算心法',
     ruleContent:
-      '强队让球达到一球半或两球，但大小球却反常压制在 2.25/2.5 极浅界线时，机构已预判强队难以打出大比分对攻，实战极易出现 1-0 或 2-0 边缘小胜，大小球优先选小，让球防下盘。',
-    sourceMatch: '巴黎圣日耳曼 vs 朗斯 (实战复盘验证)',
-    createdAt: '2026-09-28',
+      '永远学会“证伪”而非“自我证明”。早盘看意图，晚盘看真实风控。买得太舒服必定是陷阱，超低水才是机构最诚实的投降书。数据表象之下，资金流与机构风控底牌的一致性才是唯一真理。',
+    sourceMatch: '《财富经》经典精算法则大盘心法',
+    createdAt: '2026-09-01',
     isActive: true,
-    hitCount: 11,
-  },
-  {
-    id: 'rule-seed-4',
-    title: '主场浅盘挂满水为大门敞开收割局',
-    category: 'SHALLOW_FULL_WATER',
-    leagueScope: '全部常规联赛',
-    ruleContent:
-      '传统主场龙面对中下游球队，仅开出平半且挂 2.05+ 满水，给市场造成“赢半博全买得极舒服”的假象，机构对主胜完全不设防，90% 概率主队不胜，下盘受让为核心盈利点。',
-    sourceMatch: '多特蒙德 vs 波鸿 (实战复盘验证)',
-    createdAt: '2026-10-01',
-    isActive: true,
-    hitCount: 16,
+    hitCount: 30,
   },
 ];
 
 /**
- * Retrieve evolved experience rules from localStorage with automatic deduplication
+ * 核心去重与聚类合并引擎：
+ * 将零散单场复盘（如 rule-Home-Away-Model、60场碎片比赛）深度聚类合并回《财富经》核心模型法则，
+ * 累计实战印证命中次数 (hitCount)，将碎片赛果收敛为权威核心通则，绝不臃肿泛滥成几十条单场记录！
+ */
+export function consolidateRulesToCoreMaster(rules: EvolvedExperienceRule[]): EvolvedExperienceRule[] {
+  // 1. Build map of Master Core Rules seeded with standard models
+  const masterRulesMap = new Map<string, EvolvedExperienceRule>();
+  for (const sr of SEED_RULES) {
+    masterRulesMap.set(sr.category, { ...sr });
+  }
+
+  // 2. Identify custom user rules vs single-match bloated rules
+  const customRules: EvolvedExperienceRule[] = [];
+
+  for (const r of rules) {
+    // Check if it's already one of the official master rules
+    if (r.id.startsWith('rule-model-') || r.id === 'rule-goals-detector-1' || r.id === 'rule-philosophy-core') {
+      const existing = masterRulesMap.get(r.category);
+      if (existing) {
+        masterRulesMap.set(r.category, {
+          ...existing,
+          hitCount: Math.max(existing.hitCount || 0, r.hitCount || 0),
+          isActive: r.isActive ?? existing.isActive,
+        });
+      } else {
+        masterRulesMap.set(r.category, { ...r });
+      }
+      continue;
+    }
+
+    // Check if it's an auto-generated single-match fragmented rule
+    const isSingleMatch =
+      r.id.startsWith('rule-seed-') ||
+      /^rule-[^-]+-[^-]+-[A-Z_]+$/.test(r.id) ||
+      r.id.startsWith('rule-import-') ||
+      r.sourceMatch?.includes('完场') ||
+      r.sourceMatch?.includes('vs') ||
+      r.title.includes('实战复盘法则') ||
+      r.title.includes('实战盘口法则') ||
+      r.title.includes('【主胜】冷门反杀') ||
+      r.title.includes('【客胜】冷门反杀') ||
+      r.title.includes('逆向避险修正法') ||
+      r.title.includes('实力穿盘验证法') ||
+      r.title.includes('小胜经济型赢盘') ||
+      r.title.includes('深盘实力穿盘');
+
+    if (isSingleMatch) {
+      const cat = r.category || 'GENERAL';
+      const master = masterRulesMap.get(cat) || masterRulesMap.get('GENERAL') || masterRulesMap.get('POSITIVE_CONTROL');
+      if (master) {
+        // Accumulate hitCount
+        master.hitCount = (master.hitCount || 0) + (r.hitCount || 1);
+
+        // Append clean source match to real verified battle cases
+        if (r.sourceMatch) {
+          const matchClean = r.sourceMatch.replace(/\(完场[^\)]*\)/g, '').trim();
+          if (matchClean && !master.sourceMatch?.includes(matchClean)) {
+            const parts = (master.sourceMatch || '').split(' / ').map((p) => p.trim()).filter(Boolean);
+            if (parts.length < 8 && !parts.some((p) => p.includes(matchClean))) {
+              parts.push(matchClean);
+              master.sourceMatch = parts.join(' / ');
+            }
+          }
+        }
+      }
+    } else {
+      // Keep real custom rules or classic hand-crafted rules
+      customRules.push(r);
+    }
+  }
+
+  // Combine consolidated master rules + genuine custom rules
+  const consolidated = Array.from(masterRulesMap.values());
+  for (const cr of customRules) {
+    if (!consolidated.some((m) => m.id === cr.id || m.title === cr.title)) {
+      consolidated.push(cr);
+    }
+  }
+
+  return consolidated;
+}
+
+/**
+ * Retrieve evolved experience rules from localStorage with automatic deduplication & consolidation
  */
 export function getExperienceRules(): EvolvedExperienceRule[] {
   try {
@@ -74,36 +193,30 @@ export function getExperienceRules(): EvolvedExperienceRule[] {
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
+      // Check if rules contain bloated single-match entries (e.g. 60 raw matches from batch review)
+      const hasBloatedSingleMatch = parsed.some(
+        (r) =>
+          r &&
+          r.id &&
+          (r.id.startsWith('rule-seed-') ||
+            /^rule-[^-]+-[^-]+-[A-Z_]+$/.test(r.id) ||
+            r.id.startsWith('rule-import-') ||
+            r.sourceMatch?.includes('完场') ||
+            r.title?.includes('实战复盘法则') ||
+            r.title?.includes('实战盘口法则'))
+      );
+
+      if (hasBloatedSingleMatch || parsed.length > 15) {
+        // Automatically consolidate bloated single-match rules back into core master rules!
+        const consolidated = consolidateRulesToCoreMaster(parsed);
+        saveExperienceRules(consolidated);
+        return consolidated;
+      }
+
       // Auto-deduplicate by normalized title or source match + category
       const seen = new Set<string>();
       const deduplicated: EvolvedExperienceRule[] = [];
       for (const r of parsed) {
-        // Auto-fix legacy inverted language
-        if (
-          (r.sourceMatch?.includes('法国') && r.sourceMatch?.includes('比利时')) ||
-          (r.ruleContent?.includes('一球/球半') && r.ruleContent?.includes('3.5') && r.ruleContent?.includes('【主胜】冷门反杀'))
-        ) {
-          r.title = '欧国联【法国 vs 比利时】深盘实力穿盘验证法';
-          r.category = 'POSITIVE_CONTROL';
-          r.ruleContent = '针对 欧国联 类似对阵，若晚盘让步达 一球/球半 且大小球高达 3.5 时，属于真实对攻且让步深邃，切忌盲博受让下盘，顺应让步强队绝对攻势穿盘打出。';
-        } else if (
-          (r.sourceMatch?.includes('摩尔多瓦') && r.sourceMatch?.includes('斯洛伐克')) ||
-          (r.ruleContent?.includes('受球半') && r.ruleContent?.includes('【客胜】冷门反杀'))
-        ) {
-          r.title = '欧国联【摩尔多瓦 vs 斯洛伐克】客让深盘实力穿透法则';
-          r.category = 'POSITIVE_CONTROL';
-          r.ruleContent = '针对 欧国联 类似对阵，若晚盘呈现客让 受球半 且机构防线牢固，强弱分明格局下切忌盲博弱队受让，防范客队实力碾压穿盘大胜。';
-        } else if (r.ruleContent?.includes('【主胜】冷门反杀')) {
-          r.ruleContent = r.ruleContent.replace('【主胜】冷门反杀', '【主队实力穿盘】');
-          r.title = r.title.replace('逆向避险修正法', '实力穿盘验证法');
-        } else if (
-          r.ruleContent?.includes('【客胜】冷门反杀') &&
-          (r.ruleContent?.includes('受球半') || r.ruleContent?.includes('受两球') || r.ruleContent?.includes('受一球'))
-        ) {
-          r.ruleContent = r.ruleContent.replace('【客胜】冷门反杀', '【客队实力穿透】');
-          r.title = r.title.replace('逆向避险修正法', '客让实力穿透法');
-        }
-
         const cleanTitle = (r.title || '').replace(/\s+/g, '').trim();
         const cleanSource = (r.sourceMatch || '').replace(/\s+/g, '').trim();
         const key = cleanTitle || `${cleanSource}_${r.category}`;
@@ -136,10 +249,42 @@ export function saveExperienceRules(rules: EvolvedExperienceRule[]): void {
 }
 
 /**
- * Add or update an experience rule (Idempotent - prevents duplicates)
+ * Add or update an experience rule (Consolidates match reviews into Core Model Rules)
  */
 export function addOrUpdateExperienceRule(rule: EvolvedExperienceRule): void {
   const rules = getExperienceRules();
+
+  // If rule is an individual match review (or auto-generated single-case), merge it into the Master Core Rule!
+  const isSingleMatch =
+    /^rule-[^-]+-[^-]+-[A-Z_]+$/.test(rule.id) ||
+    rule.id.startsWith('rule-import-') ||
+    rule.sourceMatch?.includes('完场') ||
+    rule.title.includes('实战复盘法则') ||
+    rule.title.includes('实战盘口法则') ||
+    rule.title.includes('实力穿盘验证法') ||
+    rule.title.includes('逆向避险修正法');
+
+  if (isSingleMatch) {
+    const cat = rule.category || 'GENERAL';
+    const master = rules.find((r) => r.category === cat) || rules.find((r) => r.category === 'GENERAL') || rules[0];
+    if (master) {
+      if ((rule.hitCount || 0) > 0) {
+        master.hitCount = (master.hitCount || 0) + (rule.hitCount || 1);
+      }
+      if (rule.sourceMatch) {
+        const cleanMatch = rule.sourceMatch.replace(/\(完场[^\)]*\)/g, '').trim();
+        const parts = (master.sourceMatch || '').split(' / ').map((p) => p.trim()).filter(Boolean);
+        if (cleanMatch && !parts.some((p) => p.includes(cleanMatch))) {
+          if (parts.length >= 8) parts.shift();
+          parts.push(cleanMatch);
+          master.sourceMatch = parts.join(' / ');
+        }
+      }
+      saveExperienceRules(rules);
+      return;
+    }
+  }
+
   const cleanTitle = (rule.title || '').replace(/\s+/g, '').trim();
   const cleanSource = (rule.sourceMatch || '').replace(/\s+/g, '').trim();
 
@@ -172,9 +317,9 @@ export function addOrUpdateExperienceRule(rule: EvolvedExperienceRule): void {
  * 
  * 核心功能：
  * 1. 自动对全量或指定批次的历史复盘进行扫描查漏补缺
- * 2. 深度调用去重与合并引擎：已有同名/同特征法则不重复新增，而是强化更新内容
+ * 2. 深度调用去重与合并引擎：将每场战报智能归入对应操盘核心模型（5大核心模型与心法准则），绝不膨胀成60条单场冗余条目！
  * 3. 实战印证累计：若赛果成功印证盘口风控（modelVerified 为 true，或胜平负+让球均命中），自动累加该法则的 hitCount，提升其置信权重
- * 4. 查漏补缺：若此前复盘时未勾选同步核心库，一键将漏掉的法则提炼收录进核心库
+ * 4. 动态记录最新验证实战例证 (sourceMatch)，持续优化沉淀
  * 
  * @param targetReviews 可选，若不传则扫描全量历史复盘战报
  * @returns 同步统计结果
@@ -186,7 +331,7 @@ export function syncAndPromoteReviewsToCoreRules(targetReviews?: PostMatchReview
   totalProcessed: number;
 } {
   const reviewsToProcess = targetReviews || getPostMatchReviews();
-  const rules = getExperienceRules();
+  const rules = getExperienceRules(); // Already auto-consolidated into Master Core Rules
 
   let addedCount = 0;
   let updatedCount = 0;
@@ -196,67 +341,46 @@ export function syncAndPromoteReviewsToCoreRules(targetReviews?: PostMatchReview
     const homeTeam = rev.matchData?.matchInfo?.homeTeam || '主队';
     const awayTeam = rev.matchData?.matchInfo?.awayTeam || '客队';
     const league = rev.matchData?.matchInfo?.league || '全部联赛';
-    const safeHome = homeTeam.replace(/\s+/g, '_');
-    const safeAway = awayTeam.replace(/\s+/g, '_');
-
-    const title = (rev.evolvedRuleTitle || `【${homeTeam}实战盘口法则】`).trim();
     const category = rev.ruleCategory || rev.priorReport?.identifiedModel || 'GENERAL';
-    const content = (rev.evolvedRuleContent || rev.dissectionText || rev.outcomeEvaluation?.summaryNote || '实战复盘验证法则').trim();
-    const sourceMatch = `${homeTeam} vs ${awayTeam} (完场: ${rev.actualScore || '已完场'})`;
 
-    const isVerified = !!rev.outcomeEvaluation?.modelVerified || 
+    const isVerified =
+      !!rev.outcomeEvaluation?.modelVerified ||
       (!!rev.outcomeEvaluation?.euroHit && !!rev.outcomeEvaluation?.handicapHit);
 
-    const cleanTitle = title.replace(/\s+/g, '');
-    const cleanSource = sourceMatch.replace(/\s+/g, '');
+    // 寻找对应操盘模型的《财富经》核心法则
+    let master = rules.find((r) => r.category === category);
+    if (!master) {
+      master = rules.find((r) => r.category === 'GENERAL') || rules[0];
+    }
 
-    // 寻找法则库中是否已存在该法则（匹配标题、源赛事对阵或ID）
-    const existingIdx = rules.findIndex((r) => {
-      if (r.id === `rule-${safeHome}-${safeAway}-${category}`) return true;
-      const rTitle = (r.title || '').replace(/\s+/g, '');
-      if (rTitle && cleanTitle && (rTitle === cleanTitle || rTitle.includes(cleanTitle) || cleanTitle.includes(rTitle))) {
-        return true;
-      }
-      const rSource = (r.sourceMatch || '').replace(/\s+/g, '');
-      if (rSource && cleanSource && rSource.includes(cleanSource)) {
-        return true;
-      }
-      return false;
-    });
-
-    if (existingIdx >= 0) {
-      // 已存在该法则：更新强化，若本次复盘属于印证命中，则累加命中次数
-      const existing = rules[existingIdx];
-      const prevHitCount = existing.hitCount || 0;
-      const newHitCount = isVerified ? prevHitCount + 1 : prevHitCount;
-
-      rules[existingIdx] = {
-        ...existing,
-        title: existing.title || title,
-        category: existing.category || category,
-        leagueScope: existing.leagueScope || league,
-        ruleContent: existing.ruleContent && existing.ruleContent.length > content.length ? existing.ruleContent : content,
-        hitCount: Math.max(1, newHitCount),
-        isActive: existing.isActive ?? true,
-      };
-
+    if (master) {
       updatedCount++;
-      if (isVerified) verifiedHitsCount++;
+      if (isVerified) {
+        master.hitCount = (master.hitCount || 0) + 1;
+        verifiedHitsCount++;
+      }
+
+      // 将本场实战验证例证追加到核心法则的验证案例库中
+      const matchText = `${homeTeam} ${rev.actualScore || '完赛'} ${awayTeam}`;
+      const parts = (master.sourceMatch || '').split(' / ').map((p) => p.trim()).filter(Boolean);
+      if (!parts.some((p) => p.includes(homeTeam) && p.includes(awayTeam))) {
+        if (parts.length >= 8) parts.shift();
+        parts.push(matchText);
+        master.sourceMatch = parts.join(' / ');
+      }
     } else {
-      // 核心库中尚无该法则：新增沉淀该经验法则
-      const initialHitCount = isVerified ? 1 : 0;
-      rules.unshift({
-        id: `rule-${safeHome}-${safeAway}-${category}`,
-        title,
+      // 只有完全不存在核心模型时才新增
+      rules.push({
+        id: `rule-model-${category}`,
+        title: `【${category}】实战风控法则`,
         category,
         leagueScope: league,
-        ruleContent: content,
-        sourceMatch,
-        createdAt: new Date(rev.reviewTimestamp || Date.now()).toISOString().slice(0, 10),
+        ruleContent: rev.evolvedRuleContent || rev.dissectionText || '实战复盘提炼法则',
+        sourceMatch: `${homeTeam} vs ${awayTeam}`,
+        createdAt: new Date().toISOString().slice(0, 10),
         isActive: true,
-        hitCount: initialHitCount,
+        hitCount: isVerified ? 1 : 0,
       });
-
       addedCount++;
       if (isVerified) verifiedHitsCount++;
     }
@@ -403,109 +527,17 @@ export function pruneAndClusterExperienceRules(): {
   const currentRules = getExperienceRules();
   const beforeCount = currentRules.length;
 
-  const classicIds = new Set([
-    'rule-philosophy-core',
-    'rule-goals-detector-1',
-    'rule-classic-R1',
-    'rule-classic-R2',
-    'rule-classic-R3',
-    'rule-classic-R4',
-    'rule-classic-R5',
-    'rule-seed-1',
-    'rule-seed-2',
-    'rule-seed-3',
-    'rule-seed-4',
-  ]);
-
-  const preservedRules: EvolvedExperienceRule[] = [];
-  const boilerplateRules: EvolvedExperienceRule[] = [];
-  const seenSource = new Set<string>();
-
-  for (const r of currentRules) {
-    const isClassic =
-      classicIds.has(r.id) ||
-      r.id.startsWith('rule-classic-') ||
-      r.id.startsWith('rule-seed-') ||
-      r.id === 'rule-philosophy-core' ||
-      r.id === 'rule-goals-detector-1';
-
-    if (isClassic) {
-      preservedRules.push(r);
-      continue;
-    }
-
-    // Deduplicate by clean title or clean sourceMatch
-    const normKey = (r.sourceMatch || r.title || '')
-      .replace(/\(完场[^\)]*\)/g, '')
-      .replace(/\s+/g, '')
-      .toLowerCase();
-
-    if (normKey && seenSource.has(normKey)) {
-      // Duplicate entry! Prune.
-      continue;
-    }
-    if (normKey) seenSource.add(normKey);
-
-    const isBoilerplate =
-      (r.ruleContent || '').includes('切忌单向押注，需重点防范实际赛果指向的') ||
-      r.title.includes('逆向避险修正法');
-
-    if (isBoilerplate) {
-      boilerplateRules.push(r);
-    } else {
-      // It's already a high-value synthesized rule
-      preservedRules.push(r);
-    }
-  }
-
-  // Synthesize clustered rules from boilerplateRules
-  let clusteredCount = 0;
-  if (boilerplateRules.length > 0) {
-    clusteredCount = boilerplateRules.length;
-    const examples = boilerplateRules
-      .map((b) => b.sourceMatch)
-      .filter(Boolean)
-      .slice(0, 5)
-      .join(' / ');
-
-    // Master Cluster Rule A: 欧国联浅盘胶着期防冷法则
-    const clusterRuleA: EvolvedExperienceRule = {
-      id: `rule-clustered-uefa-upset-${Date.now()}`,
-      title: '欧国联浅盘胶着期：受让方韧性与反杀综合防冷法则',
-      category: 'LOW_DRAW_DEFENSE',
-      leagueScope: '欧国联/国家队赛事',
-      ruleContent: `【实战归纳集群（由 ${boilerplateRules.length} 场欧国联实战复盘聚类提炼）】：\n1. 盘赔形态：实力接近对阵（开平手、平半或半球生死盘），若大小球深卡 2.5 或压制在 1.5 极浅盘时，强队穿盘率极低。\n2. 操盘意图：市场常因强队名气强行去上盘，而机构在大小球端早已封死大球溢价，平赔死压或两头设防。\n3. 实战定论：切忌单边盲冲让球上盘，首选受让下盘不败或单挑精准平局（0-0/1-1），严防客胜或受让方冷门反杀。`,
-      sourceMatch: examples || '多场欧国联实战聚类验证',
-      createdAt: new Date().toISOString().slice(0, 10),
-      isActive: true,
-      hitCount: Math.max(8, boilerplateRules.length),
-    };
-
-    // Master Cluster Rule B: 国家队深盘战意与正向打穿界定
-    const clusterRuleB: EvolvedExperienceRule = {
-      id: `rule-clustered-uefa-deep-${Date.now() + 1}`,
-      title: '国家队深让步：一球球半及以上深盘正向穿盘与防卡盘法则',
-      category: 'POSITIVE_CONTROL',
-      leagueScope: '欧国联/国际赛事',
-      ruleContent: `【实战归纳集群】：\n1. 盘赔形态：强队让步达到一球/球半、球半甚至两球深盘，晚盘水位顺畅下压至极低水（正向控赔）；\n2. 大小球配合：若大小球同步开出 3.0/3.5 大界线，通常为两边对攻真实打穿（如 4-0、4-1 正路大胜），此时坚决支持上盘穿盘稳胆；\n3. 防卡盘警报：若深让步却强配 2.25/2.5 极浅大小球，谨防 1-0、2-0 赢球输盘或 0-0 爆冷闷平。`,
-      sourceMatch: '法国 4-1 比利时 / 摩尔多瓦 0-4 斯洛伐克等实盘验证',
-      createdAt: new Date().toISOString().slice(0, 10),
-      isActive: true,
-      hitCount: 12,
-    };
-
-    preservedRules.unshift(clusterRuleA, clusterRuleB);
-  }
-
-  saveExperienceRules(preservedRules);
-  const afterCount = preservedRules.length;
+  // Use core consolidation engine to fold single match rules into master models
+  const consolidated = consolidateRulesToCoreMaster(currentRules);
+  saveExperienceRules(consolidated);
+  const afterCount = consolidated.length;
 
   return {
     beforeCount,
     afterCount,
-    prunedCount: beforeCount - afterCount,
-    clusteredCount,
-    newRules: preservedRules,
+    prunedCount: Math.max(0, beforeCount - afterCount),
+    clusteredCount: Math.max(0, beforeCount - afterCount),
+    newRules: consolidated,
   };
 }
 

@@ -74,6 +74,7 @@ import {
   extractKickoffTime,
   extractDocumentGlobalDate,
   detectDominantSalesDate,
+  calibrateReviewSalesDate,
   SalesDateInfo,
   matchTeamsFuzzy,
 } from '../utils/salesDayUtils';
@@ -167,6 +168,14 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
   // Rule Health & Categorization States
   const [ruleCategoryFilter, setRuleCategoryFilter] = useState<'ALL' | 'CLASSIC' | 'SYNTHESIZED' | 'BOILERPLATE'>('ALL');
   const [healthNotification, setHealthNotification] = useState<string | null>(null);
+  const [isSyncingRules, setIsSyncingRules] = useState<boolean>(false);
+  const [isCalibratingDates, setIsCalibratingDates] = useState<boolean>(false);
+  const [syncResultModal, setSyncResultModal] = useState<{
+    totalProcessed: number;
+    addedCount: number;
+    updatedCount: number;
+    verifiedHitsCount: number;
+  } | null>(null);
 
   // Import Rules Modal States
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -453,42 +462,68 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
   // Calibrate sales dates for all existing reviews
   const handleCalibrateSalesDates = () => {
+    setIsCalibratingDates(true);
     let calibratedCount = 0;
-    const dominantDate = detectDominantSalesDate(queue) || undefined;
+    const dateGroupsSet = new Set<string>();
+
     const updatedReviews = reviews.map((rev) => {
-      const kickoff = rev.kickoffTime || rev.matchData?.matchInfo?.matchTime || '临场';
-      const updatedInfo = calculateSalesDate(kickoff, rev.reviewTimestamp, dominantDate);
-      if (rev.salesDate !== updatedInfo.salesDate) {
+      // 深度提取原始比赛开赛时间，独立计算各自所属的真实销售日（绝不全局强制绑定同一天！）
+      const calibrated = calibrateReviewSalesDate(rev);
+      if (calibrated.salesDate !== rev.salesDate) {
         calibratedCount++;
-        return {
-          ...rev,
-          salesDate: updatedInfo.salesDate,
-          salesDateLabel: updatedInfo.salesDateLabel,
-          salesCycleText: updatedInfo.salesCycleText,
-          kickoffTime: updatedInfo.kickoffTimeFormatted,
-        };
       }
-      return rev;
+      if (calibrated.salesDate) {
+        dateGroupsSet.add(calibrated.salesDate);
+      }
+      return calibrated;
     });
 
-    if (calibratedCount > 0) {
-      updatedReviews.forEach((r) => savePostMatchReview(r));
-      setReviews(getPostMatchReviews());
-      setHealthNotification(`✅ 已智能校准 ${calibratedCount} 场比赛的销售日归属，跨天归类混乱已消除！`);
-    } else {
-      setHealthNotification('✅ 当前所有历史复盘战报的销售日归属均已精准对齐，无跳日异常！');
-    }
+    updatedReviews.forEach((r) => savePostMatchReview(r));
+    setReviews(getPostMatchReviews());
+    setIsCalibratingDates(false);
+
+    setHealthNotification(
+      `✅ 销售日智能校准恢复完成！已严格按各场真实开赛时间与竞彩11:00法则划分为 ${dateGroupsSet.size} 个独立销售日周期（共涉及 ${updatedReviews.length} 场历史战报，校准修复 ${calibratedCount} 场）！`
+    );
   };
 
   // Retroactively sync reviews to core rules library (查漏补缺)
   const handleRetroactiveSyncRules = (targetReviews?: PostMatchReview[]) => {
-    const res = syncAndPromoteReviewsToCoreRules(targetReviews);
-    setRules(getExperienceRules());
-    setReviews(getPostMatchReviews());
+    setIsSyncingRules(true);
 
-    setHealthNotification(
-      `🎉 查漏补缺完成！共扫描 ${res.totalProcessed} 场历史战报：新增提炼收录 ${res.addedCount} 条核心法则，强化合并 ${res.updatedCount} 条已有法则，累计沉淀实战印证 ${res.verifiedHitsCount} 次！`
-    );
+    // 整合持久层、内存与队列中的所有复盘战报，确保一场不漏
+    const allStoredReviews = getPostMatchReviews();
+    const queueReviews = (queue || []).filter((q) => q.review).map((q) => q.review as PostMatchReview);
+
+    const mergedMap = new Map<string, PostMatchReview>();
+    [...allStoredReviews, ...reviews, ...queueReviews].forEach((r) => {
+      if (r && r.id) mergedMap.set(r.id, r);
+    });
+
+    const reviewsToProcess = targetReviews && targetReviews.length > 0 
+      ? targetReviews 
+      : Array.from(mergedMap.values());
+
+    if (reviewsToProcess.length === 0) {
+      setIsSyncingRules(false);
+      setHealthNotification('⚠️ 当前暂无可查漏补缺的复盘战报记录。请先在「录入完场比分复盘」中导入或录入完场比分！');
+      return;
+    }
+
+    try {
+      const res = syncAndPromoteReviewsToCoreRules(reviewsToProcess);
+      setRules(getExperienceRules());
+      setReviews(getPostMatchReviews());
+      setSyncResultModal(res);
+      setHealthNotification(
+        `🎉 查漏补缺完成！共扫描 ${res.totalProcessed} 场历史战报：新增提炼收录 ${res.addedCount} 条核心法则，强化合并 ${res.updatedCount} 条已有法则，累计沉淀实战印证 ${res.verifiedHitsCount} 次！`
+      );
+    } catch (err) {
+      console.error('Retroactive sync error:', err);
+      setHealthNotification('❌ 查漏补缺处理失败，请重试');
+    } finally {
+      setIsSyncingRules(false);
+    }
   };
 
   useEffect(() => {
@@ -781,7 +816,11 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           targetReport = generateActuarialRuleReport(targetMatch);
         }
 
-        // Evaluate deterministically with preferred sales date & timestamp
+        // Evaluate deterministically: if match has its own explicit date, use it; only use batchSalesDate if time-only or absent
+        const matchTimeStr = targetMatch.matchInfo?.matchTime || '';
+        const hasOwnExplicitDate = /(?:20\d{2}[-/.]|\d{1,2}[-/.])\d{1,2}/.test(matchTimeStr);
+        const effectivePreferredDate = hasOwnExplicitDate ? undefined : batchSalesDate;
+
         const queueTimestamp = queueIdx >= 0 ? updatedQueue[queueIdx].timestamp : Date.now();
         const review = evaluateMatchOutcomeAndExtractLesson(
           targetMatch,
@@ -790,7 +829,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           item.awayScore,
           item.incidents || '批量赛果智能归因',
           batchSyncToCoreRules, // 是否沉淀进《财富经》核心法则库
-          batchSalesDate,       // 强制锚定批次销售日，彻底根除跨天跳动
+          effectivePreferredDate, // 仅在缺少明确日期时锚定批次销售日，保留多天赛事的真实独立归属
           queueTimestamp        // 后备时间戳使用队列创建/导入时间戳
         );
 
@@ -799,25 +838,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         }
         totalExecuted++;
 
-        // If user requested sync to core rules, ensure it is added/updated in the core law database
-        if (batchSyncToCoreRules) {
-          const safeHome = (targetMatch.matchInfo.homeTeam || 'Home').replace(/\s+/g, '_');
-          const safeAway = (targetMatch.matchInfo.awayTeam || 'Away').replace(/\s+/g, '_');
-          const ruleCategory = targetReport.identifiedModel || 'GENERAL';
-          const ruleTitle = review.evolvedRuleTitle || `【${targetMatch.matchInfo.homeTeam}实战复盘法则】`;
-          const ruleContent = review.evolvedRuleContent || review.dissectionText || '实战复盘验证法则';
-
-          addOrUpdateExperienceRule({
-            id: `rule-${safeHome}-${safeAway}-${ruleCategory}`,
-            title: ruleTitle,
-            category: ruleCategory,
-            leagueScope: targetMatch.matchInfo.league || '常规联赛',
-            ruleContent: ruleContent,
-            sourceMatch: `${targetMatch.matchInfo.homeTeam} vs ${targetMatch.matchInfo.awayTeam} (完场: ${item.homeScore}-${item.awayScore})`,
-            createdAt: new Date().toISOString().slice(0, 10),
-            isActive: true,
-            hitCount: review.outcomeEvaluation.modelVerified ? 1 : 0,
-          });
+        if (batchSyncToCoreRules && review.outcomeEvaluation.modelVerified) {
           rulesEvolvedCount++;
         }
 
@@ -1278,6 +1299,110 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           <span>📊 历史复盘战报 ({reviews.length})</span>
         </button>
       </div>
+
+      {/* Global Health Notification / Feedback Banner across all tabs */}
+      {healthNotification && (
+        <div className="p-3.5 bg-emerald-500/15 border border-emerald-500/40 rounded-xl text-xs text-emerald-300 font-semibold flex items-center justify-between gap-3 shadow-lg animate-in fade-in">
+          <div className="flex items-center gap-2.5">
+            <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>{healthNotification}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {activeSubTab !== 'rules' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveSubTab('rules');
+                  setHealthNotification(null);
+                }}
+                className="text-[11px] font-bold text-slate-950 bg-emerald-400 hover:bg-emerald-300 px-2.5 py-1 rounded cursor-pointer transition-colors"
+              >
+                查看核心法则库 ➔
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setHealthNotification(null)}
+              className="text-emerald-400 hover:text-white text-xs px-2 py-0.5 cursor-pointer"
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Sync Result Modal Dialog */}
+      {syncResultModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border-2 border-emerald-500/50 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95">
+            <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-white">
+                  《财富经》核心法则库 · 查漏补缺沉淀成功
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  已完成历史战报扫描、规则去重合并与实战印证命中累加
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5 py-1 font-mono text-xs">
+              <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                <div className="text-[10px] text-slate-400">扫描历史战报</div>
+                <div className="text-base font-black text-white mt-0.5">
+                  {syncResultModal.totalProcessed} 场
+                </div>
+              </div>
+              <div className="bg-slate-950 p-3 rounded-lg border border-emerald-500/30">
+                <div className="text-[10px] text-slate-400">补齐新增法则</div>
+                <div className="text-base font-black text-emerald-400 mt-0.5">
+                  +{syncResultModal.addedCount} 条
+                </div>
+              </div>
+              <div className="bg-slate-950 p-3 rounded-lg border border-cyan-500/30">
+                <div className="text-[10px] text-slate-400">强化已有法则</div>
+                <div className="text-base font-black text-cyan-400 mt-0.5">
+                  {syncResultModal.updatedCount} 条
+                </div>
+              </div>
+              <div className="bg-slate-950 p-3 rounded-lg border border-amber-500/30">
+                <div className="text-[10px] text-slate-400">累加实战印证 (hitCount)</div>
+                <div className="text-base font-black text-amber-400 mt-0.5">
+                  {syncResultModal.verifiedHitsCount} 次
+                </div>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/60 p-3 rounded-lg border border-slate-800/80">
+              💡 查漏补缺引擎已确保同类型或同对阵法则自动合并，绝不产生同质化冗余条目；所有验证命中的盘口均已累加提升其在后续赛前测谎中的决策置信权重！
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setSyncResultModal(null)}
+                className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold text-xs cursor-pointer transition-colors"
+              >
+                我知道了
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSyncResultModal(null);
+                  setActiveSubTab('rules');
+                }}
+                className="px-5 py-2 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/20 cursor-pointer flex items-center gap-1.5 transition-all"
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>立即查看核心法则库 ➔</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ===================== SUBTAB 1: POST-MATCH REVIEW WORKFLOW ===================== */}
       {activeSubTab === 'review' && (
@@ -2688,22 +2813,42 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                 <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap">
                   <button
                     type="button"
+                    disabled={isSyncingRules}
                     onClick={() => handleRetroactiveSyncRules()}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 text-xs font-bold transition-all shadow-sm cursor-pointer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 text-xs font-bold transition-all shadow-sm cursor-pointer disabled:opacity-50"
                     title="全量扫描已复盘历史战报，查漏补缺沉淀进核心法则库，并自动累加盘口验证命中次数"
                   >
-                    <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>查漏补缺沉淀核心库</span>
+                    {isSyncingRules ? (
+                      <>
+                        <div className="w-3.5 h-3.5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+                        <span>正在查漏补缺...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>查漏补缺沉淀核心库</span>
+                      </>
+                    )}
                   </button>
 
                   <button
                     type="button"
+                    disabled={isCalibratingDates}
                     onClick={handleCalibrateSalesDates}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-bold transition-colors cursor-pointer"
-                    title="重新依据开赛时间与竞彩11:00销售日法则智能对齐归正所有历史复盘，消除跨天误分"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
+                    title="重新依据真实开赛时间与竞彩11:00销售日法则智能对齐归正所有历史复盘，消除跨天误分"
                   >
-                    <RotateCcw className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>销售日智能校准</span>
+                    {isCalibratingDates ? (
+                      <>
+                        <div className="w-3.5 h-3.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                        <span>正在智能校准...</span>
+                      </>
+                    ) : (
+                      <>
+                        <RotateCcw className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>销售日智能校准</span>
+                      </>
+                    )}
                   </button>
 
                   <button
