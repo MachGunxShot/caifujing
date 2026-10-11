@@ -99,86 +99,110 @@ export const SEED_RULES: EvolvedExperienceRule[] = [
 ];
 
 /**
+ * Map any category, title, or content to the corresponding Master Core Rule ID
+ */
+export function getTargetMasterRuleId(
+  category?: string,
+  title?: string,
+  content?: string
+): string {
+  const text = `${category || ''} ${title || ''} ${content || ''}`.toUpperCase();
+  if (text.includes('GOALS') || text.includes('大小球') || text.includes('测谎') || text.includes('DETECTOR')) {
+    return 'rule-goals-detector-1';
+  }
+  if (text.includes('HIGH_INTEREST_TRAP') || text.includes('高息') || text.includes('吸筹') || text.includes('杀猪') || text.includes('诱导') || text.includes('名气') || text.includes('逆向') || text.includes('爆冷')) {
+    return 'rule-model-HIGH_INTEREST_TRAP';
+  }
+  if (text.includes('AVALANCHE_RETREAT') || text.includes('雪崩') || text.includes('退盘') || text.includes('退热') || text.includes('示弱') || text.includes('利空') || text.includes('跟退')) {
+    return 'rule-model-AVALANCHE_RETREAT';
+  }
+  if (text.includes('LOW_DRAW_DEFENSE') || text.includes('平赔') || text.includes('低洼') || text.includes('排雷') || text.includes('防平') || text.includes('双平') || text.includes('平局')) {
+    return 'rule-model-LOW_DRAW_DEFENSE';
+  }
+  if (text.includes('SHALLOW_FULL_WATER') || text.includes('浅盘') || text.includes('满水') || text.includes('死亡') || text.includes('虚化')) {
+    return 'rule-model-SHALLOW_FULL_WATER';
+  }
+  if (text.includes('POSITIVE_CONTROL') || text.includes('榨水') || text.includes('正向控赔') || text.includes('正路') || text.includes('稳胆') || text.includes('实力穿盘') || text.includes('经济型赢盘')) {
+    return 'rule-model-POSITIVE_CONTROL';
+  }
+  if (text.includes('心法') || text.includes('PHILOSOPHY') || text.includes('GENERAL')) {
+    return 'rule-philosophy-core';
+  }
+  return 'rule-model-POSITIVE_CONTROL';
+}
+
+/**
  * 核心去重与聚类合并引擎：
  * 将零散单场复盘（如 rule-Home-Away-Model、60场碎片比赛）深度聚类合并回《财富经》核心模型法则，
  * 累计实战印证命中次数 (hitCount)，将碎片赛果收敛为权威核心通则，绝不臃肿泛滥成几十条单场记录！
  */
 export function consolidateRulesToCoreMaster(rules: EvolvedExperienceRule[]): EvolvedExperienceRule[] {
-  // 1. Build map of Master Core Rules seeded with standard models
+  // 1. Build authoritative map of Master Core Rules keyed by their immutable Rule IDs
   const masterRulesMap = new Map<string, EvolvedExperienceRule>();
   for (const sr of SEED_RULES) {
-    masterRulesMap.set(sr.category, { ...sr });
+    masterRulesMap.set(sr.id, { ...sr });
   }
 
-  // 2. Identify custom user rules vs single-match bloated rules
-  const customRules: EvolvedExperienceRule[] = [];
+  // 2. Identify manual custom rules created by user
+  const userManualRules: EvolvedExperienceRule[] = [];
 
   for (const r of rules) {
-    // Check if it's already one of the official master rules
-    if (r.id.startsWith('rule-model-') || r.id === 'rule-goals-detector-1' || r.id === 'rule-philosophy-core') {
-      const existing = masterRulesMap.get(r.category);
-      if (existing) {
-        masterRulesMap.set(r.category, {
-          ...existing,
-          hitCount: Math.max(existing.hitCount || 0, r.hitCount || 0),
-          isActive: r.isActive ?? existing.isActive,
-        });
-      } else {
-        masterRulesMap.set(r.category, { ...r });
+    if (!r) continue;
+
+    // A. Check if it's already one of the official master core rules
+    if (masterRulesMap.has(r.id)) {
+      const existing = masterRulesMap.get(r.id)!;
+      masterRulesMap.set(r.id, {
+        ...existing,
+        hitCount: Math.max(existing.hitCount || 0, r.hitCount || 0),
+        isActive: r.isActive ?? existing.isActive,
+      });
+      continue;
+    }
+
+    // B. Check if it's an explicit manual custom rule (created via user "+ 追加经验" modal)
+    if (r.id.startsWith('manual-')) {
+      const isDuplicate = userManualRules.some(
+        (mr) => mr.id === r.id || (mr.title === r.title && mr.ruleContent === r.ruleContent)
+      );
+      if (!isDuplicate) {
+        userManualRules.push(r);
       }
       continue;
     }
 
-    // Check if it's an auto-generated single-match fragmented rule
-    const isSingleMatch =
-      r.id.startsWith('rule-seed-') ||
-      /^rule-[^-]+-[^-]+-[A-Z_]+$/.test(r.id) ||
-      r.id.startsWith('rule-import-') ||
-      r.sourceMatch?.includes('完场') ||
-      r.sourceMatch?.includes('vs') ||
-      r.title.includes('实战复盘法则') ||
-      r.title.includes('实战盘口法则') ||
-      r.title.includes('【主胜】冷门反杀') ||
-      r.title.includes('【客胜】冷门反杀') ||
-      r.title.includes('逆向避险修正法') ||
-      r.title.includes('实力穿盘验证法') ||
-      r.title.includes('小胜经济型赢盘') ||
-      r.title.includes('深盘实力穿盘');
+    // C. All other rules (single match reviews, batch auto-rules, legacy seeds, etc.)
+    // MUST BE CONSOLIDATED INTO THE 7 MASTER CORE RULES!
+    const targetMasterId = getTargetMasterRuleId(r.category, r.title, r.ruleContent);
+    const master = masterRulesMap.get(targetMasterId) || masterRulesMap.get('rule-model-POSITIVE_CONTROL')!;
 
-    if (isSingleMatch) {
-      const cat = r.category || 'GENERAL';
-      const master = masterRulesMap.get(cat) || masterRulesMap.get('GENERAL') || masterRulesMap.get('POSITIVE_CONTROL');
-      if (master) {
-        // Accumulate hitCount
-        master.hitCount = (master.hitCount || 0) + (r.hitCount || 1);
+    // Accumulate hitCount
+    if ((r.hitCount || 0) > 0) {
+      master.hitCount = (master.hitCount || 0) + (r.hitCount || 1);
+    }
 
-        // Append clean source match to real verified battle cases
-        if (r.sourceMatch) {
-          const matchClean = r.sourceMatch.replace(/\(完场[^\)]*\)/g, '').trim();
-          if (matchClean && !master.sourceMatch?.includes(matchClean)) {
-            const parts = (master.sourceMatch || '').split(' / ').map((p) => p.trim()).filter(Boolean);
-            if (parts.length < 8 && !parts.some((p) => p.includes(matchClean))) {
-              parts.push(matchClean);
-              master.sourceMatch = parts.join(' / ');
-            }
-          }
+    // Append clean source match to real verified battle cases
+    const rawMatchText = r.sourceMatch || (r.title.includes('【') ? r.title : '');
+    if (rawMatchText) {
+      const matchClean = rawMatchText
+        .replace(/【|】/g, '')
+        .replace(/\(完场[^\)]*\)/g, '')
+        .replace(/\(实盘验证\)/g, '')
+        .replace(/\(实战验证\)/g, '')
+        .trim();
+      if (matchClean) {
+        const parts = (master.sourceMatch || '').split(' / ').map((p) => p.trim()).filter(Boolean);
+        if (!parts.some((p) => p.includes(matchClean) || matchClean.includes(p))) {
+          if (parts.length >= 8) parts.shift();
+          parts.push(matchClean);
+          master.sourceMatch = parts.join(' / ');
         }
       }
-    } else {
-      // Keep real custom rules or classic hand-crafted rules
-      customRules.push(r);
     }
   }
 
-  // Combine consolidated master rules + genuine custom rules
-  const consolidated = Array.from(masterRulesMap.values());
-  for (const cr of customRules) {
-    if (!consolidated.some((m) => m.id === cr.id || m.title === cr.title)) {
-      consolidated.push(cr);
-    }
-  }
-
-  return consolidated;
+  // Combine consolidated master rules + user manual rules
+  return [...Array.from(masterRulesMap.values()), ...userManualRules];
 }
 
 /**
@@ -186,6 +210,9 @@ export function consolidateRulesToCoreMaster(rules: EvolvedExperienceRule[]): Ev
  */
 export function getExperienceRules(): EvolvedExperienceRule[] {
   try {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+      return SEED_RULES;
+    }
     const raw = localStorage.getItem(RULES_STORAGE_KEY);
     if (!raw) {
       localStorage.setItem(RULES_STORAGE_KEY, JSON.stringify(SEED_RULES));
@@ -193,42 +220,23 @@ export function getExperienceRules(): EvolvedExperienceRule[] {
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      // Check if rules contain bloated single-match entries (e.g. 60 raw matches from batch review)
-      const hasBloatedSingleMatch = parsed.some(
-        (r) =>
-          r &&
-          r.id &&
-          (r.id.startsWith('rule-seed-') ||
-            /^rule-[^-]+-[^-]+-[A-Z_]+$/.test(r.id) ||
-            r.id.startsWith('rule-import-') ||
-            r.sourceMatch?.includes('完场') ||
-            r.title?.includes('实战复盘法则') ||
-            r.title?.includes('实战盘口法则'))
-      );
-
-      if (hasBloatedSingleMatch || parsed.length > 15) {
-        // Automatically consolidate bloated single-match rules back into core master rules!
-        const consolidated = consolidateRulesToCoreMaster(parsed);
+      // Always guarantee consolidation so rules are clean and never bloated into 60 matches
+      const consolidated = consolidateRulesToCoreMaster(parsed);
+      if (
+        consolidated.length !== parsed.length ||
+        parsed.some(
+          (p) =>
+            p &&
+            p.id &&
+            !p.id.startsWith('rule-model-') &&
+            !p.id.startsWith('manual-') &&
+            p.id !== 'rule-goals-detector-1' &&
+            p.id !== 'rule-philosophy-core'
+        )
+      ) {
         saveExperienceRules(consolidated);
-        return consolidated;
       }
-
-      // Auto-deduplicate by normalized title or source match + category
-      const seen = new Set<string>();
-      const deduplicated: EvolvedExperienceRule[] = [];
-      for (const r of parsed) {
-        const cleanTitle = (r.title || '').replace(/\s+/g, '').trim();
-        const cleanSource = (r.sourceMatch || '').replace(/\s+/g, '').trim();
-        const key = cleanTitle || `${cleanSource}_${r.category}`;
-        if (key && !seen.has(key)) {
-          seen.add(key);
-          deduplicated.push(r);
-        }
-      }
-      if (deduplicated.length !== parsed.length) {
-        saveExperienceRules(deduplicated);
-      }
-      return deduplicated;
+      return consolidated;
     }
     return SEED_RULES;
   } catch (e) {
@@ -242,6 +250,7 @@ export function getExperienceRules(): EvolvedExperienceRule[] {
  */
 export function saveExperienceRules(rules: EvolvedExperienceRule[]): void {
   try {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
     localStorage.setItem(RULES_STORAGE_KEY, JSON.stringify(rules));
   } catch (e) {
     console.error('Error saving experience rules:', e);
@@ -254,19 +263,11 @@ export function saveExperienceRules(rules: EvolvedExperienceRule[]): void {
 export function addOrUpdateExperienceRule(rule: EvolvedExperienceRule): void {
   const rules = getExperienceRules();
 
-  // If rule is an individual match review (or auto-generated single-case), merge it into the Master Core Rule!
-  const isSingleMatch =
-    /^rule-[^-]+-[^-]+-[A-Z_]+$/.test(rule.id) ||
-    rule.id.startsWith('rule-import-') ||
-    rule.sourceMatch?.includes('完场') ||
-    rule.title.includes('实战复盘法则') ||
-    rule.title.includes('实战盘口法则') ||
-    rule.title.includes('实力穿盘验证法') ||
-    rule.title.includes('逆向避险修正法');
-
-  if (isSingleMatch) {
-    const cat = rule.category || 'GENERAL';
-    const master = rules.find((r) => r.category === cat) || rules.find((r) => r.category === 'GENERAL') || rules[0];
+  // If rule is not an explicit user manual rule (i.e. It's an auto-generated match lesson),
+  // directly consolidate into Master Core Rules!
+  if (!rule.id.startsWith('manual-')) {
+    const targetMasterId = getTargetMasterRuleId(rule.category, rule.title, rule.ruleContent);
+    const master = rules.find((r) => r.id === targetMasterId) || rules[0];
     if (master) {
       if ((rule.hitCount || 0) > 0) {
         master.hitCount = (master.hitCount || 0) + (rule.hitCount || 1);
@@ -274,7 +275,7 @@ export function addOrUpdateExperienceRule(rule: EvolvedExperienceRule): void {
       if (rule.sourceMatch) {
         const cleanMatch = rule.sourceMatch.replace(/\(完场[^\)]*\)/g, '').trim();
         const parts = (master.sourceMatch || '').split(' / ').map((p) => p.trim()).filter(Boolean);
-        if (cleanMatch && !parts.some((p) => p.includes(cleanMatch))) {
+        if (cleanMatch && !parts.some((p) => p.includes(cleanMatch) || cleanMatch.includes(p))) {
           if (parts.length >= 8) parts.shift();
           parts.push(cleanMatch);
           master.sourceMatch = parts.join(' / ');
@@ -285,20 +286,12 @@ export function addOrUpdateExperienceRule(rule: EvolvedExperienceRule): void {
     }
   }
 
-  const cleanTitle = (rule.title || '').replace(/\s+/g, '').trim();
-  const cleanSource = (rule.sourceMatch || '').replace(/\s+/g, '').trim();
-
-  const existingIdx = rules.findIndex((r) => {
-    if (r.id === rule.id) return true;
-    const rTitle = (r.title || '').replace(/\s+/g, '').trim();
-    if (rTitle && cleanTitle && rTitle === cleanTitle) return true;
-    const rSource = (r.sourceMatch || '').replace(/\s+/g, '').trim();
-    if (rSource && cleanSource && rSource === cleanSource && r.category === rule.category) return true;
-    return false;
-  });
+  // Handle explicit manual rules
+  const existingIdx = rules.findIndex(
+    (r) => r.id === rule.id || (r.title === rule.title && r.category === rule.category)
+  );
 
   if (existingIdx >= 0) {
-    // Update existing rule in-place, preserve user's active state and increment hitCount
     rules[existingIdx] = {
       ...rules[existingIdx],
       ...rule,
@@ -307,7 +300,7 @@ export function addOrUpdateExperienceRule(rule: EvolvedExperienceRule): void {
       isActive: rules[existingIdx].isActive ?? true,
     };
   } else {
-    rules.unshift(rule);
+    rules.push(rule);
   }
   saveExperienceRules(rules);
 }
@@ -333,14 +326,12 @@ export function syncAndPromoteReviewsToCoreRules(targetReviews?: PostMatchReview
   const reviewsToProcess = targetReviews || getPostMatchReviews();
   const rules = getExperienceRules(); // Already auto-consolidated into Master Core Rules
 
-  let addedCount = 0;
   let updatedCount = 0;
   let verifiedHitsCount = 0;
 
   for (const rev of reviewsToProcess) {
     const homeTeam = rev.matchData?.matchInfo?.homeTeam || '主队';
     const awayTeam = rev.matchData?.matchInfo?.awayTeam || '客队';
-    const league = rev.matchData?.matchInfo?.league || '全部联赛';
     const category = rev.ruleCategory || rev.priorReport?.identifiedModel || 'GENERAL';
 
     const isVerified =
@@ -348,10 +339,8 @@ export function syncAndPromoteReviewsToCoreRules(targetReviews?: PostMatchReview
       (!!rev.outcomeEvaluation?.euroHit && !!rev.outcomeEvaluation?.handicapHit);
 
     // 寻找对应操盘模型的《财富经》核心法则
-    let master = rules.find((r) => r.category === category);
-    if (!master) {
-      master = rules.find((r) => r.category === 'GENERAL') || rules[0];
-    }
+    const targetMasterId = getTargetMasterRuleId(category, rev.evolvedRuleTitle, rev.evolvedRuleContent);
+    const master = rules.find((r) => r.id === targetMasterId) || rules[0];
 
     if (master) {
       updatedCount++;
@@ -368,28 +357,13 @@ export function syncAndPromoteReviewsToCoreRules(targetReviews?: PostMatchReview
         parts.push(matchText);
         master.sourceMatch = parts.join(' / ');
       }
-    } else {
-      // 只有完全不存在核心模型时才新增
-      rules.push({
-        id: `rule-model-${category}`,
-        title: `【${category}】实战风控法则`,
-        category,
-        leagueScope: league,
-        ruleContent: rev.evolvedRuleContent || rev.dissectionText || '实战复盘提炼法则',
-        sourceMatch: `${homeTeam} vs ${awayTeam}`,
-        createdAt: new Date().toISOString().slice(0, 10),
-        isActive: true,
-        hitCount: isVerified ? 1 : 0,
-      });
-      addedCount++;
-      if (isVerified) verifiedHitsCount++;
     }
   }
 
   saveExperienceRules(rules);
 
   return {
-    addedCount,
+    addedCount: 0,
     updatedCount,
     verifiedHitsCount,
     totalProcessed: reviewsToProcess.length,
@@ -414,6 +388,11 @@ export interface RulesHealthAudit {
 export function auditRulesHealth(customRules?: EvolvedExperienceRule[]): RulesHealthAudit {
   const rules = customRules || getExperienceRules();
   const classicIds = new Set([
+    'rule-model-POSITIVE_CONTROL',
+    'rule-model-HIGH_INTEREST_TRAP',
+    'rule-model-AVALANCHE_RETREAT',
+    'rule-model-LOW_DRAW_DEFENSE',
+    'rule-model-SHALLOW_FULL_WATER',
     'rule-philosophy-core',
     'rule-goals-detector-1',
     'rule-classic-R1',
@@ -436,6 +415,7 @@ export function auditRulesHealth(customRules?: EvolvedExperienceRule[]): RulesHe
   for (const r of rules) {
     const isClassic =
       classicIds.has(r.id) ||
+      r.id.startsWith('rule-model-') ||
       r.id.startsWith('rule-classic-') ||
       r.id.startsWith('rule-seed-') ||
       r.id === 'rule-philosophy-core' ||
@@ -524,11 +504,17 @@ export function pruneAndClusterExperienceRules(): {
   clusteredCount: number;
   newRules: EvolvedExperienceRule[];
 } {
-  const currentRules = getExperienceRules();
-  const beforeCount = currentRules.length;
+  let rawRules: EvolvedExperienceRule[] = [];
+  try {
+    const raw = localStorage.getItem(RULES_STORAGE_KEY);
+    if (raw) rawRules = JSON.parse(raw);
+  } catch (e) {
+    rawRules = [];
+  }
+  const beforeCount = Math.max(rawRules.length, getExperienceRules().length);
 
   // Use core consolidation engine to fold single match rules into master models
-  const consolidated = consolidateRulesToCoreMaster(currentRules);
+  const consolidated = consolidateRulesToCoreMaster(rawRules.length > 0 ? rawRules : getExperienceRules());
   saveExperienceRules(consolidated);
   const afterCount = consolidated.length;
 
@@ -550,6 +536,11 @@ export function pruneZeroHitRules(): {
 } {
   const currentRules = getExperienceRules();
   const classicIds = new Set([
+    'rule-model-POSITIVE_CONTROL',
+    'rule-model-HIGH_INTEREST_TRAP',
+    'rule-model-AVALANCHE_RETREAT',
+    'rule-model-LOW_DRAW_DEFENSE',
+    'rule-model-SHALLOW_FULL_WATER',
     'rule-philosophy-core',
     'rule-goals-detector-1',
     'rule-classic-R1',
@@ -566,6 +557,7 @@ export function pruneZeroHitRules(): {
   const preserved = currentRules.filter((r) => {
     if (
       classicIds.has(r.id) ||
+      r.id.startsWith('rule-model-') ||
       r.id.startsWith('rule-classic-') ||
       r.id.startsWith('rule-seed-') ||
       r.id === 'rule-philosophy-core' ||

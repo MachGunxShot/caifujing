@@ -467,8 +467,29 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     const dateGroupsSet = new Set<string>();
 
     const updatedReviews = reviews.map((rev) => {
-      // 深度提取原始比赛开赛时间，独立计算各自所属的真实销售日（绝不全局强制绑定同一天！）
-      const calibrated = calibrateReviewSalesDate(rev);
+      // 深度反查队列中的原始开赛时间（如 周六 20:30、周日 03:00、周一 04:00 等）
+      const qItem = queue.find(
+        (q) =>
+          q.id === rev.id ||
+          (matchTeamsFuzzy(q.data?.matchInfo?.homeTeam, rev.matchData?.matchInfo?.homeTeam) &&
+            matchTeamsFuzzy(q.data?.matchInfo?.awayTeam, rev.matchData?.matchInfo?.awayTeam))
+      );
+      const queueTime = qItem?.data?.matchInfo?.matchTime;
+      const reviewToCalibrate =
+        queueTime && queueTime !== '临场' && queueTime !== '已完场'
+          ? {
+              ...rev,
+              matchData: {
+                ...rev.matchData,
+                matchInfo: {
+                  ...rev.matchData?.matchInfo,
+                  matchTime: queueTime,
+                },
+              },
+            }
+          : rev;
+
+      const calibrated = calibrateReviewSalesDate(reviewToCalibrate);
       if (calibrated.salesDate !== rev.salesDate) {
         calibratedCount++;
       }
@@ -482,8 +503,9 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     setReviews(getPostMatchReviews());
     setIsCalibratingDates(false);
 
+    const dateLabels = Array.from(dateGroupsSet).sort().join('、');
     setHealthNotification(
-      `✅ 销售日智能校准恢复完成！已严格按各场真实开赛时间与竞彩11:00法则划分为 ${dateGroupsSet.size} 个独立销售日周期（共涉及 ${updatedReviews.length} 场历史战报，校准修复 ${calibratedCount} 场）！`
+      `✅ 销售日智能校准恢复完成！已严格按各场真实开赛时间与竞彩11:00法则划分为 ${dateGroupsSet.size} 个独立销售日周期（涉及: ${dateLabels || '多日归档'}，共覆盖 ${updatedReviews.length} 场历史战报，校准修复 ${calibratedCount} 场）！`
     );
   };
 
@@ -512,11 +534,12 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
     try {
       const res = syncAndPromoteReviewsToCoreRules(reviewsToProcess);
-      setRules(getExperienceRules());
+      const cleanRules = getExperienceRules();
+      setRules(cleanRules);
       setReviews(getPostMatchReviews());
       setSyncResultModal(res);
       setHealthNotification(
-        `🎉 查漏补缺完成！共扫描 ${res.totalProcessed} 场历史战报：新增提炼收录 ${res.addedCount} 条核心法则，强化合并 ${res.updatedCount} 条已有法则，累计沉淀实战印证 ${res.verifiedHitsCount} 次！`
+        `🎉 查漏补缺沉淀完成！全量扫描 ${res.totalProcessed} 场历史战报：已调用去重与合并引擎收敛归入 ${cleanRules.length} 套核心法则通则，累计沉淀实战印证命中 ${res.verifiedHitsCount} 次！`
       );
     } catch (err) {
       console.error('Retroactive sync error:', err);
@@ -892,11 +915,14 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
       setRules(getExperienceRules());
       setReviews(getPostMatchReviews());
 
-      const batchSalesDateInfo = calculateSalesDate(undefined, undefined, batchSalesDate);
+      const currentReviews = getPostMatchReviews();
+      const distinctSalesDates = new Set(currentReviews.map(r => r.salesDate).filter(Boolean));
+      const cleanRules = getExperienceRules();
+
       setBatchReviewSummary(
-        `🎉 成功批量完成 ${totalExecuted} 场赛果深度复盘！全部场次精准锚定并归入【${batchSalesDateInfo.salesDateLabel} (${batchSalesDateInfo.salesCycleText})】！其中 ${newlyVerified} 场完全印证盘口风控${
+        `🎉 成功批量完成 ${totalExecuted} 场赛果深度复盘！已按真实开赛时间与竞彩销售日法则归档入库（共覆盖 ${distinctSalesDates.size} 个销售日周期）！其中 ${newlyVerified} 场完全印证盘口风控${
           batchSyncToCoreRules
-            ? `，已同步将 ${rulesEvolvedCount} 条实战提炼法则沉淀入《财富经》核心法则库！`
+            ? `，已全量调用去重合并引擎收敛沉淀入《财富经》核心法则库（累加实战印证命中并收纳最新样板，核心法则库保持 ${cleanRules.length} 套权威通则）！`
             : '（未勾选同步法则库，仅留存归档战报）'
         }`
       );
@@ -1082,9 +1108,10 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
   // Handle Prune & Cluster experience rules
   const handlePruneAndCluster = () => {
     const res = pruneAndClusterExperienceRules();
-    setRules([...res.newRules]);
+    const cleanRules = getExperienceRules();
+    setRules(cleanRules);
     setHealthNotification(
-      `✨ 智能聚类精炼完成！将 ${res.clusteredCount} 条碎片同质化个案聚类升华为 2 套高阶实战通则，并清除重复条目。法则总数由 ${res.beforeCount} 条优化收敛至 ${res.afterCount} 条！`
+      `✨ 智能聚类精炼完成！将 ${res.clusteredCount} 条碎片同质化个案收敛合并为 ${cleanRules.length} 套《财富经》核心法则通则，法则总数由 ${res.beforeCount} 条优化收敛至 ${cleanRules.length} 条！`
     );
     setTimeout(() => setHealthNotification(null), 8000);
   };
@@ -2330,6 +2357,17 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
             {/* Governance Action Buttons */}
             <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/80">
               <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  disabled={isSyncingRules}
+                  onClick={() => handleRetroactiveSyncRules()}
+                  className="px-3.5 py-1.5 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 font-bold text-xs rounded-lg shadow-sm flex items-center gap-1.5 cursor-pointer transition-all disabled:opacity-50"
+                  title="全量扫描已复盘历史战报，调用去重与合并引擎收敛进核心法则库，并累加实战印证命中次数"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>{isSyncingRules ? '正在查漏补缺...' : '🔄 查漏补缺 (全量复盘沉淀)'}</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={handlePruneAndCluster}

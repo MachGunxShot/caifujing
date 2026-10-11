@@ -338,7 +338,7 @@ export function calculateSalesDate(
 
   const timeStr = (kickoffTime || '').trim();
 
-  // 1. 深度解析开赛时间
+  // 1. 深度解析开赛时间（支持完整日期、月日、周几+时间、独立时间等全场景）
   let kickoffYear: number | null = null;
   let kickoffMonth: number | null = null;
   let kickoffDay: number | null = null;
@@ -356,46 +356,88 @@ export function calculateSalesDate(
     kickoffHour = fullMatch[4] !== undefined ? parseInt(fullMatch[4], 10) : 12;
     kickoffMinute = fullMatch[5] !== undefined ? parseInt(fullMatch[5], 10) : 0;
   } else {
-    // B. Check if it's MM-DD HH:mm
-    const mdMatch = timeStr.match(/(\d{1,2})[-/.](\d{1,2})\s+(\d{1,2}):(\d{2})/);
+    // B. Check if it's MM-DD HH:mm or M月D日 HH:mm
+    const mdMatch = timeStr.match(/(\d{1,2})[-/.月](\d{1,2})(?:日)?\s+(\d{1,2}):(\d{2})/);
     if (mdMatch) {
       hasExplicitDate = true;
-      const baseYear = fallbackTimestamp ? new Date(fallbackTimestamp).getFullYear() : now.getFullYear();
+      const baseYear = preferredSalesDate && /^\d{4}/.test(preferredSalesDate)
+        ? parseInt(preferredSalesDate.slice(0, 4), 10)
+        : fallbackTimestamp ? new Date(fallbackTimestamp).getFullYear() : now.getFullYear();
       kickoffYear = baseYear;
       kickoffMonth = parseInt(mdMatch[1], 10);
       kickoffDay = parseInt(mdMatch[2], 10);
       kickoffHour = parseInt(mdMatch[3], 10);
       kickoffMinute = parseInt(mdMatch[4], 10);
     } else {
-      // C. Check if it's lone HH:mm (e.g. "23:00" or "03:00")
-      const timeOnlyMatch = timeStr.match(/^(\d{1,2}):(\d{2})$/);
-      if (timeOnlyMatch) {
-        kickoffHour = parseInt(timeOnlyMatch[1], 10);
-        kickoffMinute = parseInt(timeOnlyMatch[2], 10);
+      // C. Check if it contains Chinese Weekday: 周一 ~ 周日 / 星期一 ~ 星期日 (e.g. "周六 20:30", "周日 03:00", "周一 04:00", "周六015 21:00")
+      const weekdayMatch = timeStr.match(/(?:周|星期)([一二三四五六日天])/);
+      if (weekdayMatch) {
+        hasExplicitDate = true;
+        const cnChar = weekdayMatch[1];
+        const weekdayMap: Record<string, number> = {
+          '日': 0, '天': 0, '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6,
+        };
+        const targetWeekday = weekdayMap[cnChar] ?? 0;
 
-        // 若提供了批次锚定销售日 preferredSalesDate，作为基准日
+        // Determine base anchor date
+        let baseDateObj = now;
         if (preferredSalesDate && /^\d{4}-\d{2}-\d{2}$/.test(preferredSalesDate)) {
           const [py, pm, pd] = preferredSalesDate.split('-').map(Number);
-          kickoffYear = py;
-          kickoffMonth = pm;
-          kickoffDay = pd;
-          // 若为次日凌晨 (00:00~10:59)，实际比赛开赛时间为次日日历天
-          if (kickoffHour < 11) {
-            const nextDay = new Date(new Date(py, pm - 1, pd).getTime() + 24 * 3600 * 1000);
-            kickoffYear = nextDay.getFullYear();
-            kickoffMonth = nextDay.getMonth() + 1;
-            kickoffDay = nextDay.getDate();
-          }
+          baseDateObj = new Date(py, pm - 1, pd, 12, 0, 0);
+        } else if (fallbackTimestamp) {
+          baseDateObj = new Date(fallbackTimestamp);
+        }
+
+        const baseWeekday = baseDateObj.getDay();
+        let diffDays = targetWeekday - baseWeekday;
+        if (diffDays > 3) diffDays -= 7;
+        if (diffDays < -3) diffDays += 7;
+
+        const targetDateObj = new Date(baseDateObj.getTime() + diffDays * 24 * 3600 * 1000);
+        kickoffYear = targetDateObj.getFullYear();
+        kickoffMonth = targetDateObj.getMonth() + 1;
+        kickoffDay = targetDateObj.getDate();
+
+        // Extract HH:mm from timeStr
+        const timePart = timeStr.match(/(\d{1,2}):(\d{2})/);
+        if (timePart) {
+          kickoffHour = parseInt(timePart[1], 10);
+          kickoffMinute = parseInt(timePart[2], 10);
         } else {
-          const base = fallbackTimestamp ? new Date(fallbackTimestamp) : now;
-          kickoffYear = base.getFullYear();
-          kickoffMonth = base.getMonth() + 1;
-          kickoffDay = base.getDate();
-          if (kickoffHour < 11) {
-            const nextCalendarDay = new Date(base.getTime() + 24 * 3600 * 1000);
-            kickoffYear = nextCalendarDay.getFullYear();
-            kickoffMonth = nextCalendarDay.getMonth() + 1;
-            kickoffDay = nextCalendarDay.getDate();
+          kickoffHour = 20; // 默认晚间比赛 (20:00，自然属于当天销售日)
+          kickoffMinute = 0;
+        }
+      } else {
+        // D. Check if it's lone HH:mm (e.g. "23:00" or "03:00")
+        const timeOnlyMatch = timeStr.match(/(?:^|\s)(\d{1,2}):(\d{2})(?:$|\s)/);
+        if (timeOnlyMatch) {
+          kickoffHour = parseInt(timeOnlyMatch[1], 10);
+          kickoffMinute = parseInt(timeOnlyMatch[2], 10);
+
+          // 若提供了批次锚定销售日 preferredSalesDate，作为基准日
+          if (preferredSalesDate && /^\d{4}-\d{2}-\d{2}$/.test(preferredSalesDate)) {
+            const [py, pm, pd] = preferredSalesDate.split('-').map(Number);
+            kickoffYear = py;
+            kickoffMonth = pm;
+            kickoffDay = pd;
+            // 若为次日凌晨 (00:00~10:59)，实际比赛开赛时间为次日日历天
+            if (kickoffHour < 11) {
+              const nextDay = new Date(new Date(py, pm - 1, pd).getTime() + 24 * 3600 * 1000);
+              kickoffYear = nextDay.getFullYear();
+              kickoffMonth = nextDay.getMonth() + 1;
+              kickoffDay = nextDay.getDate();
+            }
+          } else {
+            const base = fallbackTimestamp ? new Date(fallbackTimestamp) : now;
+            kickoffYear = base.getFullYear();
+            kickoffMonth = base.getMonth() + 1;
+            kickoffDay = base.getDate();
+            if (kickoffHour < 11) {
+              const nextCalendarDay = new Date(base.getTime() + 24 * 3600 * 1000);
+              kickoffYear = nextCalendarDay.getFullYear();
+              kickoffMonth = nextCalendarDay.getMonth() + 1;
+              kickoffDay = nextCalendarDay.getDate();
+            }
           }
         }
       }
@@ -429,7 +471,7 @@ export function calculateSalesDate(
   let salesDateDay = kickoffDay;
 
   if (kickoffHour < 11) {
-    // 早于 11:00 (即 00:00 ~ 10:59:59 期间开赛的比赛)，属于前一天开始的销售日！
+    // 早于 11:00 (即 00:00 ~ 10:59:59 期间开赛的比赛)，归属于前一个自然日启动的竞彩销售日！
     const prevDay = new Date(kickoffDateObj.getTime() - 24 * 3600 * 1000);
     salesDateYear = prevDay.getFullYear();
     salesDateMonth = prevDay.getMonth() + 1;
@@ -535,6 +577,7 @@ export function calibrateReviewSalesDate(
   const rawMatchTime = review.matchData?.matchInfo?.matchTime;
   const currentKickoff = review.kickoffTime;
   const story = review.matchData?.matchInfo?.marketStory || '';
+  const incidents = review.matchIncidents || '';
 
   let kickoffToUse = '临场';
   if (rawMatchTime && rawMatchTime !== '临场' && rawMatchTime !== '已完场') {
@@ -543,20 +586,23 @@ export function calibrateReviewSalesDate(
     kickoffToUse = currentKickoff;
   }
 
-  // 优先保留 review 已有的真实 salesDate 作为基准，避免因复盘时间戳漂移导致全场次跳跃
-  let effectivePreferred = anchorSalesDate || review.salesDate;
-
-  // 若文本中明文标有“周日”但当前被归为周六销售日，智能纠偏至周日
-  if (/周日/.test(story) || /周日/.test(rawMatchTime || '')) {
-    if (effectivePreferred && /^\d{4}-\d{2}-\d{2}$/.test(effectivePreferred)) {
-      const [y, m, d] = effectivePreferred.split('-').map(Number);
-      const dt = new Date(y, m - 1, d);
-      if (dt.getDay() === 6) { // 周六 -> 纠偏至周日
-        const sun = new Date(dt.getTime() + 24 * 3600 * 1000);
-        effectivePreferred = `${sun.getFullYear()}-${String(sun.getMonth() + 1).padStart(2, '0')}-${String(sun.getDate()).padStart(2, '0')}`;
-      }
+  // 若尚未提取到具体开赛时间，尝试从盘面描述、故事或事件中深度反查提取
+  if (kickoffToUse === '临场' || !/(?:周|星期|\d{1,2}:|\d{1,2}[-/.])/.test(kickoffToUse)) {
+    const extracted = extractKickoffTime(story, incidents);
+    if (extracted && extracted !== '临场') {
+      kickoffToUse = extracted;
     }
   }
+
+  // 检查故事或原始数据中是否携带明确星期（周五/周六/周日/周一等）
+  const textContext = `${rawMatchTime || ''} ${story} ${incidents}`;
+  const weekdayInText = textContext.match(/(?:周|星期)([一二三四五六日天])/);
+  if (weekdayInText && !kickoffToUse.includes('周') && !kickoffToUse.includes('星期')) {
+    kickoffToUse = `${weekdayInText[0]} ${kickoffToUse}`;
+  }
+
+  // 确定参考锚定日期
+  let effectivePreferred = anchorSalesDate || review.salesDate;
 
   const updatedInfo = calculateSalesDate(kickoffToUse, review.reviewTimestamp, effectivePreferred);
 
