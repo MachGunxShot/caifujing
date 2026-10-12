@@ -186,6 +186,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
   // Date Grouping and Filter States for Reviews
   const [selectedDateFilter, setSelectedDateFilter] = useState<string>('ALL');
   const [selectedStarFilter, setSelectedStarFilter] = useState<'ALL' | 5 | 4 | 3>('ALL');
+  const [dateGroupStarFilter, setDateGroupStarFilter] = useState<Record<string, 'ALL' | 5 | 4 | 3>>({});
   const [collapsedDateGroups, setCollapsedDateGroups] = useState<Record<string, boolean>>({});
   const [expandedDissections, setExpandedDissections] = useState<Record<string, boolean>>({});
 
@@ -311,6 +312,11 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           ouHits: number;
           scoreHits: number;
         };
+        starStats: {
+          tier5: { total: number; euroHits: number; handicapHits: number; ouHits: number; scoreHits: number };
+          tier4: { total: number; euroHits: number; handicapHits: number; ouHits: number; scoreHits: number };
+          tier3: { total: number; euroHits: number; handicapHits: number; ouHits: number; scoreHits: number };
+        };
       }
     >();
 
@@ -333,6 +339,11 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
             ouHits: 0,
             scoreHits: 0,
           },
+          starStats: {
+            tier5: { total: 0, euroHits: 0, handicapHits: 0, ouHits: 0, scoreHits: 0 },
+            tier4: { total: 0, euroHits: 0, handicapHits: 0, ouHits: 0, scoreHits: 0 },
+            tier3: { total: 0, euroHits: 0, handicapHits: 0, ouHits: 0, scoreHits: 0 },
+          },
         });
       }
 
@@ -343,6 +354,15 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
       if (rev.outcomeEvaluation.handicapHit) g.stats.handicapHits += 1;
       if (rev.outcomeEvaluation.overUnderHit) g.stats.ouHits += 1;
       if (rev.outcomeEvaluation.scoreHit) g.stats.scoreHits += 1;
+
+      // Accumulate star tier breakdown
+      const stars = rev.priorReport?.decision?.starRating || 3;
+      const targetTier = stars === 5 ? g.starStats.tier5 : stars === 4 ? g.starStats.tier4 : g.starStats.tier3;
+      targetTier.total += 1;
+      if (rev.outcomeEvaluation.euroHit) targetTier.euroHits += 1;
+      if (rev.outcomeEvaluation.handicapHit) targetTier.handicapHits += 1;
+      if (rev.outcomeEvaluation.overUnderHit) targetTier.ouHits += 1;
+      if (rev.outcomeEvaluation.scoreHit) targetTier.scoreHits += 1;
     }
 
     // Sort items within each group chronologically by match kickoff time
@@ -869,7 +889,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         }
 
         // Evaluate deterministically: 依各场真实开赛时间与竞彩销售日法则独立精算归属（方便分销售日对照验证）
-        const queueTimestamp = queueIdx >= 0 ? updatedQueue[queueIdx].timestamp : Date.now();
+        // 复盘时间戳严格记录用户实际点击执行复盘的时刻 (Date.now())，确保复盘时间精准真实
+        const reviewExecutionTimestamp = Date.now();
         const review = evaluateMatchOutcomeAndExtractLesson(
           targetMatch,
           targetReport,
@@ -878,7 +899,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           item.incidents || '批量赛果智能归因',
           batchSyncToCoreRules, // 是否沉淀进《财富经》核心法则库
           batchSalesDate,       // 作为周/月基准参考锚点，保留各场自身真实开赛时间的独立销售日归属
-          queueTimestamp        // 后备时间戳使用队列创建/导入时间戳
+          reviewExecutionTimestamp // 准确记录用户点击复盘的操作时间
         );
 
         if (review.outcomeEvaluation.modelVerified) {
@@ -1001,13 +1022,16 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         console.warn('AI review fallback:', err);
       }
 
-      // 2. Perform baseline evaluation
+      // 2. Perform baseline evaluation (复盘时间戳严格记录用户实际点击复盘的当前时刻 Date.now())
       const localReview = evaluateMatchOutcomeAndExtractLesson(
         activeReviewMatchData,
         activeReviewReport,
         actualHomeScore,
         actualAwayScore,
-        incidents
+        incidents,
+        false,
+        undefined,
+        Date.now()
       );
 
       // If AI dissection is available, enhance the review
@@ -3258,10 +3282,259 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                         {/* Match Review Cards under this Date Group */}
                         {!isCollapsed && (
                           <div className="p-3.5 space-y-3 bg-slate-900/50">
+                            {/* Per-Sales-Date Star Tier Breakdown & Quick Filter */}
+                            <div className="bg-slate-950/70 border border-slate-800/90 rounded-xl p-3 space-y-2.5">
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 border-b border-slate-800/60 pb-2">
+                                <div className="flex items-center gap-2">
+                                  <Star className="w-3.5 h-3.5 text-amber-400" />
+                                  <span className="text-xs font-black text-white">
+                                    【{group.dateLabel}】分档实现价值与星级筛选
+                                  </span>
+                                </div>
+                                <span className="text-[11px] text-slate-400 font-mono">
+                                  当日总场次: {group.items.length} 场
+                                </span>
+                              </div>
+
+                              {/* 3 Tier Summary Cards for this specific sales date */}
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                {/* Date Tier 5 Card */}
+                                {(() => {
+                                  const effectiveDateFilter = dateGroupStarFilter[group.dateKey] || selectedStarFilter;
+                                  const t5 = group.starStats.tier5;
+                                  const euroRate = t5.total > 0 ? Math.round((t5.euroHits / t5.total) * 100) : 0;
+                                  const hdcRate = t5.total > 0 ? Math.round((t5.handicapHits / t5.total) * 100) : 0;
+                                  const ouRate = t5.total > 0 ? Math.round((t5.ouHits / t5.total) * 100) : 0;
+                                  const isSelected = effectiveDateFilter === 5;
+
+                                  return (
+                                    <div
+                                      onClick={() =>
+                                        setDateGroupStarFilter((prev) => ({
+                                          ...prev,
+                                          [group.dateKey]: prev[group.dateKey] === 5 ? 'ALL' : 5,
+                                        }))
+                                      }
+                                      className={`p-2.5 rounded-lg border cursor-pointer transition-all ${
+                                        isSelected
+                                          ? 'bg-amber-950/40 border-amber-500 text-amber-200 ring-1 ring-amber-500'
+                                          : 'bg-slate-900/90 hover:bg-slate-900 border-amber-500/30 text-slate-300'
+                                      }`}
+                                    >
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-1">
+                                          <span className="text-amber-400 text-xs font-black">★★★★★</span>
+                                          <span className="text-xs font-black text-amber-300">5星稳胆</span>
+                                        </div>
+                                        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                          {t5.total} 场
+                                        </span>
+                                      </div>
+                                      <div className="grid grid-cols-3 gap-1 mt-1.5 text-center text-[10px]">
+                                        <div className="bg-slate-950/80 p-1 rounded">
+                                          <span className="text-slate-500 block text-[9px]">胜平负</span>
+                                          <span className="font-bold text-emerald-400 font-mono text-xs">{euroRate}%</span>
+                                        </div>
+                                        <div className="bg-slate-950/80 p-1 rounded">
+                                          <span className="text-slate-500 block text-[9px]">让球赢盘</span>
+                                          <span className="font-bold text-cyan-400 font-mono text-xs">{hdcRate}%</span>
+                                        </div>
+                                        <div className="bg-slate-950/80 p-1 rounded">
+                                          <span className="text-slate-500 block text-[9px]">大小球</span>
+                                          <span className="font-bold text-amber-400 font-mono text-xs">{ouRate}%</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+
+                                {/* Date Tier 4 Card */}
+                                {(() => {
+                                  const effectiveDateFilter = dateGroupStarFilter[group.dateKey] || selectedStarFilter;
+                                  const t4 = group.starStats.tier4;
+                                  const euroRate = t4.total > 0 ? Math.round((t4.euroHits / t4.total) * 100) : 0;
+                                  const hdcRate = t4.total > 0 ? Math.round((t4.handicapHits / t4.total) * 100) : 0;
+                                  const ouRate = t4.total > 0 ? Math.round((t4.ouHits / t4.total) * 100) : 0;
+                                  const isSelected = effectiveDateFilter === 4;
+
+                                  return (
+                                    <div
+                                      onClick={() =>
+                                        setDateGroupStarFilter((prev) => ({
+                                          ...prev,
+                                          [group.dateKey]: prev[group.dateKey] === 4 ? 'ALL' : 4,
+                                        }))
+                                      }
+                                      className={`p-2.5 rounded-lg border cursor-pointer transition-all ${
+                                        isSelected
+                                          ? 'bg-cyan-950/40 border-cyan-500 text-cyan-200 ring-1 ring-cyan-500'
+                                          : 'bg-slate-900/90 hover:bg-slate-900 border-cyan-500/30 text-slate-300'
+                                      }`}
+                                    >
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-1">
+                                          <span className="text-amber-400 text-xs font-black">★★★★☆</span>
+                                          <span className="text-xs font-black text-cyan-300">4星防冷</span>
+                                        </div>
+                                        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                                          {t4.total} 场
+                                        </span>
+                                      </div>
+                                      <div className="grid grid-cols-3 gap-1 mt-1.5 text-center text-[10px]">
+                                        <div className="bg-slate-950/80 p-1 rounded">
+                                          <span className="text-slate-500 block text-[9px]">胜平负</span>
+                                          <span className="font-bold text-emerald-400 font-mono text-xs">{euroRate}%</span>
+                                        </div>
+                                        <div className="bg-slate-950/80 p-1 rounded">
+                                          <span className="text-slate-500 block text-[9px]">让球赢盘</span>
+                                          <span className="font-bold text-cyan-400 font-mono text-xs">{hdcRate}%</span>
+                                        </div>
+                                        <div className="bg-slate-950/80 p-1 rounded">
+                                          <span className="text-slate-500 block text-[9px]">大小球</span>
+                                          <span className="font-bold text-amber-400 font-mono text-xs">{ouRate}%</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+
+                                {/* Date Tier 3 Card */}
+                                {(() => {
+                                  const effectiveDateFilter = dateGroupStarFilter[group.dateKey] || selectedStarFilter;
+                                  const t3 = group.starStats.tier3;
+                                  const euroRate = t3.total > 0 ? Math.round((t3.euroHits / t3.total) * 100) : 0;
+                                  const hdcRate = t3.total > 0 ? Math.round((t3.handicapHits / t3.total) * 100) : 0;
+                                  const ouRate = t3.total > 0 ? Math.round((t3.ouHits / t3.total) * 100) : 0;
+                                  const isSelected = effectiveDateFilter === 3;
+
+                                  return (
+                                    <div
+                                      onClick={() =>
+                                        setDateGroupStarFilter((prev) => ({
+                                          ...prev,
+                                          [group.dateKey]: prev[group.dateKey] === 3 ? 'ALL' : 3,
+                                        }))
+                                      }
+                                      className={`p-2.5 rounded-lg border cursor-pointer transition-all ${
+                                        isSelected
+                                          ? 'bg-slate-800 border-slate-500 text-white ring-1 ring-slate-500'
+                                          : 'bg-slate-900/90 hover:bg-slate-900 border-slate-800 text-slate-300'
+                                      }`}
+                                    >
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-1">
+                                          <span className="text-amber-400 text-xs font-black">★★★☆☆</span>
+                                          <span className="text-xs font-black text-slate-300">3星博弈</span>
+                                        </div>
+                                        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                                          {t3.total} 场
+                                        </span>
+                                      </div>
+                                      <div className="grid grid-cols-3 gap-1 mt-1.5 text-center text-[10px]">
+                                        <div className="bg-slate-950/80 p-1 rounded">
+                                          <span className="text-slate-500 block text-[9px]">胜平负</span>
+                                          <span className="font-bold text-emerald-400 font-mono text-xs">{euroRate}%</span>
+                                        </div>
+                                        <div className="bg-slate-950/80 p-1 rounded">
+                                          <span className="text-slate-500 block text-[9px]">让球赢盘</span>
+                                          <span className="font-bold text-cyan-400 font-mono text-xs">{hdcRate}%</span>
+                                        </div>
+                                        <div className="bg-slate-950/80 p-1 rounded">
+                                          <span className="text-slate-500 block text-[9px]">大小球</span>
+                                          <span className="font-bold text-amber-400 font-mono text-xs">{ouRate}%</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+
+                              {/* Interactive Filter Pills within this specific Sales Date */}
+                              <div className="flex items-center gap-1.5 overflow-x-auto pt-1 text-xs">
+                                <span className="text-[11px] text-slate-400 font-bold flex items-center gap-1 shrink-0 mr-1">
+                                  <Filter className="w-3 h-3 text-amber-400" />
+                                  <span>当日星级筛选：</span>
+                                </span>
+                                {(() => {
+                                  const effectiveDateFilter = dateGroupStarFilter[group.dateKey] || selectedStarFilter;
+                                  return (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setDateGroupStarFilter((prev) => ({
+                                            ...prev,
+                                            [group.dateKey]: 'ALL',
+                                          }))
+                                        }
+                                        className={`px-2 py-0.5 rounded font-bold transition-all shrink-0 cursor-pointer text-[11px] ${
+                                          effectiveDateFilter === 'ALL'
+                                            ? 'bg-amber-400 text-slate-950 shadow-sm'
+                                            : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+                                        }`}
+                                      >
+                                        全部 ({group.items.length})
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setDateGroupStarFilter((prev) => ({
+                                            ...prev,
+                                            [group.dateKey]: 5,
+                                          }))
+                                        }
+                                        className={`px-2 py-0.5 rounded font-bold transition-all shrink-0 cursor-pointer text-[11px] ${
+                                          effectiveDateFilter === 5
+                                            ? 'bg-amber-500 text-slate-950 shadow-sm'
+                                            : 'bg-slate-900 hover:bg-slate-800 text-amber-400 hover:text-amber-300 border border-amber-500/30'
+                                        }`}
+                                      >
+                                        ★★★★★ 5星 ({group.starStats.tier5.total})
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setDateGroupStarFilter((prev) => ({
+                                            ...prev,
+                                            [group.dateKey]: 4,
+                                          }))
+                                        }
+                                        className={`px-2 py-0.5 rounded font-bold transition-all shrink-0 cursor-pointer text-[11px] ${
+                                          effectiveDateFilter === 4
+                                            ? 'bg-cyan-500 text-slate-950 shadow-sm'
+                                            : 'bg-slate-900 hover:bg-slate-800 text-cyan-400 hover:text-cyan-300 border border-cyan-500/30'
+                                        }`}
+                                      >
+                                        ★★★★☆ 4星 ({group.starStats.tier4.total})
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setDateGroupStarFilter((prev) => ({
+                                            ...prev,
+                                            [group.dateKey]: 3,
+                                          }))
+                                        }
+                                        className={`px-2 py-0.5 rounded font-bold transition-all shrink-0 cursor-pointer text-[11px] ${
+                                          effectiveDateFilter === 3
+                                            ? 'bg-slate-300 text-slate-950 shadow-sm'
+                                            : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+                                        }`}
+                                      >
+                                        ★★★☆☆ 3星 ({group.starStats.tier3.total})
+                                      </button>
+                                    </>
+                                  );
+                                })()}
+                              </div>
+                            </div>
+
+                            {/* Match Review Cards under this Date Group */}
                             {group.items
                               .filter((rev) => {
-                                if (selectedStarFilter === 'ALL') return true;
-                                return (rev.priorReport?.decision?.starRating || 3) === selectedStarFilter;
+                                const activeStarForGroup = dateGroupStarFilter[group.dateKey] || selectedStarFilter;
+                                if (activeStarForGroup === 'ALL') return true;
+                                return (rev.priorReport?.decision?.starRating || 3) === activeStarForGroup;
                               })
                               .map((rev) => {
                               const timeInfo = formatDateInfo(rev.reviewTimestamp);

@@ -150,19 +150,26 @@ export function computeActuarialMetrics(data: FullMatchData): ActuarialMetrics {
     });
   }
 
-  // 2. 【高息吸筹 / 名气诱导】
-  // 强队题材拉满强升盘，但水位死卡 1.98~2.12 超高水/满水 -> 大热必死，公开诱上，坚决去下盘/受让胜
+  // 2. 【高息吸筹 / 杀猪盘诱导 / 欧赔暴涨出货】
+  // 核心形态A：让步方欧赔遭遇毁灭性抛售暴涨（如初盘 1.72~1.75 狂飙至 2.00+，涨幅>=0.18），庄家弃守逃离，亚指挂满水或毒药盘诱上
+  // 核心形态B：借名气题材强升盘，但水位死卡 1.98~2.15 超高水/满水 -> 大热必死，公开诱上
+  const favoriteEuroJump = favoriteEuroLate - (isHomeFavorite ? earlyWin : earlyLoss);
+  const isEuroMassiveSurge = favoriteEuroJump >= 0.18 || (favoriteEuroLate >= 1.98 && (isHomeFavorite ? earlyWin : earlyLoss) <= 1.78);
+  const isHighWaterTrap = favoriteOdds >= 1.98;
+
   if (
-    isFavoriteUpLine &&
-    favoriteOdds >= 1.98 &&
-    favoriteOdds <= 2.15
+    (isFavoriteUpLine && isHighWaterTrap) ||
+    (isEuroMassiveSurge && (isHighWaterTrap || isFavoriteSameLine || isFavoriteUpLine))
   ) {
     const favTeamName = isHomeFavorite ? data.matchInfo.homeTeam : data.matchInfo.awayTeam;
+    const underTeamName = isHomeFavorite ? data.matchInfo.awayTeam : data.matchInfo.homeTeam;
     detectedModels.push({
       model: 'HIGH_INTEREST_TRAP',
-      title: '【高息吸筹 / 名气诱导】',
-      confidence: 94,
-      description: `借强队（${favTeamName}）名气或题材强行升盘制造让步坚挺假象，但上盘水位长期高挂 ${favoriteOdds.toFixed(2)} 满水利诱筹码，符合“高息吸筹”典型收割形态，大热必死。`,
+      title: isEuroMassiveSurge ? '【欧赔暴涨抛售 / 头号杀猪盘】' : '【高息吸筹 / 名气诱导】',
+      confidence: 96,
+      description: isEuroMassiveSurge
+        ? `让步方（${favTeamName}）欧指胜赔遭遇毁灭性抛售暴涨（跳涨 +${favoriteEuroJump.toFixed(2)} 至 ${favoriteEuroLate.toFixed(2)}），亚指挂 ${favoriteOdds.toFixed(2)} 毒药高水/满水诱导，机构利用名气虚张声势掩护出货，庄家底牌直指客胜/下盘【${underTeamName}】反杀！`
+        : `借强队（${favTeamName}）名气或题材强行升盘制造让步坚挺假象，但上盘水位长期高挂 ${favoriteOdds.toFixed(2)} 满水利诱筹码，符合“高息吸筹”典型收割形态，大热必死。`,
       riskLevel: 'HIGH_RISK_TRAP',
     });
   }
@@ -218,6 +225,8 @@ export function computeActuarialMetrics(data: FullMatchData): ActuarialMetrics {
 
   if (Math.abs(lateHandicapNum) >= 1.25 && lateOUNum <= 2.25) {
     overUnderVerdict = '【深让步 (-1.25+) + 浅大小球 (<=2.25)】：让步深但进球数极浅，机构严防强队控场小胜或破门乏力，强烈指向 1-0、2-0 经济型赛果，测谎判定首选小球！';
+  } else if (Math.abs(lateHandicapNum) <= 0.5 && lateOUNum >= 3.25) {
+    overUnderVerdict = '【浅让步 (半球/平半) + 巨型大小球 (>=3.25)】：让步无力却深开巨型大小球，全场进入狂轰对攻格局，两队防线形同虚设，强队极易遭遇后防穿透爆大冷（警惕 1-2、2-3、0-1 反杀）；测谎判定胜负警惕下盘爆冷，进球数首选大球！';
   } else if (Math.abs(lateHandicapNum) <= 0.25 && lateOUNum >= 2.75) {
     overUnderVerdict = '【浅让步 (平手/平半) + 深大小球 (>=2.75)】：胜负让步虚无，但大小球被暴力拉深至高位，揭示两队防线形同虚设，战术大开大合，机构真实底牌引导对攻，测谎判定直追大球！';
   } else if (lateOUNum === 2.5 && data.overUnder.lateOverOdds < data.overUnder.earlyOverOdds && data.overUnder.lateOverOdds > 1.85) {
@@ -348,6 +357,7 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
   const givingTeam = isHomeGiving ? homeTeam : isAwayGiving ? awayTeam : (lateWin <= lateLoss ? homeTeam : awayTeam);
   const receivingTeam = isHomeGiving ? awayTeam : isAwayGiving ? homeTeam : (lateWin <= lateLoss ? awayTeam : homeTeam);
   const givingOdds = isHomeGiving ? lateHomeOdds : isAwayGiving ? lateAwayOdds : (lateWin <= lateLoss ? lateHomeOdds : lateAwayOdds);
+  const givingEuroLate = isHomeGiving ? lateWin : isAwayGiving ? lateLoss : (lateWin <= lateLoss ? lateWin : lateLoss);
 
   let firstImpression = '';
   let threeDimLieDetection = '';
@@ -403,23 +413,23 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
     }
 
     case 'HIGH_INTEREST_TRAP': {
-      firstImpression = `【定性：高息诱上陷阱】本场 ${homeTeam} 对阵 ${awayTeam} 是极其标准的“高息吸筹 / 名气诱导”杀猪盘。机构充分利用 ${givingTeam} 的豪门名气与市场追捧题材，在晚盘强势升盘至 ${lateHandicap}，看似力挺强队打穿，但致命死穴在于：让步方 ${givingTeam} 水位始终死死卡在 ${givingOdds.toFixed(2)} 的超高水/满水状态！《财富经》核心铁律：天上不会掉无缘无故的馅饼，买得太舒服且回报率异常丰厚，必是机构请君入瓮的诱导陷阱。`;
+      firstImpression = `【定性：高息诱上 / 杀猪盘出货陷阱】本场 ${homeTeam} 对阵 ${awayTeam} 是极其标准的“高息吸筹 / 欧赔暴涨出货”杀猪盘。机构充分利用 ${givingTeam} 的主场名气与抢分题材虚张声势，但在晚盘关键时刻致命死穴暴露无遗：让步方 ${givingTeam} 胜赔在主流欧指与官方遭遇剧烈抛售跳涨（晚盘飙升至 ${givingEuroLate.toFixed(2)}），亚指同时死死卡在 ${givingOdds.toFixed(2)} 毒药满水甚至强开方便之门！《财富经》核心铁律：天上不会掉无缘无故的馅饼，买得太舒服且回报率异常丰厚，必是机构请君入瓮掩护下盘反杀的诱导杀猪陷阱。`;
       threeDimLieDetection = `三维联动交叉验证：
-1. 亚盘水位维度：升盘不降水反挂满水 (${givingOdds.toFixed(2)})，如果庄家真怕上盘打出，绝不敢长期提供如此高额的赔付红利供市场白捡。
-2. 欧赔走势维度：让步方欧指并未出现深幅夯实，受让方（${receivingTeam}）与平赔暗流涌动，欧亚折算呈现明显的“虚开盘型”，机构在用盘口障眼法为强队吸纳巨量筹码。
-3. 大小球联动维度：${metrics.overUnderVerdict}。亚盘强升但大小球并未配合暴力上抬，形成了“强队大胜”预期与“实际进球空间受限”的尖锐矛盾，早盘的造势逻辑被晚盘高水彻底证伪。`;
+1. 亚盘水位维度：亚指上盘长期悬挂 ${givingOdds.toFixed(2)} 毒药满水（客水被狠砸至低水），若庄家真怕上盘打出，绝不敢长期提供如此高额的暴利筹码供市场白捡。
+2. 欧赔走势维度：让步方欧指并未出现深幅夯实，反而遭遇断崖式抛售暴涨，受让方（${receivingTeam}）胜平赔持续压低，欧亚折算呈现明显的“虚张声势掩护出货”，机构在用盘口障眼法为强队吸纳巨量筹码。
+3. 大小球与北单去水联动维度：${metrics.overUnderVerdict}。若配合让负去水或受让赔率持续走低，下盘 ${receivingTeam} 爆冷不败甚至客胜独赢形态已彻底确立。`;
 
       starRating = 5;
       if (isHomeGiving) {
         euroPick = '让球负 (客队受让胜)';
         handicapPick = `下盘 ${awayTeam} (+${handicapGoals}受让)`;
         finalDirection = `【推荐方向】：客队（下盘 ${awayTeam} +${handicapGoals}受让）坚决反选`;
-        finalDirectionDetail = `竞彩/盘口：让球客胜（客队受让赢盘） / 重点防平局客胜爆大冷；坚决不碰主队上盘。`;
+        finalDirectionDetail = `竞彩/盘口：让球客胜（客队受让赢盘） / 重点防平局客胜爆大冷（0-1、1-2、1-1）；坚决不碰主队上盘毒药满水。`;
       } else if (isAwayGiving) {
         euroPick = '让球胜 (主队受让胜)';
         handicapPick = `下盘 ${homeTeam} (+${handicapGoals}受让)`;
         finalDirection = `【推荐方向】：主队（下盘 ${homeTeam} +${handicapGoals}受让）坚决反选`;
-        finalDirectionDetail = `竞彩/盘口：让球主胜（主队受让赢盘） / 重点防主队爆冷不败；坚决不碰客队上盘。`;
+        finalDirectionDetail = `竞彩/盘口：让球主胜（主队受让赢盘） / 重点防主队爆冷不败（1-0、2-1、1-1）；坚决不碰客队上盘毒药满水。`;
       } else {
         euroPick = '平 / 负';
         handicapPick = `下盘 ${receivingTeam} (+0)`;
@@ -427,9 +437,9 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
         finalDirectionDetail = `高水诱盘，反选低水受让方。`;
       }
 
-      overUnderPick = `小球 (<=${data.overUnder.lateLine})`;
-      riskWarning = `避坑风险提示：千万警惕名气虚火与球迷情怀！凡是“升盘给满水”的豪门赛事，99% 为机构收割局，坚决不碰上盘，拥抱下盘避风港。`;
-      confidenceReason = `豪门（${givingTeam}）升盘死卡2.00+满水，公开利诱筹码，大热必死，反选5星。`;
+      overUnderPick = lateOUNum >= 2.75 ? `大球 (>=${data.overUnder.lateLine})` : `小球 (<=${data.overUnder.lateLine})`;
+      riskWarning = `避坑风险提示：千万警惕名气虚火与主队情怀！凡是“让步方高水出货、欧赔反常狂飙暴涨”的杀猪盘，99% 为机构收割局，坚决不碰上盘，拥抱下盘避风港。`;
+      confidenceReason = `让步方（${givingTeam}）欧赔暴涨、亚指死卡满水出货，大热必死，反选5星杀猪盘。`;
       break;
     }
 

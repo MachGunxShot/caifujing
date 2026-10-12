@@ -1186,7 +1186,7 @@ export function savePostMatchReview(review: PostMatchReview): void {
       reviews[existingIdx] = {
         ...review,
         id: reviews[existingIdx].id, // preserve ID
-        reviewTimestamp: reviews[existingIdx].reviewTimestamp || review.reviewTimestamp,
+        reviewTimestamp: review.reviewTimestamp || reviews[existingIdx].reviewTimestamp || Date.now(),
       };
     } else {
       reviews.unshift(review);
