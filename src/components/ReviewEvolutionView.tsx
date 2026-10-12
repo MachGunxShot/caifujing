@@ -61,6 +61,7 @@ import {
   deletePostMatchReview,
   clearAllPostMatchReviews,
   savePostMatchReview,
+  saveAllPostMatchReviews,
   auditRulesHealth,
   pruneAndClusterExperienceRules,
   pruneZeroHitRules,
@@ -170,6 +171,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
   const [healthNotification, setHealthNotification] = useState<string | null>(null);
   const [isSyncingRules, setIsSyncingRules] = useState<boolean>(false);
   const [isCalibratingDates, setIsCalibratingDates] = useState<boolean>(false);
+  const [isCalibratingStars, setIsCalibratingStars] = useState<boolean>(false);
   const [syncResultModal, setSyncResultModal] = useState<{
     totalProcessed: number;
     addedCount: number;
@@ -546,6 +548,81 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     const dateLabels = Array.from(dateGroupsSet).sort().join('、');
     setHealthNotification(
       `✅ 销售日各场次独立校准归档完成！已按各场真实开赛时间与竞彩11:00法则，分别归入 ${dateGroupsSet.size} 个独立销售日周期（涉及: ${dateLabels || '多日归档'}，共覆盖 ${updatedReviews.length} 场历史战报，校准修复 ${calibratedCount} 场）！便于每日分段对照验证。`
+    );
+    setTimeout(() => setHealthNotification(null), 8000);
+  };
+
+  // Calibrate star tiers across all existing reviews using latest actuarial graduated rules
+  const handleCalibrateStarTiers = () => {
+    setIsCalibratingStars(true);
+    let calibratedCount = 0;
+
+    const allStoredReviews = getPostMatchReviews();
+    const updatedReviews = allStoredReviews.map((rev) => {
+      if (!rev.matchData) return rev;
+      const newReport = generateActuarialRuleReport(rev.matchData);
+      const oldStars = rev.priorReport?.decision?.starRating || 3;
+      const newStars = newReport.decision?.starRating || 3;
+      if (oldStars !== newStars) {
+        calibratedCount++;
+      }
+      const [hScore, aScore] = (rev.actualScore || '0-0')
+        .split('-')
+        .map((s) => parseInt(s.trim(), 10) || 0);
+
+      const updatedRev = evaluateMatchOutcomeAndExtractLesson(
+        rev.matchData,
+        newReport,
+        hScore,
+        aScore,
+        rev.matchIncidents || '',
+        false,
+        rev.salesDate,
+        rev.reviewTimestamp
+      );
+      return {
+        ...updatedRev,
+        id: rev.id,
+        salesDate: rev.salesDate || updatedRev.salesDate,
+        reviewTimestamp: rev.reviewTimestamp,
+      };
+    });
+
+    saveAllPostMatchReviews(updatedReviews);
+    setReviews(updatedReviews);
+
+    // Synchronize into queue items
+    const updatedQueue = queue.map((item) => {
+      const qRev = updatedReviews.find(
+        (r) =>
+          r.id === item.id ||
+          (matchTeamsFuzzy(r.matchData?.matchInfo?.homeTeam, item.data?.matchInfo?.homeTeam) &&
+            matchTeamsFuzzy(r.matchData?.matchInfo?.awayTeam, item.data?.matchInfo?.awayTeam))
+      );
+      if (qRev) {
+        return {
+          ...item,
+          report: qRev.priorReport || generateActuarialRuleReport(item.data),
+          review: qRev,
+        };
+      } else if (item.data) {
+        return {
+          ...item,
+          report: generateActuarialRuleReport(item.data),
+        };
+      }
+      return item;
+    });
+    onUpdateQueue(updatedQueue);
+
+    setIsCalibratingStars(false);
+
+    const tier5 = updatedReviews.filter((r) => (r.priorReport?.decision?.starRating || 3) === 5).length;
+    const tier4 = updatedReviews.filter((r) => (r.priorReport?.decision?.starRating || 3) === 4).length;
+    const tier3 = updatedReviews.filter((r) => (r.priorReport?.decision?.starRating || 3) === 3).length;
+
+    setHealthNotification(
+      `⭐ 历史战报星级档位梯次智能重校准完成！共重算并更新 ${calibratedCount} 场（覆盖全量 ${updatedReviews.length} 场）。最新梯度分布：5星稳胆 ${tier5} 场、4星防冷 ${tier4} 场、3星博弈 ${tier3} 场，四星档位恢复科学梯次！`
     );
     setTimeout(() => setHealthNotification(null), 8000);
   };
@@ -1199,8 +1276,10 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         r.id.startsWith('rule-model-') ||
         r.id.startsWith('rule-classic-') ||
         r.id.startsWith('rule-seed-') ||
-        r.id === 'rule-philosophy-core' ||
-        r.id === 'rule-goals-detector-1';
+        r.id.startsWith('rule-goals-') ||
+        r.id.startsWith('rule-philosophy-') ||
+        r.id.startsWith('rule-workflow-') ||
+        r.id.startsWith('rule-risk-');
       if (ruleCategoryFilter === 'CLASSIC') return isClassic;
       const isBoilerplate =
         (r.ruleContent || '').includes('切忌单向押注，需重点防范实际赛果指向的') ||
@@ -2941,6 +3020,26 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
                   <button
                     type="button"
+                    disabled={isCalibratingDates || isCalibratingStars}
+                    onClick={handleCalibrateStarTiers}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
+                    title="依据《财富经》最新梯度置信度法则，智能重算并校准全部历史战报的星级档位（解决旧版四星档仅绑定单模型导致的触发过窄问题）"
+                  >
+                    {isCalibratingStars ? (
+                      <>
+                        <div className="w-3.5 h-3.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                        <span>正在校准星级...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400/30" />
+                        <span>星级档位智能重校准</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={handleClearAllReviews}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-bold transition-colors cursor-pointer"
                     title="清空全部历史复盘战报（核心法则库不受影响）"
@@ -2962,6 +3061,20 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                   </div>
                   <span className="text-[11px] text-slate-400">
                     统计样本：全量已归档 {reviews.length} 场实战战报
+                  </span>
+                </div>
+
+                <div className="text-[10px] text-slate-400 bg-slate-950/70 rounded-lg px-2.5 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 border border-slate-800/80 font-mono">
+                  <span>
+                    <strong className="text-amber-400">★★★★★ 5星稳胆档</strong>: 极限榨水控赔 / 暴涨杀猪盘 / 极端胆平 (高置信92%+)
+                  </span>
+                  <span className="text-slate-600">|</span>
+                  <span>
+                    <strong className="text-cyan-400">★★★★☆ 4星防冷档</strong>: 浅盘满水 / 退盘示弱 / 次稳控赔 / 重点防冷 (高价值85%+)
+                  </span>
+                  <span className="text-slate-600">|</span>
+                  <span>
+                    <strong className="text-slate-300">★★★☆☆ 3星博弈档</strong>: 多空资金均势平衡盘 (80%)
                   </span>
                 </div>
 

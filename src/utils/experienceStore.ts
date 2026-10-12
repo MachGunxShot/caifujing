@@ -10,91 +10,139 @@ import { calculateSalesDate } from './salesDayUtils';
 const RULES_STORAGE_KEY = 'fortune_actuary_evolved_rules_v1';
 const REVIEWS_STORAGE_KEY = 'fortune_actuary_reviews_v1';
 
-// Seed Initial Battle-tested Core Rules (5 Core Models + Lie Detector + Philosophy)
+// Seed Initial Battle-tested Core Rules (5 Core Models + 3 Lie Detector Matrix + Workflow + Staking + Philosophy)
 export const SEED_RULES: EvolvedExperienceRule[] = [
   {
     id: 'rule-model-POSITIVE_CONTROL',
-    title: '【极限榨水 / 正向控赔】核心稳胆法则',
+    title: '【极限榨水 / 正向控赔法则】（正路稳胆核心）',
     category: 'POSITIVE_CONTROL',
     leagueScope: '全联赛通用 / 欧冠 / 五大联赛',
     ruleContent:
-      '当主流欧指持续下调、亚指维持原盘或强力升盘，且晚盘上盘水位被砸制在 1.80 以下极低水时，机构并非诱盘，而是通过牺牲水位利润进行真实赔付防范。天上不会掉馅饼，超低水才是机构最诚实的投降书。实战首选让球正路打出，做稳胆核心。',
-    sourceMatch: '曼城 2-0 埃弗顿 / 巴黎 4-1 朗斯 / 法国 4-1 比利时 (实盘验证)',
+      '【操盘特征】：主流欧指胜赔持续下调；亚指维持原盘或强力升盘，同时将让球方（上盘）水位/贴水砸至极限低水区间（低于 1.80）。\n【大庄底牌】：机构极度看好让球方打出，为了防止巨量市场资金涌入造成毁灭性派彩，机构通过提高赢盘门槛（升盘）并将利润空间强力压缩到极限的“蚊子肉”极低水。这是机构真金白银的避险动作，实选让球正路打出，做 5 星稳胆核心。天上不会掉馅饼，超低水才是机构最诚实的投降书。',
+    sourceMatch: 'FC首尔 3-1 浦项制铁 / 罗森博格 4-0 腓特烈斯塔 / 曼城 2-0 埃弗顿 / 法国 4-1 比利时 (实盘验证)',
     createdAt: '2026-09-15',
     isActive: true,
-    hitCount: 22,
+    hitCount: 26,
   },
   {
     id: 'rule-model-HIGH_INTEREST_TRAP',
-    title: '【高息吸筹 / 名气诱导】高危杀猪盘防坑法则',
+    title: '【高息吸筹 / 名气诱导法则】（高危杀猪盘避坑防诱）',
     category: 'HIGH_INTEREST_TRAP',
-    leagueScope: '全联赛通用 / 豪门联赛',
+    leagueScope: '全联赛通用 / 豪门联赛 / 热门题材赛事',
     ruleContent:
-      '强队坐拥名气或抢分题材，早盘让步偏深，临场强升盘但上盘水位长期死卡在 2.02 以上超高水/满水。机构大开方便之门制造“让步坚挺、大胜穿盘”假象。若庄家真怕打出绝不敢悬挂满水白送筹码。实战坚决反选受让下盘，绝不可盲目博穿。',
-    sourceMatch: '皇家马德里 1-1 赫塔菲 / 拜仁 1-2 门兴 (实盘验证)',
+      '【操盘特征】：某队名气大或带有极强抢分题材（如连胜、争冠、保级等），机构顺应题材砸低欧赔或在亚指强行升盘制造让步坚挺假象，但升盘后让球方水位死死卡在 2.00 ~ 2.08 超高水/满水区间，公开派发高息福利。\n【大庄底牌】：机构明知强队有硬伤（如锋无力或对方有反击神锋），利用强队名气拉力强行做局，用高回报率勾引散户资金博上盘。大热必死，天上不会掉无缘无故的馅饼，买得太舒服必定是陷阱，坚决去下盘或受让防冷。',
+    sourceMatch: '江原FC 0-3 富川1995 / 巴西 1-2 挪威 / 皇家马德里 1-1 赫塔菲 (实盘验证)',
     createdAt: '2026-09-18',
     isActive: true,
-    hitCount: 19,
+    hitCount: 23,
   },
   {
     id: 'rule-model-AVALANCHE_RETREAT',
-    title: '【雪崩退盘 / 退热示弱】利空避险与跟退法则',
+    title: '【雪崩退盘 / 退热示弱法则】（真实利空 vs 暴力洗盘双轨辨析）',
     category: 'AVALANCHE_RETREAT',
-    leagueScope: '主流透明联赛',
+    leagueScope: '主流透明联赛 / 杯赛',
     ruleContent:
-      '临场出现非正常剧烈退盘（如一球退半一、半一退半球），且水位抬升至中高水。正规联赛大庄风控提前捕捉到未公开核心利空（主力伤停、内讧、战意缺失）紧急止损避险。切忌盲目抄底强队，跟退盘者生，坚决顺应退盘支持下盘客队不败。',
-    sourceMatch: '利物浦 1-2 纽卡斯尔联 / 切尔西 0-1 狼队 (实盘验证)',
+      '【操盘特征】：临场阶段盘口出现剧烈退阶（如半一退平半，平半退平手），让球方赔率暴涨、水位反弹。\n【大庄底牌】：双轨研判：\n1. 常规真实利空：透明联赛中，一致退盘 90% 以上是因为主力伤停、内讧或深度轮换等核心利空爆出，机构妥协退盘避险。跟退盘者生，盲抄底者亡，坚决去下盘客队不败。\n2. 极端暴力洗盘：若豪门主场无明显利空却反常退盘送高水，营造“强队不稳”恐慌感，则是机构洗盘赶筹码去下盘，强队反而低调打出。',
+    sourceMatch: '浦项制铁 0-1 金泉尚武 / 光州FC 1-1 金泉尚武 / 利物浦 1-2 纽卡斯尔联 (实盘验证)',
     createdAt: '2026-09-20',
-    isActive: true,
-    hitCount: 15,
-  },
-  {
-    id: 'rule-model-LOW_DRAW_DEFENSE',
-    title: '【平赔低洼 / 平赔排雷】绝杀防平与双平法则',
-    category: 'LOW_DRAW_DEFENSE',
-    leagueScope: '欧国联 / 杯赛 / 均势联赛',
-    ruleContent:
-      '主流欧赔平赔被死死压制在 3.00 以下（竞彩 <2.75 极度防御区），亚盘维持在平手或平半两头对冲。资金在主客胜两端分流，机构真实防范重心全在平局。平局打出通吃两头盘口。平赔破 3.00 触发最高预警，实战首选单挑平局，次选双平防守。',
-    sourceMatch: '拉齐奥 1-1 佛罗伦萨 / 瑞士 0-0 丹麦 (实盘验证)',
-    createdAt: '2026-09-22',
     isActive: true,
     hitCount: 18,
   },
   {
-    id: 'rule-model-SHALLOW_FULL_WATER',
-    title: '【浅盘满水死亡】主场优势虚化与反杀法则',
-    category: 'SHALLOW_FULL_WATER',
-    leagueScope: '常规联赛主客场',
+    id: 'rule-model-LOW_DRAW_DEFENSE',
+    title: '【平赔低洼 / 平赔排雷法则】（精准胆平与双平设防）',
+    category: 'LOW_DRAW_DEFENSE',
+    leagueScope: '欧国联 / 杯赛 / 均势联赛 / 国际赛',
     ruleContent:
-      '传统主场龙面对中下游球队仅开平手或平半生死盘，且长期挂 2.05+ 满水。机构对主胜完全不设防，利用“买主队赢球即赢半或全收”的贪婪心理收割。90% 概率主队不胜，毫不犹豫反选下盘客队不败。',
-    sourceMatch: '多特蒙德 1-2 波鸿 / 毕尔巴鄂 0-1 赫罗纳 (实盘验证)',
+      '【操盘特征】：欧指胜平负赔率中，平局赔率被各大机构死死按在罕见超低洼区间（百家均平低于 3.00，竞彩官方甚至下杀至 2.58 ~ 2.75 极度防御区），胜负盘为平手或平半浅盘两头对冲。\n【大庄底牌】：机构放弃主客胜两头防守，用超低平赔封死平局退路。这绝非诱平，而是风控模型在严防平局打出的真实动作，平局打出通吃两头盘口。平赔破 3.00 为最高预警红线，实战首选精准胆平（1-1、0-0），次选双平防守。',
+    sourceMatch: '普拉腾斯 1-1 科金博联合 / 赫塔费 1-1 维戈塞尔塔 / 拉齐奥 1-1 佛罗伦萨 (实盘验证)',
+    createdAt: '2026-09-22',
+    isActive: true,
+    hitCount: 21,
+  },
+  {
+    id: 'rule-model-SHALLOW_FULL_WATER',
+    title: '【浅盘满水死亡法则】（强队让步无力与下盘反杀）',
+    category: 'SHALLOW_FULL_WATER',
+    leagueScope: '常规联赛主客场 / 名气强队',
+    ruleContent:
+      '【操盘特征】：传统强队在主场面对中下游球队仅能开出平手或平/半浅盘，且主队水位长期处于 2.00 以上满水高危区甚至临场退盘。\n【大庄底牌】：主力资金对强队赢球毫无信心，优势被机构完全无视，阻力几乎为零。机构利用满水制造“强队不败、赢半博全、高赔暴利”的虚假舒适感，实则是大门敞开收割接盘筹码。凡是买得太舒服的盘 99% 是送命题，下盘打出是大概率事件，坚决走下盘。',
+    sourceMatch: '安德莱赫特 3-1 哈马比 / 清水心跳 1-2 柏太阳神 / 多特蒙德 1-2 波鸿 (实盘验证)',
     createdAt: '2026-09-25',
     isActive: true,
-    hitCount: 17,
+    hitCount: 19,
   },
   {
     id: 'rule-goals-detector-1',
-    title: '大小球联动测谎：深让步配浅大小球卡盘警报',
+    title: '【大小球联动测谎·一】：深让步（-1.25+）+ 浅大小球（<=2.25）卡盘小胜',
     category: 'POSITIVE_CONTROL',
     leagueScope: '全部主流联赛',
     ruleContent:
-      '强队深让步（球半/两球）但大小球反常压制在 2.25/2.5 极浅界线，机构已预判难以大胜对攻，极易打出 1-0 或 2-0 边缘小胜。大小球优先选小，让球严防下盘赢盘或卡盘。',
-    sourceMatch: '巴黎圣日耳曼 vs 朗斯 / 尤文图斯 vs 恩波利 (实盘验证)',
+      '【盘面特征】：让步方让球深邃（-1.25、-1.5 或更深），但大小球进球数盘口反常压制在 2.25/2.5 极浅界线。\n【测谎判定】：强队破门乏力或战术重在控场小胜，大胜穿盘风险极低。机构严防强队控场小胜，强烈指向 1-0、2-0“经济型赢球”。大球为毒药诱饵，首选小球为稳胆，亚指警惕赢球输盘或卡盘走水。',
+    sourceMatch: '巴黎圣日耳曼 2-0 朗斯 / 尤文图斯 1-0 恩波利 (实盘验证)',
     createdAt: '2026-09-28',
     isActive: true,
-    hitCount: 14,
+    hitCount: 16,
+  },
+  {
+    id: 'rule-goals-detector-2',
+    title: '【大小球联动测谎·二】：浅让步（平手/平半）+ 深大小球（>=2.75）对攻互爆',
+    category: 'GENERAL',
+    leagueScope: '进球活跃型联赛 / 德甲 / 荷甲 / 英超',
+    ruleContent:
+      '【盘面特征】：胜负盘让步虚无仅开平手或平半浅盘，但大小球被暴力拉深至 2.75 / 3.0 / 3.25 巨型高位。\n【测谎判定】：两队防线形同虚设，战术大开大合极度对攻。机构真实底牌引导对攻格局，不用纠结胜负两头归属，直接追大球（对捅互爆格局，警惕 2-2、2-3、3-1 赛果）！',
+    sourceMatch: '布莱顿 2-3 托特纳姆热刺 / 霍芬海姆 3-2 不莱梅 (实盘验证)',
+    createdAt: '2026-09-29',
+    isActive: true,
+    hitCount: 15,
+  },
+  {
+    id: 'rule-goals-detector-3',
+    title: '【大小球联动测谎·三】：大球题材 + 死卡 2.5 仅降水不升盘双向收割',
+    category: 'SPECIAL_SITUATION',
+    leagueScope: '热门对攻赛事 / 杯赛淘汰赛',
+    ruleContent:
+      '【盘面特征】：两队历史交锋频出大球题材拉满，但临场盘口纹丝不动死卡 2.5 浅盘不升 2.75，仅做微降水利诱。\n【测谎判定】：典型的假大球双向收割陷阱！机构用降水舒适感吸引大球资金，实则防线紧缩，大球与热门方必死，测谎判定反向防小球与冷门下盘。',
+    sourceMatch: '拜仁慕尼黑 1-0 勒沃库森 / 曼联 1-1 切尔西 (实盘验证)',
+    createdAt: '2026-09-30',
+    isActive: true,
+    hitCount: 13,
+  },
+  {
+    id: 'rule-workflow-three-steps',
+    title: '【看盘三步工作流与临场速查流程】',
+    category: 'GENERAL',
+    leagueScope: '全赛事通用操作规程',
+    ruleContent:
+      '【三步工作流标准】：\n1. 第一步【锁定初始实力盘】：确定两队身价、排名、交锋与战意基准线，寻找早盘让步与欧赔的初始偏差，看穿机构造势意图。\n2. 第二步【观察欧亚联动变轨】：临场 1~2 小时资金真实注入后，交叉校验欧亚变轨一致性，判定属于正向控赔、高息诱上还是退盘洗盘。\n3. 第三步【大小球三维交叉验证】：对照进球数盘口验证让步真伪，一剑封喉确定最终方向与精算比分。',
+    sourceMatch: '《财富经》全流程手操复盘验证法',
+    createdAt: '2026-09-10',
+    isActive: true,
+    hitCount: 28,
+  },
+  {
+    id: 'rule-risk-management',
+    title: '【资金管理与生存风控法则】（长期盈利生命线）',
+    category: 'GENERAL',
+    leagueScope: '全投注生存风控底线',
+    ruleContent:
+      '【生存法则三纪律】：\n1. 拒绝零容错的长串：5 串 1、6 串 1 容错率为零，极易在最后关头遭遇大庄的“妖盘”杀局。\n2. 成熟方案重在分仓与容错：以榨水控赔作为“2 串 1 稳胆基石”锁定基本收益；运用 M 串 N 组合（如 5 串 16、6 串 15）容错 1~2 场，遭遇黑天鹅依然保本盈利。\n3. 把子弹留给确定性：只下注符合《财富经》正向防范模型的比赛，不买就是最致命的武器，保本优先！',
+    sourceMatch: '《财富经》资金管理与分仓操盘纪律',
+    createdAt: '2026-09-05',
+    isActive: true,
+    hitCount: 32,
   },
   {
     id: 'rule-philosophy-core',
-    title: '《财富经》核心心法：数据是流动的，人性是恒定的',
+    title: '《财富经》核心看盘哲学与四大铁律',
     category: 'GENERAL',
-    leagueScope: '全局足彩精算心法',
+    leagueScope: '全局足彩量化精算心法',
     ruleContent:
-      '永远学会“证伪”而非“自我证明”。早盘看意图，晚盘看真实风控。买得太舒服必定是陷阱，超低水才是机构最诚实的投降书。数据表象之下，资金流与机构风控底牌的一致性才是唯一真理。',
-    sourceMatch: '《财富经》经典精算法则大盘心法',
+      '【四大核心哲学铁律】：\n1. 数据是流动的，人性是恒定的：看盘本质是利用基本面寻找盘口偏差，研判机构是降低赔付（真实防范）还是利用题材出货（假局诱导）。\n2. 早盘看意图，晚盘看真实风控：早盘造势预谋，晚盘赛前 1~2 小时资金注入后的变轨才是机构为了不赔钱做出的最终避险调仓。\n3. 永远学会“证伪”，而非“自我证明”：对比早晚盘时，切忌先入为主找理由支撑早盘判断，而要用晚盘的剧烈变水、反向退盘去证伪早盘逻辑。\n4. 天上不会掉无缘无故的馅饼：凡是让散户在心理上觉得“买得太舒服、回报率过高、顺理成章”的盘面，99% 都是机构精心布置的深水炸弹。不买即是致命武器！',
+    sourceMatch: '《财富经》终极手操指南与系统心法',
     createdAt: '2026-09-01',
     isActive: true,
-    hitCount: 30,
+    hitCount: 45,
   },
 ];
 
@@ -107,16 +155,36 @@ export function getTargetMasterRuleId(
   content?: string
 ): string {
   const text = `${category || ''} ${title || ''} ${content || ''}`.toUpperCase();
-  if (text.includes('GOALS') || text.includes('大小球') || text.includes('测谎') || text.includes('DETECTOR')) {
+
+  // 1. Goals Detector Matrix
+  if (text.includes('GOALS') || text.includes('大小球') || text.includes('进球数') || text.includes('测谎')) {
+    if (text.includes('降水') || text.includes('死卡') || text.includes('2.5') || text.includes('双向收割')) {
+      return 'rule-goals-detector-3';
+    }
+    if (text.includes('对攻') || text.includes('互爆') || text.includes('巨型') || text.includes('深大小球') || text.includes('2.75') || text.includes('3.0')) {
+      return 'rule-goals-detector-2';
+    }
     return 'rule-goals-detector-1';
   }
+
+  // 2. Risk Management & Staking
+  if (text.includes('资金') || text.includes('串关') || text.includes('分仓') || text.includes('容错') || text.includes('2串1') || text.includes('生存法则') || text.includes('STAKING') || text.includes('RISK')) {
+    return 'rule-risk-management';
+  }
+
+  // 3. Workflow
+  if (text.includes('工作流') || text.includes('三步') || text.includes('速查') || text.includes('WORKFLOW') || text.includes('变轨') || text.includes('锁定')) {
+    return 'rule-workflow-three-steps';
+  }
+
+  // 4. 5 Classic Models
   if (text.includes('HIGH_INTEREST_TRAP') || text.includes('高息') || text.includes('吸筹') || text.includes('杀猪') || text.includes('诱导') || text.includes('名气') || text.includes('逆向') || text.includes('爆冷')) {
     return 'rule-model-HIGH_INTEREST_TRAP';
   }
-  if (text.includes('AVALANCHE_RETREAT') || text.includes('雪崩') || text.includes('退盘') || text.includes('退热') || text.includes('示弱') || text.includes('利空') || text.includes('跟退')) {
+  if (text.includes('AVALANCHE_RETREAT') || text.includes('雪崩') || text.includes('退盘') || text.includes('退热') || text.includes('示弱') || text.includes('利空') || text.includes('跟退') || text.includes('洗盘')) {
     return 'rule-model-AVALANCHE_RETREAT';
   }
-  if (text.includes('LOW_DRAW_DEFENSE') || text.includes('平赔') || text.includes('低洼') || text.includes('排雷') || text.includes('防平') || text.includes('双平') || text.includes('平局')) {
+  if (text.includes('LOW_DRAW_DEFENSE') || text.includes('平赔') || text.includes('低洼') || text.includes('排雷') || text.includes('防平') || text.includes('双平') || text.includes('平局') || text.includes('胆平')) {
     return 'rule-model-LOW_DRAW_DEFENSE';
   }
   if (text.includes('SHALLOW_FULL_WATER') || text.includes('浅盘') || text.includes('满水') || text.includes('死亡') || text.includes('虚化')) {
@@ -125,7 +193,7 @@ export function getTargetMasterRuleId(
   if (text.includes('POSITIVE_CONTROL') || text.includes('榨水') || text.includes('正向控赔') || text.includes('正路') || text.includes('稳胆') || text.includes('实力穿盘') || text.includes('经济型赢盘')) {
     return 'rule-model-POSITIVE_CONTROL';
   }
-  if (text.includes('心法') || text.includes('PHILOSOPHY') || text.includes('GENERAL')) {
+  if (text.includes('心法') || text.includes('PHILOSOPHY') || text.includes('GENERAL') || text.includes('证伪') || text.includes('铁律')) {
     return 'rule-philosophy-core';
   }
   return 'rule-model-POSITIVE_CONTROL';
@@ -419,8 +487,10 @@ export function auditRulesHealth(customRules?: EvolvedExperienceRule[]): RulesHe
       r.id.startsWith('rule-model-') ||
       r.id.startsWith('rule-classic-') ||
       r.id.startsWith('rule-seed-') ||
-      r.id === 'rule-philosophy-core' ||
-      r.id === 'rule-goals-detector-1';
+      r.id.startsWith('rule-goals-') ||
+      r.id.startsWith('rule-philosophy-') ||
+      r.id.startsWith('rule-workflow-') ||
+      r.id.startsWith('rule-risk-');
 
     if (isClassic) {
       classicCount++;
@@ -561,8 +631,10 @@ export function pruneZeroHitRules(): {
       r.id.startsWith('rule-model-') ||
       r.id.startsWith('rule-classic-') ||
       r.id.startsWith('rule-seed-') ||
-      r.id === 'rule-philosophy-core' ||
-      r.id === 'rule-goals-detector-1'
+      r.id.startsWith('rule-goals-') ||
+      r.id.startsWith('rule-philosophy-') ||
+      r.id.startsWith('rule-workflow-') ||
+      r.id.startsWith('rule-risk-')
     ) {
       return true;
     }
@@ -587,48 +659,57 @@ export function repairInconsistentLanguageRules(): {
   let repairedCount = 0;
 
   const repaired = currentRules.map((r) => {
+    // 1. Master Core Rules are authoritative definitions and should never be corrupted by inverted text replacements
+    const isMasterCore =
+      r.id.startsWith('rule-model-') ||
+      r.id.startsWith('rule-goals-') ||
+      r.id.startsWith('rule-philosophy-') ||
+      r.id.startsWith('rule-workflow-') ||
+      r.id.startsWith('rule-risk-') ||
+      r.id.startsWith('rule-classic-');
+
+    if (isMasterCore) {
+      return r;
+    }
+
     let title = r.title;
     let content = r.ruleContent;
     let category = r.category;
     let changed = false;
 
-    // Detect inverted language in France vs Belgium (4-1 win by France)
+    // Detect inverted language where a blowout win was erroneously called '冷门反杀'
     if (
-      (r.sourceMatch?.includes('法国') && r.sourceMatch?.includes('比利时')) ||
-      (content.includes('法国') && content.includes('比利时')) ||
-      (content.includes('一球/球半') && content.includes('3.5') && content.includes('【主胜】冷门反杀'))
+      (content.includes('【主胜】冷门反杀') || title.includes('【主胜】冷门反杀') || title.includes('逆向爆冷修正法')) &&
+      (content.includes('法国') || content.includes('比利时') || r.sourceMatch?.includes('法国'))
     ) {
       title = '欧国联【法国 vs 比利时】深盘实力穿盘验证法';
       category = 'POSITIVE_CONTROL';
       content = '针对 欧国联 类似对阵，若晚盘让步达 一球/球半 且大小球高达 3.5 时，属于真实对攻且让步深邃，切忌盲博受让下盘，顺应让步强队绝对攻势穿盘打出。';
       changed = true;
-    }
-    // Detect inverted language in Moldova vs Slovakia (0-4 win by Slovakia)
-    else if (
-      (r.sourceMatch?.includes('摩尔多瓦') && r.sourceMatch?.includes('斯洛伐克')) ||
-      (content.includes('摩尔多瓦') && content.includes('斯洛伐克')) ||
-      (content.includes('受球半') && content.includes('【客胜】冷门反杀'))
+    } else if (
+      (content.includes('【客胜】冷门反杀') || title.includes('【客胜】冷门反杀') || title.includes('逆向爆冷修正法')) &&
+      (content.includes('摩尔多瓦') || content.includes('斯洛伐克') || r.sourceMatch?.includes('斯洛伐克'))
     ) {
       title = '欧国联【摩尔多瓦 vs 斯洛伐克】客让深盘实力穿透法则';
       category = 'POSITIVE_CONTROL';
       content = '针对 欧国联 类似对阵，若晚盘呈现客让 受球半 且机构防线牢固，强弱分明格局下切忌盲博弱队受让，防范客队实力碾压穿盘大胜。';
       changed = true;
-    }
-    // General repair for any remaining inverted rules
-    else if (content.includes('【主胜】冷门反杀')) {
-      content = content.replace('【主胜】冷门反杀', '【主队实力穿盘】');
-      title = title.replace('逆向避险修正法', '实力穿盘验证法');
+    } else if (content.includes('【主胜】冷门反杀')) {
+      content = content.replace(/【主胜】冷门反杀/g, '【主队实力穿盘】');
+      title = title.replace(/逆向避险修正法/g, '实力穿盘验证法').replace(/【主胜】冷门反杀/g, '深盘实力穿盘');
+      category = 'POSITIVE_CONTROL';
       changed = true;
     } else if (
       content.includes('【客胜】冷门反杀') &&
-      (content.includes('受球半') || content.includes('受两球') || content.includes('受一球'))
+      (content.includes('受球半') || content.includes('受两球') || content.includes('受一球') || content.includes('净胜'))
     ) {
-      content = content.replace('【客胜】冷门反杀', '【客队实力穿透】');
-      title = title.replace('逆向避险修正法', '客让实力穿透法');
+      content = content.replace(/【客胜】冷门反杀/g, '【客队实力穿透】');
+      title = title.replace(/逆向避险修正法/g, '客让实力穿透法').replace(/【客胜】冷门反杀/g, '客胜实力穿盘');
+      category = 'POSITIVE_CONTROL';
       changed = true;
     }
 
-    if (changed) {
+    if (changed && (title !== r.title || content !== r.ruleContent || category !== r.category)) {
       repairedCount++;
       return { ...r, title, category, ruleContent: content };
     }
@@ -1219,6 +1300,17 @@ export function clearAllPostMatchReviews(): void {
     localStorage.removeItem(REVIEWS_STORAGE_KEY);
   } catch (e) {
     console.error('Error clearing reviews:', e);
+  }
+}
+
+/**
+ * Batch save all post-match reviews directly to storage
+ */
+export function saveAllPostMatchReviews(reviews: PostMatchReview[]): void {
+  try {
+    localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(reviews));
+  } catch (e) {
+    console.error('Error batch saving reviews:', e);
   }
 }
 

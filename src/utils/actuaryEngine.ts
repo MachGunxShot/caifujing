@@ -336,7 +336,9 @@ export function calculateConsistentPredictedScores(
  */
 export function generateActuarialRuleReport(data: FullMatchData): AnalysisReportResult {
   const metrics = computeActuarialMetrics(data);
-  const primaryModel = metrics.detectedModels[0] || {
+  // Sort detectedModels by confidence in descending order so the highest conviction model leads
+  const sortedModels = [...metrics.detectedModels].sort((a, b) => b.confidence - a.confidence);
+  const primaryModel = sortedModels[0] || {
     model: 'UNCLASSIFIED' as ManipulationModelType,
     title: '【复合博弈调仓盘】',
     confidence: 80,
@@ -380,9 +382,21 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 2. 欧赔走势维度：让步方欧指胜赔持续下调，平赔与负赔同步抬升，欧亚换算严丝合缝，没有出现欧降亚升的虚热背离。
 3. 大小球联动维度：${metrics.overUnderVerdict}。盘面整体逻辑自洽，无资金诱导死角，早盘意图与晚盘风控底牌高度一致。`;
 
-      starRating = 5;
+      // 梯次星级精算：<=1.76 或 (<=1.80 且欧赔持续大降或低赔 <=1.55) 为5星稳胆；1.77~1.84 为4星次稳优质档
+      const isExtremePositive =
+        givingOdds <= 1.76 ||
+        (givingOdds <= 1.80 && (givingEuroLate <= 1.55 || metrics.winTrend === 'DROP' || metrics.lossTrend === 'DROP'));
+
+      if (isExtremePositive) {
+        starRating = 5;
+        confidenceReason = `机构真实避险下调 ${givingTeam} 胜赔，水位强砸至 ${givingOdds.toFixed(2)} 冰点低水，5星顶级稳胆。`;
+      } else {
+        starRating = 4;
+        confidenceReason = `机构维持让步方（${givingTeam}）低水控赔区间（${givingOdds.toFixed(2)}），正路避险打出意图明确，4星次稳优质胆。`;
+      }
+
       if (isHomeGiving) {
-        euroPick = '主胜 (稳胆)';
+        euroPick = isExtremePositive ? '主胜 (稳胆)' : '主胜';
         handicapPick = `上盘 ${homeTeam} (${lateHandicap})`;
         finalDirection = `【推荐方向】：主队（上盘 ${homeTeam} ${lateHandicap}）及主胜稳胆`;
         finalDirectionDetail = handicapGoals >= 1.25
@@ -391,7 +405,7 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
           ? `竞彩/盘口：主胜独赢 / 亚指上盘；机构真实避险控赔，首选主胜赢球保走争穿。`
           : `竞彩/盘口：主胜独赢 / 亚指上盘；机构真实避险控赔，首选上盘正路赢盘打出。`;
       } else if (isAwayGiving) {
-        euroPick = '客胜 (稳胆)';
+        euroPick = isExtremePositive ? '客胜 (稳胆)' : '客胜';
         handicapPick = `上盘 ${awayTeam} (-${handicapGoals}客让)`;
         finalDirection = `【推荐方向】：客队（上盘 ${awayTeam} 客让${handicapGoals}球）及客胜稳胆`;
         finalDirectionDetail = handicapGoals >= 1.25
@@ -408,7 +422,6 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 
       overUnderPick = lateOUNum <= 2.25 ? `小球 (<=${data.overUnder.lateLine})` : `大球 (>=${data.overUnder.lateLine})`;
       riskWarning = `避坑风险提示：此类超低水盘面切忌因“赔率过低、回报太少”而盲目博冷去下盘。大庄的底牌已毫无保留地向让步强队倾斜，顺应机构风控是唯一正解。`;
-      confidenceReason = `机构真实避险下调 ${givingTeam} 胜赔，水位砸至冰点防范打出，5星稳胆。`;
       break;
     }
 
@@ -419,7 +432,23 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 2. 欧赔走势维度：让步方欧指并未出现深幅夯实，反而遭遇断崖式抛售暴涨，受让方（${receivingTeam}）胜平赔持续压低，欧亚折算呈现明显的“虚张声势掩护出货”，机构在用盘口障眼法为强队吸纳巨量筹码。
 3. 大小球与北单去水联动维度：${metrics.overUnderVerdict}。若配合让负去水或受让赔率持续走低，下盘 ${receivingTeam} 爆冷不败甚至客胜独赢形态已彻底确立。`;
 
-      starRating = 5;
+      // 梯次星级精算：欧赔断崖跳涨 >=0.22 或 水位 >=2.05 满水毒药盘 或 多模型重合 -> 5星顶级杀猪盘；常规诱上 -> 4星重点防冷档
+      const earlyEuroFav = isHomeGiving ? data.euroOdds.earlyWin : data.euroOdds.earlyLoss;
+      const favEuroJump = givingEuroLate - earlyEuroFav;
+      const isExtremeTrap =
+        favEuroJump >= 0.22 ||
+        givingOdds >= 2.05 ||
+        (givingEuroLate >= 2.02 && earlyEuroFav <= 1.78) ||
+        metrics.detectedModels.length >= 2;
+
+      if (isExtremeTrap) {
+        starRating = 5;
+        confidenceReason = `让步方（${givingTeam}）欧赔断崖暴涨、亚指死卡满水出货，大热必死，反选5星顶级杀猪盘。`;
+      } else {
+        starRating = 4;
+        confidenceReason = `让步方（${givingTeam}）高水利诱筹码，存在明显诱上出货痕迹，反选下盘4星重点防冷。`;
+      }
+
       if (isHomeGiving) {
         euroPick = '让球负 (客队受让胜)';
         handicapPick = `下盘 ${awayTeam} (+${handicapGoals}受让)`;
@@ -439,7 +468,6 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 
       overUnderPick = lateOUNum >= 2.75 ? `大球 (>=${data.overUnder.lateLine})` : `小球 (<=${data.overUnder.lateLine})`;
       riskWarning = `避坑风险提示：千万警惕名气虚火与主队情怀！凡是“让步方高水出货、欧赔反常狂飙暴涨”的杀猪盘，99% 为机构收割局，坚决不碰上盘，拥抱下盘避风港。`;
-      confidenceReason = `让步方（${givingTeam}）欧赔暴涨、亚指死卡满水出货，大热必死，反选5星杀猪盘。`;
       break;
     }
 
@@ -450,7 +478,18 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 2. 欧赔走势维度：让步方欧指大幅抬高，平赔低压或受让方胜赔暴跌，欧赔异动彻底证伪了早盘对让步方的信心。
 3. 大小球联动维度：${metrics.overUnderVerdict}。进球数防线伴随胜负盘同步收缩，反映出让球方在进攻端存在难以弥补的硬伤。`;
 
-      starRating = 4;
+      // 梯次星级精算：深度雪崩（跨两档）或欧赔胜赔飙涨 >=0.25 为5星顶级防冷；常规退盘为4星防冷档
+      const earlyHandicapVal = parseHandicapValue(data.asianHandicap.earlyHandicap);
+      const isDeepAvalanche = Math.abs(lateHandicapNum - earlyHandicapVal) >= 0.5;
+
+      if (isDeepAvalanche) {
+        starRating = 5;
+        confidenceReason = `临场让球方防线深度崩溃退盘，机构彻底弃守，反选下盘5星顶级防冷。`;
+      } else {
+        starRating = 4;
+        confidenceReason = `临场让球方退盘升水，核心利空坐实，跟退盘4星重点防冷。`;
+      }
+
       if (isHomeGiving) {
         euroPick = '平 / 负 (客队不败)';
         handicapPick = `下盘 ${awayTeam} (+${handicapGoals}受让)`;
@@ -465,7 +504,6 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 
       overUnderPick = `小球 (<=${data.overUnder.lateLine})`;
       riskWarning = `避坑风险提示：切勿抱有“豪门退盘捡便宜上车”的侥幸心理。透明联赛临场剧烈退盘，大庄是在止损避险，跟退盘者存，盲抄底者亡。`;
-      confidenceReason = `临场让球方退盘升水，核心利空坐实，跟退盘4星。`;
       break;
     }
 
@@ -476,14 +514,21 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 2. 欧赔走势维度：平赔 ${lateDraw.toFixed(2)} 异常低企，凯利指数在平局上形成牢不可破的安全垫，主胜与客胜均缺乏绝对防范价值。
 3. 大小球联动维度：${metrics.overUnderVerdict}。与平局模型最契合的比分多为小球对峙。`;
 
-      starRating = 5;
-      euroPick = '平局 (首选胆平)';
+      // 梯次星级精算：平赔 <= 2.90 为5星绝对胆平；2.91~3.10 为4星防冷防平档
+      if (lateDraw <= 2.90) {
+        starRating = 5;
+        confidenceReason = `主流欧指平赔死压至 ${lateDraw.toFixed(2)} 极度防御区，两端分流打掩护，5星绝对胆平。`;
+      } else {
+        starRating = 4;
+        confidenceReason = `平赔压制在 ${lateDraw.toFixed(2)} 低位防御带，两端胶着严防平局，4星防冷防平。`;
+      }
+
+      euroPick = starRating === 5 ? '平局 (首选胆平)' : '平局 / 让球胜平';
       handicapPick = `下盘 ${receivingTeam} (+${handicapGoals || 0.25}/平手)`;
       finalDirection = `【推荐方向】：首选平局（胆平 / 下盘受让平局），次选小球`;
       finalDirectionDetail = `竞彩/盘口：直接博平局 (Draw) / 双选平+让平；比分参考 1-1、0-0`;
       riskWarning = `避坑风险提示：不要试图在主客胜两头寻找所谓的价值，平赔压至3.00以下是机构最明确的预警红线，两头下注极易被精准绝杀。`;
       overUnderPick = `小球 (<=${data.overUnder.lateLine})`;
-      confidenceReason = '平赔死压至3.00极度防御区，两端分流打掩护，5星胆平。';
       break;
     }
 
@@ -494,7 +539,15 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 2. 欧赔走势维度：让步方欧赔居高不下，与两队真实战力严重脱节，受让方不败概率被严重低估。
 3. 大小球联动维度：${metrics.overUnderVerdict}。`;
 
-      starRating = 5;
+      // 梯次星级精算：浅盘满水天然为“4星重点防冷档”；当水位达到 >=2.08 或多模型叠加时晋级为5星顶级冷门
+      if (givingOdds >= 2.08 || metrics.detectedModels.length >= 2) {
+        starRating = 5;
+        confidenceReason = `强队（${givingTeam}）浅盘死卡 ${givingOdds.toFixed(2)} 毒药超高水，机构大门敞开收割，5星必杀冷门下盘。`;
+      } else {
+        starRating = 4;
+        confidenceReason = `强队（${givingTeam}）浅盘挂 ${givingOdds.toFixed(2)} 满水，阻力不足买得舒服必有诈，4星重点防冷坚决走下盘。`;
+      }
+
       if (isHomeGiving) {
         euroPick = '让球负 (客胜/平)';
         handicapPick = `下盘 ${awayTeam} (+0.25/0)`;
@@ -508,7 +561,6 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
       }
       overUnderPick = lateOUNum >= 2.75 ? `大球 (>=${data.overUnder.lateLine})` : `小球 (<=${data.overUnder.lateLine})`;
       riskWarning = `避坑风险提示：强队浅盘满水是足彩最大的温床陷阱。凡是买得太舒服的盘，99% 是送命题，果断舍弃强队情怀。`;
-      confidenceReason = `强队（${givingTeam}）浅盘挂满水，买得太舒服必定送命，5星冷门下盘。`;
       break;
     }
 
@@ -519,7 +571,17 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 2. 欧赔走势：返还率 ${metrics.lateReturnRate.toFixed(1)}%，平局赔率 ${lateDraw.toFixed(2)}，三项分布处于博弈均衡线。
 3. 大小球联动：${metrics.overUnderVerdict}。`;
 
-      starRating = 3;
+      // 梯次星级精算：未分类盘口若出现极端大小球测谎偏离，可归为4星大小球联动精选；否则为3星常规博弈
+      if (
+        (Math.abs(lateHandicapNum) >= 1.25 && lateOUNum <= 2.0) ||
+        (Math.abs(lateHandicapNum) <= 0.25 && lateOUNum >= 3.5)
+      ) {
+        starRating = 4;
+        confidenceReason = '盘口虽处调仓期，但大小球与胜负盘呈现强烈异动测谎，4星大小球联动精选。';
+      } else {
+        starRating = 3;
+        confidenceReason = '平手/常规博弈盘型，多空资金均衡博弈，3星常规博弈档。';
+      }
 
       if (lateHandicapNum === 0) {
         // 平手均势盘
