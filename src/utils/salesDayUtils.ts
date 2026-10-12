@@ -137,523 +137,236 @@ export function matchTeamsFuzzy(nameA: string, nameB: string): boolean {
   return false;
 }
 
-/**
- * 提取文本或 Markdown 文档中全局的日期标头 (如 "# 2026-03-28 竞彩大名单" 或 "日期: 2026-03-28")
- */
+/** Sales dates use Beijing time (UTC+8), independently of the browser timezone. */
+const SALES_TIMEZONE_OFFSET = 8 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const DATE_PATTERN = /(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})(?:日)?/;
+const TIME_PATTERN = /(\d{1,2})[:：](\d{2})(?::\d{2})?/;
+
+function calendarDate(year: number, month: number, day: number): Date | null {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() + 1 === month && date.getUTCDate() === day
+    ? date : null;
+}
+
+function dateKey(date: Date): string {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+}
+
+function parseSalesDate(value?: string): Date | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split('-').map(Number);
+  return calendarDate(year, month, day);
+}
+
+function businessDate(timestamp: number): Date {
+  return new Date(timestamp + SALES_TIMEZONE_OFFSET);
+}
+
+function activeSalesDate(timestamp: number): Date {
+  const wallTime = businessDate(timestamp);
+  const date = calendarDate(wallTime.getUTCFullYear(), wallTime.getUTCMonth() + 1, wallTime.getUTCDate())!;
+  if (wallTime.getUTCHours() < 11) date.setUTCDate(date.getUTCDate() - 1);
+  return date;
+}
+
+function normalizeDateString(raw: string): string | null {
+  const match = raw.match(DATE_PATTERN);
+  if (!match) return null;
+  const date = calendarDate(Number(match[1]), Number(match[2]), Number(match[3]));
+  return date ? dateKey(date) : null;
+}
+
+/** Extract the document's sales-day heading, before considering individual match dates. */
 export function extractDocumentGlobalDate(text: string): string | null {
   if (!text) return null;
-
-  // 1. Explicit date line: 日期：2026-03-28 or 比赛日: 2026-03-28 or 销售日: 2026-03-28
-  const explicitMatch = text.match(/(?:日期|比赛日|销售日|开赛日期|时间)[：:\s]+(20\d{2}[-/.]\d{1,2}[-/.]\d{1,2})/i);
-  if (explicitMatch) return normalizeDateString(explicitMatch[1]);
-
-  // 2. Heading date: # 2026-03-28 or ## 2026-03-28 or # 2026年3月28日
-  const headingMatch = text.match(/#+\s*.*?(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})/);
-  if (headingMatch) {
-    const y = headingMatch[1];
-    const m = headingMatch[2].padStart(2, '0');
-    const d = headingMatch[3].padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  }
-
-  // 3. First standard full date found in first 500 characters
-  const headerSample = text.slice(0, 500);
-  const generalDateMatch = headerSample.match(/(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})/);
-  if (generalDateMatch) {
-    const y = generalDateMatch[1];
-    const m = generalDateMatch[2].padStart(2, '0');
-    const d = generalDateMatch[3].padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  }
-
-  return null;
+  const cleaned = text.replace(/\*\*/g, '');
+  const salesLabel = cleaned.match(/销售日(?:期)?[：:\s]+(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?)/);
+  if (salesLabel) return normalizeDateString(salesLabel[1]);
+  const heading = cleaned.match(/^#+[^\n]*(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?)/m);
+  if (heading) return normalizeDateString(heading[1]);
+  const label = cleaned.match(/(?:^|\n)\s*(?:日期|比赛日|开赛日期)[：:\s]+(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?)/);
+  if (label) return normalizeDateString(label[1]);
+  return normalizeDateString(cleaned.slice(0, 500));
 }
 
-/**
- * 将各种格式的日期串标准化为 YYYY-MM-DD
- */
-function normalizeDateString(raw: string): string {
-  const parts = raw.split(/[-/.]/);
-  if (parts.length === 3) {
-    const y = parts[0].length === 4 ? parts[0] : `20${parts[0]}`;
-    const m = parts[1].padStart(2, '0');
-    const d = parts[2].padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  }
-  return raw;
-}
-
-/**
- * 从单场比赛的 Markdown 片段、表格行或纯文本中高精度提取开赛时间
- */
-export function extractKickoffTime(sectionOrLine: string, documentContext?: string): string {
-  if (!sectionOrLine || !sectionOrLine.trim()) return '临场';
-
-  const text = sectionOrLine.trim();
-  const globalDocDate = documentContext ? extractDocumentGlobalDate(documentContext) : null;
-
-  // 1. Explicit label match with full datetime (e.g. "开赛时间: 2026-03-28 23:00" or "比赛时间: 2026-03-28 23:00")
-  const fullDateTimeLabelMatch = text.match(
-    /(?:开赛时间|比赛时间|开赛时刻|开赛|比赛|时刻|时间)[：:\s]+(20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)/i
-  );
-  if (fullDateTimeLabelMatch) {
-    return cleanKickoffTime(fullDateTimeLabelMatch[1]);
-  }
-
-  // 2. Explicit label match with month-day + time (e.g. "开赛时间: 03-28 23:00" or "比赛时间: 3-28 23:00")
-  const mdTimeLabelMatch = text.match(
-    /(?:开赛时间|比赛时间|开赛时刻|开赛|比赛|时刻|时间)[：:\s]+(\d{1,2}[-/.]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?)/i
-  );
-  if (mdTimeLabelMatch) {
-    const raw = mdTimeLabelMatch[1].trim();
-    const currentYear = globalDocDate ? globalDocDate.split('-')[0] : new Date().getFullYear().toString();
-    return `${currentYear}-${cleanKickoffTime(raw)}`;
-  }
-
-  // 3. Explicit label match with Chinese format (e.g. "比赛时间: 3月28日 23:00" or "开赛: 03月28日 23:00")
-  const cnDateLabelMatch = text.match(
-    /(?:开赛时间|比赛时间|开赛时刻|开赛|比赛|时刻|时间)[：:\s]+(?:(\d{4})年)?(\d{1,2})月(\d{1,2})日(?:\s*周[一二三四五六日天])?\s*(\d{1,2}:\d{2})/i
-  );
-  if (cnDateLabelMatch) {
-    const y = cnDateLabelMatch[1] || (globalDocDate ? globalDocDate.split('-')[0] : new Date().getFullYear().toString());
-    const m = cnDateLabelMatch[2].padStart(2, '0');
-    const d = cnDateLabelMatch[3].padStart(2, '0');
-    const time = cnDateLabelMatch[4];
-    return `${y}-${m}-${d} ${time}`;
-  }
-
-  // 4. Explicit label match with time only (e.g. "开赛时间: 23:00" or "开赛: 03:00")
-  const timeOnlyLabelMatch = text.match(
-    /(?:开赛时间|比赛时间|开赛时刻|开赛|时刻)[：:\s]+(\d{1,2}:\d{2}(?::\d{2})?)/i
-  );
-  if (timeOnlyLabelMatch) {
-    const t = timeOnlyLabelMatch[1].slice(0, 5);
-    if (globalDocDate) {
-      return `${globalDocDate} ${t}`;
-    }
-    return t;
-  }
-
-  // 5. Look for full datetime anywhere in text: e.g. "2026-03-28 23:00" or "2026/03/28 23:00"
-  const generalFullDateTimeMatch = text.match(
-    /\b(20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?)\b/
-  );
-  if (generalFullDateTimeMatch) {
-    return cleanKickoffTime(generalFullDateTimeMatch[1]);
-  }
-
-  // 6. Look for month-day + time anywhere in text: e.g. "03-28 23:00" or "03/28 23:00"
-  const generalMdTimeMatch = text.match(
-    /\b(\d{1,2}[-/.]\d{1,2}\s+\d{1,2}:\d{2})\b/
-  );
-  if (generalMdTimeMatch) {
-    const raw = generalMdTimeMatch[1].trim();
-    const currentYear = globalDocDate ? globalDocDate.split('-')[0] : new Date().getFullYear().toString();
-    return `${currentYear}-${cleanKickoffTime(raw)}`;
-  }
-
-  // 7. Check Markdown table columns: e.g. "| 欧冠 | 2026-03-28 23:00 | 曼城 | 皇马 |"
-  if (text.includes('|')) {
-    const cols = text.split('|').map((c) => c.trim()).filter(Boolean);
-    for (const col of cols) {
-      // Check full datetime column
-      const colFullMatch = col.match(/^20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}\s+\d{1,2}:\d{2}$/);
-      if (colFullMatch) return cleanKickoffTime(colFullMatch[0]);
-
-      // Check month-day time column
-      const colMdMatch = col.match(/^\d{1,2}[-/.]\d{1,2}\s+\d{1,2}:\d{2}$/);
-      if (colMdMatch) {
-        const currentYear = globalDocDate ? globalDocDate.split('-')[0] : new Date().getFullYear().toString();
-        return `${currentYear}-${cleanKickoffTime(colMdMatch[0])}`;
-      }
-
-      // Check lone HH:mm column (and exclude scores like "2:1" or odds like "1.90")
-      const colTimeMatch = col.match(/^(\d{1,2}:\d{2})$/);
-      if (colTimeMatch) {
-        const t = colTimeMatch[1];
-        if (globalDocDate) return `${globalDocDate} ${t}`;
-        return t;
-      }
-    }
-  }
-
-  // 8. Match parenthesized or bracketed time: e.g. "(23:00)" or "【23:00】" or "周六001 23:00"
-  const parenTimeMatch = text.match(/(?:周[一二三四五六日天]\d{3}\s*)?[(（【]?(\d{1,2}:\d{2})[)）】]?/);
-  if (parenTimeMatch && !parenTimeMatch[0].includes('-')) {
-    const t = parenTimeMatch[1];
-    // Verify it's a valid hour (00-23) and minute (00-59)
-    const [h, m] = t.split(':').map(Number);
-    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
-      if (globalDocDate) return `${globalDocDate} ${t}`;
-      return t;
-    }
-  }
-
-  return '临场';
-}
-
-/**
- * 清洗规范化开赛时间文本
- */
 function cleanKickoffTime(raw: string): string {
-  // Replace slashes or dots with dashes
-  let clean = raw.trim().replace(/[/.]/g, '-');
-  // Normalize double spaces
-  clean = clean.replace(/\s+/g, ' ');
-  // Ensure seconds are stripped if present (e.g. 23:00:00 -> 23:00)
-  clean = clean.replace(/(\d{1,2}:\d{2}):\d{2}/, '$1');
-  return clean;
+  return raw.trim().replace(/[/.]/g, '-').replace(/：/g, ':').replace(/\s+/g, ' ')
+    .replace(/(\d{1,2}:\d{2}):\d{2}/, '$1');
 }
 
-/**
- * 核心算法：依据开赛时间与彩票规则计算“销售日 (Sales Day)”
- * 规则：当日早上 11:00 至次日早上 11:00 为一个销售日。
- * 
- * @param kickoffTime 开赛时间 (如 "2026-03-28 23:00" 或 "2026-03-29 03:00" 或 "23:00" 或 "临场")
- * @param fallbackTimestamp 若未识别出开赛日期时的后备时间戳 (如比赛导入/复盘创建的时间戳)
- * @param preferredSalesDate 优先绑定的批次销售日 (如已有队列主销售日 "2026-03-28"，防止同轮次比赛跳跃到次日)
- */
+function validTime(hour: number, minute: number): boolean {
+  return hour >= 0 && hour < 24 && minute >= 0 && minute < 60;
+}
+
+/** A calendar date is evidence only when it is valid; generated "日期 临场" is not a kickoff. */
+export function hasExplicitKickoffDate(value?: string): boolean {
+  if (!value || /临场|已完场/.test(value)) return false;
+  const full = value.match(DATE_PATTERN);
+  if (full) return !!calendarDate(Number(full[1]), Number(full[2]), Number(full[3]));
+  return /\d{1,2}[-/.月]\d{1,2}日?\s+\d{1,2}[:：]\d{2}/.test(value);
+}
+
+/** Extract kickoff time, resolving time-only entries within the document's sales cycle. */
+export function extractKickoffTime(sectionOrLine: string, documentContext?: string): string {
+  if (!sectionOrLine?.trim()) return '临场';
+  const text = sectionOrLine.replace(/\*\*/g, '').trim();
+  const anchor = documentContext ? extractDocumentGlobalDate(documentContext) : null;
+  const full = text.match(/20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?(?:\s*(?:周|星期)[一二三四五六日天])?[T\s]+\d{1,2}[:：]\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?/i);
+  if (full) return calculateSalesDate(full[0]).kickoffTimeFormatted;
+  const monthDay = text.match(/(?:^|[^\d-])(\d{1,2}[-/.月]\d{1,2}日?\s+\d{1,2}[:：]\d{2})/);
+  if (monthDay) return calculateSalesDate(monthDay[1], undefined, anchor || undefined).kickoffTimeFormatted;
+  const label = text.match(/(?:开赛时间|比赛时间|开赛时刻|开赛|时刻|时间)[：:\s]+((?:(?:次日|翌日)\s*)?\d{1,2}[:：]\d{2})/);
+  const tableTime = text.split('|').map(col => col.trim()).find(col => /^\d{1,2}[:：]\d{2}$/.test(col));
+  const standalone = text.match(/(?:^|\s|[（(【])((?:(?:次日|翌日)\s*)?\d{1,2}[:：]\d{2})(?=$|\s|[）)】])/);
+  const value = label?.[1] || tableTime || standalone?.[1];
+  if (value) {
+    const time = value.match(TIME_PATTERN)!;
+    if (!validTime(Number(time[1]), Number(time[2]))) return '临场';
+    if (anchor) {
+      const day = parseSalesDate(anchor)!;
+      if (Number(time[1]) < 11 || /次日|翌日/.test(value)) day.setUTCDate(day.getUTCDate() + 1);
+      return `${dateKey(day)} ${String(Number(time[1])).padStart(2, '0')}:${time[2]}`;
+    }
+    // Retain the weekday when present, instead of throwing away useful date context.
+    const weekday = text.match(/(?:周|星期)[一二三四五六日天](?:\d{3})?/);
+    return `${weekday ? weekday[0] + ' ' : ''}${cleanKickoffTime(value)}`;
+  }
+  const dateLabel = text.match(/(?:开赛时间|比赛时间|开赛日期)[：:\s]+(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?)/);
+  return dateLabel ? normalizeDateString(dateLabel[1]) || '临场' : '临场';
+}
+
+/** [11:00, next day 11:00): explicit kickoff dates always win over a batch anchor. */
 export function calculateSalesDate(
   kickoffTime?: string,
   fallbackTimestamp?: number,
   preferredSalesDate?: string
 ): SalesDateInfo {
-  const daysOfWeek = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
-  const now = new Date();
+  const timestamp = Number.isFinite(fallbackTimestamp) ? fallbackTimestamp! : Date.now();
+  const anchor = parseSalesDate(preferredSalesDate);
+  const fallback = activeSalesDate(timestamp);
+  const reference = anchor || fallback;
+  const text = (kickoffTime || '').trim();
+  const time = text.match(TIME_PATTERN);
+  const hour = time ? Number(time[1]) : 12;
+  const minute = time ? Number(time[2]) : 0;
+  let kickoffDate: Date | null = null;
+  let resolvedHour = hour;
+  let resolvedMinute = minute;
+  let explicit = false;
 
-  // 当前活跃销售日 (系统此时此刻所处的销售日)
-  let currentActiveSalesDate = '';
-  if (now.getHours() >= 11) {
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = String(now.getDate()).padStart(2, '0');
-    currentActiveSalesDate = `${y}-${m}-${d}`;
-  } else {
-    const yest = new Date(now.getTime() - 24 * 3600 * 1000);
-    const y = yest.getFullYear();
-    const m = String(yest.getMonth() + 1).padStart(2, '0');
-    const d = String(yest.getDate()).padStart(2, '0');
-    currentActiveSalesDate = `${y}-${m}-${d}`;
-  }
-
-  const timeStr = (kickoffTime || '').trim();
-
-  // 若开赛时间完全为空、仅为“临场”或“已完场”，且明确指定了基准销售日 preferredSalesDate，作为兜底归属
-  const hasTimeContent = /(?:20\d{2}[-/.]|\d{1,2}[-/.月]|(?:周|星期)[一二三四五六日天]|\b\d{1,2}:\d{2}\b)/.test(timeStr);
-  if (!hasTimeContent && preferredSalesDate && /^\d{4}-\d{2}-\d{2}$/.test(preferredSalesDate)) {
-    const [py, pm, pd] = preferredSalesDate.split('-').map(Number);
-    const sy = String(py);
-    const sm = String(pm).padStart(2, '0');
-    const sd = String(pd).padStart(2, '0');
-    const salesDate = `${sy}-${sm}-${sd}`;
-    const salesDateLabel = `${sy}年${sm}月${sd}日 销售日`;
-
-    const salesBaseDate = new Date(py, pm - 1, pd);
-    const nextSalesDate = new Date(salesBaseDate.getTime() + 24 * 3600 * 1000);
-    const startM = String(salesBaseDate.getMonth() + 1).padStart(2, '0');
-    const startD = String(salesBaseDate.getDate()).padStart(2, '0');
-    const endM = String(nextSalesDate.getMonth() + 1).padStart(2, '0');
-    const endD = String(nextSalesDate.getDate()).padStart(2, '0');
-    const salesCycleText = `${startM}-${startD} 11:00 ~ ${endM}-${endD} 11:00`;
-    const dayOfWeek = daysOfWeek[salesBaseDate.getDay()];
-    const isCurrentSalesDay = salesDate === currentActiveSalesDate;
-
-    return {
-      salesDate,
-      salesDateLabel,
-      salesCycleText,
-      dayOfWeek,
-      isCurrentSalesDay,
-      kickoffTimeFormatted: timeStr || `${salesDate} 临场`,
-    };
-  }
-
-  // 1. 深度解析开赛时间（支持完整日期、月日、周几+时间、独立时间等全场景）
-  let kickoffYear: number | null = null;
-  let kickoffMonth: number | null = null;
-  let kickoffDay: number | null = null;
-  let kickoffHour: number | null = null;
-  let kickoffMinute: number | null = null;
-  let hasExplicitDate = false;
-
-  // A. Check if kickoffTime has full date and time: YYYY-MM-DD HH:mm
-  const fullMatch = timeStr.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?/);
-  if (fullMatch) {
-    hasExplicitDate = true;
-    kickoffYear = parseInt(fullMatch[1], 10);
-    kickoffMonth = parseInt(fullMatch[2], 10);
-    kickoffDay = parseInt(fullMatch[3], 10);
-    kickoffHour = fullMatch[4] !== undefined ? parseInt(fullMatch[4], 10) : 12;
-    kickoffMinute = fullMatch[5] !== undefined ? parseInt(fullMatch[5], 10) : 0;
-  } else {
-    // B. Check if it's MM-DD HH:mm or M月D日 HH:mm
-    const mdMatch = timeStr.match(/(\d{1,2})[-/.月](\d{1,2})(?:日)?\s+(\d{1,2}):(\d{2})/);
-    if (mdMatch) {
-      hasExplicitDate = true;
-      const baseYear = preferredSalesDate && /^\d{4}/.test(preferredSalesDate)
-        ? parseInt(preferredSalesDate.slice(0, 4), 10)
-        : fallbackTimestamp ? new Date(fallbackTimestamp).getFullYear() : now.getFullYear();
-      kickoffYear = baseYear;
-      kickoffMonth = parseInt(mdMatch[1], 10);
-      kickoffDay = parseInt(mdMatch[2], 10);
-      kickoffHour = parseInt(mdMatch[3], 10);
-      kickoffMinute = parseInt(mdMatch[4], 10);
+  if (!/临场|已完场/.test(text) && validTime(hour, minute)) {
+    // Zoned ISO timestamps represent instants; display them in Beijing time.
+    if (/^20\d{2}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)) {
+      const parsed = Date.parse(text.replace(' ', 'T'));
+      const isoDate = text.match(DATE_PATTERN)!;
+      if (Number.isFinite(parsed) && calendarDate(Number(isoDate[1]), Number(isoDate[2]), Number(isoDate[3]))) {
+        const wallTime = businessDate(parsed);
+        kickoffDate = calendarDate(wallTime.getUTCFullYear(), wallTime.getUTCMonth() + 1, wallTime.getUTCDate());
+        resolvedHour = wallTime.getUTCHours();
+        resolvedMinute = wallTime.getUTCMinutes();
+        explicit = true;
+      }
     } else {
-      // C. Check if it contains Chinese Weekday: 周一 ~ 周日 / 星期一 ~ 星期日 (e.g. "周六 20:30", "周日 03:00", "周一 04:00", "周六015 21:00")
-      const weekdayMatch = timeStr.match(/(?:周|星期)([一二三四五六日天])/);
-      if (weekdayMatch) {
-        hasExplicitDate = true;
-        const cnChar = weekdayMatch[1];
-        const weekdayMap: Record<string, number> = {
-          '日': 0, '天': 0, '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6,
-        };
-        const targetWeekday = weekdayMap[cnChar] ?? 0;
-
-        // Determine base anchor date
-        let baseDateObj = now;
-        if (preferredSalesDate && /^\d{4}-\d{2}-\d{2}$/.test(preferredSalesDate)) {
-          const [py, pm, pd] = preferredSalesDate.split('-').map(Number);
-          baseDateObj = new Date(py, pm - 1, pd, 12, 0, 0);
-        } else if (fallbackTimestamp) {
-          baseDateObj = new Date(fallbackTimestamp);
-        }
-
-        const baseWeekday = baseDateObj.getDay();
-        let diffDays = targetWeekday - baseWeekday;
-        if (diffDays > 3) diffDays -= 7;
-        if (diffDays < -3) diffDays += 7;
-
-        const targetDateObj = new Date(baseDateObj.getTime() + diffDays * 24 * 3600 * 1000);
-        kickoffYear = targetDateObj.getFullYear();
-        kickoffMonth = targetDateObj.getMonth() + 1;
-        kickoffDay = targetDateObj.getDate();
-
-        // Extract HH:mm from timeStr
-        const timePart = timeStr.match(/(\d{1,2}):(\d{2})/);
-        if (timePart) {
-          kickoffHour = parseInt(timePart[1], 10);
-          kickoffMinute = parseInt(timePart[2], 10);
-        } else {
-          kickoffHour = 20; // 默认晚间比赛 (20:00，自然属于当天销售日)
-          kickoffMinute = 0;
-        }
+      const full = text.match(DATE_PATTERN);
+      const md = !full && text.match(/(\d{1,2})[-/.月](\d{1,2})日?\s+\d{1,2}[:：]\d{2}/);
+      if (full) {
+        kickoffDate = calendarDate(Number(full[1]), Number(full[2]), Number(full[3]));
+        explicit = !!kickoffDate;
+      } else if (md) {
+        // Choose the nearest year to the anchor, including December/January rollover.
+        const year = reference.getUTCFullYear();
+        const candidates = [year - 1, year, year + 1]
+          .map(y => calendarDate(y, Number(md[1]), Number(md[2])))
+          .filter((date): date is Date => !!date)
+          .sort((a, b) => Math.abs(a.getTime() - reference.getTime()) - Math.abs(b.getTime() - reference.getTime()));
+        kickoffDate = candidates[0] || null;
+        explicit = !!kickoffDate;
       } else {
-        // D. Check if it's lone HH:mm (e.g. "23:00" or "03:00")
-        const timeOnlyMatch = timeStr.match(/(?:^|\s)(\d{1,2}):(\d{2})(?:$|\s)/);
-        if (timeOnlyMatch) {
-          kickoffHour = parseInt(timeOnlyMatch[1], 10);
-          kickoffMinute = parseInt(timeOnlyMatch[2], 10);
-
-          // 若提供了批次锚定销售日 preferredSalesDate，作为基准日
-          if (preferredSalesDate && /^\d{4}-\d{2}-\d{2}$/.test(preferredSalesDate)) {
-            const [py, pm, pd] = preferredSalesDate.split('-').map(Number);
-            kickoffYear = py;
-            kickoffMonth = pm;
-            kickoffDay = pd;
-            // 若为次日凌晨 (00:00~10:59)，实际比赛开赛时间为次日日历天
-            if (kickoffHour < 11) {
-              const nextDay = new Date(new Date(py, pm - 1, pd).getTime() + 24 * 3600 * 1000);
-              kickoffYear = nextDay.getFullYear();
-              kickoffMonth = nextDay.getMonth() + 1;
-              kickoffDay = nextDay.getDate();
-            }
-          } else {
-            const base = fallbackTimestamp ? new Date(fallbackTimestamp) : now;
-            kickoffYear = base.getFullYear();
-            kickoffMonth = base.getMonth() + 1;
-            kickoffDay = base.getDate();
-            if (kickoffHour < 11) {
-              const nextCalendarDay = new Date(base.getTime() + 24 * 3600 * 1000);
-              kickoffYear = nextCalendarDay.getFullYear();
-              kickoffMonth = nextCalendarDay.getMonth() + 1;
-              kickoffDay = nextCalendarDay.getDate();
-            }
-          }
+        const weekday = text.match(/(?:周|星期)([一二三四五六日天])/);
+        if (weekday) {
+          const weekdayMap: Record<string, number> = { 日: 0, 天: 0, 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6 };
+          const target = weekdayMap[weekday[1]];
+          // 竞彩编号中的周几是销售日；凌晨场次在该销售日的次日开赛。
+          const lotteryCode = /(?:周|星期)[一二三四五六日天]\d{3}/.test(text);
+          let difference = target - reference.getUTCDay();
+          if (difference > 3) difference -= 7;
+          if (difference < -3) difference += 7;
+          kickoffDate = new Date(reference.getTime());
+          kickoffDate.setUTCDate(kickoffDate.getUTCDate() + difference + (lotteryCode && hour < 11 ? 1 : 0));
+          explicit = true;
+        } else if (time) {
+          kickoffDate = new Date(reference.getTime());
+          if (hour < 11 || /次日|翌日/.test(text)) kickoffDate.setUTCDate(kickoffDate.getUTCDate() + 1);
         }
       }
     }
   }
 
-  // 2. 若完全未解析出具体时间，采用 preferredSalesDate 或后备时间戳
-  if (kickoffYear === null || kickoffMonth === null || kickoffDay === null || kickoffHour === null) {
-    if (preferredSalesDate && /^\d{4}-\d{2}-\d{2}$/.test(preferredSalesDate)) {
-      const [py, pm, pd] = preferredSalesDate.split('-').map(Number);
-      kickoffYear = py;
-      kickoffMonth = pm;
-      kickoffDay = pd;
-      kickoffHour = 12; // 默认中午12:00（属于 preferredSalesDate 销售日）
-      kickoffMinute = 0;
-    } else {
-      const fallbackDate = fallbackTimestamp ? new Date(fallbackTimestamp) : now;
-      kickoffYear = fallbackDate.getFullYear();
-      kickoffMonth = fallbackDate.getMonth() + 1;
-      kickoffDay = fallbackDate.getDate();
-      kickoffHour = fallbackDate.getHours();
-      kickoffMinute = fallbackDate.getMinutes();
+  let salesDateObj = new Date(reference.getTime());
+  let kickoffTimeFormatted = text || '临场';
+  if (kickoffDate) {
+    salesDateObj = new Date(kickoffDate.getTime());
+    if (resolvedHour < 11) salesDateObj.setUTCDate(salesDateObj.getUTCDate() - 1);
+    if (explicit) {
+      kickoffTimeFormatted = dateKey(kickoffDate) + (time ? ` ${String(resolvedHour).padStart(2, '0')}:${String(resolvedMinute).padStart(2, '0')}` : '');
     }
   }
-
-  // 3. 应用核心竞彩销售日法则：当日 11:00 至次日 11:00 为一个销售日！
-  const kickoffDateObj = new Date(kickoffYear, kickoffMonth - 1, kickoffDay, kickoffHour, kickoffMinute || 0);
-
-  let salesDateYear = kickoffYear;
-  let salesDateMonth = kickoffMonth;
-  let salesDateDay = kickoffDay;
-
-  if (kickoffHour < 11) {
-    // 早于 11:00 (即 00:00 ~ 10:59:59 期间开赛的比赛)，归属于前一个自然日启动的竞彩销售日！
-    const prevDay = new Date(kickoffDateObj.getTime() - 24 * 3600 * 1000);
-    salesDateYear = prevDay.getFullYear();
-    salesDateMonth = prevDay.getMonth() + 1;
-    salesDateDay = prevDay.getDate();
-  }
-
-  // 格式化 Sales Date: YYYY-MM-DD
-  const sy = String(salesDateYear);
-  const sm = String(salesDateMonth).padStart(2, '0');
-  const sd = String(salesDateDay).padStart(2, '0');
-  const salesDate = `${sy}-${sm}-${sd}`;
-  const salesDateLabel = `${sy}年${sm}月${sd}日 销售日`;
-
-  // 计算销售周期说明：如 "03-28 11:00 ~ 03-29 11:00"
-  const salesBaseDate = new Date(salesDateYear, salesDateMonth - 1, salesDateDay);
-  const nextSalesDate = new Date(salesBaseDate.getTime() + 24 * 3600 * 1000);
-  const nsm = String(nextSalesDate.getMonth() + 1).padStart(2, '0');
-  const nsd = String(nextSalesDate.getDate()).padStart(2, '0');
-  const salesCycleText = `${sm}-${sd} 11:00 ~ ${nsm}-${nsd} 11:00`;
-
-  // 星期几
-  const dayOfWeek = daysOfWeek[salesBaseDate.getDay()];
-  const isCurrentSalesDay = salesDate === currentActiveSalesDate;
-
-  // 格式化输出开赛时间
-  let kickoffTimeFormatted = timeStr;
-  if (!kickoffTimeFormatted || kickoffTimeFormatted === '临场' || kickoffTimeFormatted === '已完场') {
-    kickoffTimeFormatted = `${sm}-${sd} 临场`;
-  } else if (!hasExplicitDate) {
-    const kh = String(kickoffHour).padStart(2, '0');
-    const km = String(kickoffMinute || 0).padStart(2, '0');
-    const kmMonth = String(kickoffMonth).padStart(2, '0');
-    const kmDay = String(kickoffDay).padStart(2, '0');
-    kickoffTimeFormatted = `${kmMonth}-${kmDay} ${kh}:${km}`;
-  }
-
+  const salesDate = dateKey(salesDateObj);
+  const nextDay = new Date(salesDateObj.getTime() + DAY_MS);
+  const [year, month, day] = salesDate.split('-');
   return {
     salesDate,
-    salesDateLabel,
-    salesCycleText,
-    dayOfWeek,
-    isCurrentSalesDay,
+    salesDateLabel: `${year}年${month}月${day}日 销售日`,
+    salesCycleText: `${salesDate.slice(5)} 11:00 ~ ${dateKey(nextDay).slice(5)} 11:00`,
+    dayOfWeek: ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'][salesDateObj.getUTCDay()],
+    isCurrentSalesDay: salesDate === dateKey(activeSalesDate(Date.now())),
     kickoffTimeFormatted,
   };
 }
 
-/**
- * 智能检测比赛列表或队列中主流的竞彩销售日 (Dominant Sales Date)
- * 用于当批量复盘或解析赛果时，为整个批次提供统领性的锚定销售日，防止散落比赛因时间缺省或跨夜跳入次日
- */
-export function detectDominantSalesDate(
-  items: Array<{
-    matchInfo?: { matchTime?: string };
-    data?: { matchInfo?: { matchTime?: string } };
-    timestamp?: number;
-    salesDate?: string;
-  }>
-): string | null {
-  if (!items || items.length === 0) return null;
-
-  const dateCounts = new Map<string, number>();
-
-  for (const item of items) {
-    if (item.salesDate && /^\d{4}-\d{2}-\d{2}$/.test(item.salesDate)) {
-      dateCounts.set(item.salesDate, (dateCounts.get(item.salesDate) || 0) + 3);
-      continue;
-    }
-
-    const matchTime = item.data?.matchInfo?.matchTime || item.matchInfo?.matchTime;
-    const ts = item.timestamp;
-
-    if (matchTime && matchTime !== '临场' && matchTime !== '已完场') {
-      const salesInfo = calculateSalesDate(matchTime, ts);
-      dateCounts.set(salesInfo.salesDate, (dateCounts.get(salesInfo.salesDate) || 0) + 2);
-    } else if (ts) {
-      const salesInfo = calculateSalesDate('临场', ts);
-      dateCounts.set(salesInfo.salesDate, (dateCounts.get(salesInfo.salesDate) || 0) + 1);
-    }
+/** Prefer raw kickoff evidence over old generated display dates. Manual corrections are explicit. */
+export function getReviewSalesInfo(review: PostMatchReview): SalesDateInfo {
+  const raw = review.matchData?.matchInfo?.matchTime || '';
+  const savedKickoff = review.kickoffTime || '';
+  const hasUsefulTime = (value: string) => !/临场|已完场/.test(value) && (hasExplicitKickoffDate(value) || TIME_PATTERN.test(value) || /(?:周|星期)[一二三四五六日天]/.test(value));
+  let kickoff = hasUsefulTime(raw) ? raw : hasUsefulTime(savedKickoff) ? savedKickoff : '临场';
+  if (!hasExplicitKickoffDate(raw)) {
+    const storyTime = extractKickoffTime(review.matchData?.matchInfo?.marketStory || '');
+    if (hasExplicitKickoffDate(storyTime) || (kickoff === '临场' && storyTime !== '临场')) kickoff = storyTime;
   }
-
-  if (dateCounts.size === 0) return null;
-
-  let maxCount = -1;
-  let dominantDate: string | null = null;
-  for (const [date, count] of dateCounts.entries()) {
-    if (count > maxCount) {
-      maxCount = count;
-      dominantDate = date;
-    }
+  const override = parseSalesDate(review.salesDateOverride) ? review.salesDateOverride : undefined;
+  if (override) {
+    return { ...calculateSalesDate(undefined, review.reviewTimestamp, override), kickoffTimeFormatted: kickoff };
   }
-
-  return dominantDate;
+  // Weekdays are relative calendar evidence; use the historical timestamp rather than a wrong stored group.
+  const preferred = /(?:周|星期)[一二三四五六日天]/.test(kickoff) ? undefined : review.salesDate;
+  return calculateSalesDate(kickoff, review.reviewTimestamp, preferred);
 }
 
-/**
- * 校准所有历史复盘记录中的销售日归属，修复此前因跨天复盘或时间格式差异误跳到次日的场次
- */
-export function calibrateReviewSalesDate(
-  review: PostMatchReview,
-  anchorSalesDate?: string
-): PostMatchReview {
-  // 优先采用 matchData 中的原始开赛时间（防止被此前误校准重写覆盖）
-  const rawMatchTime = review.matchData?.matchInfo?.matchTime;
-  const currentKickoff = review.kickoffTime;
-  const story = review.matchData?.matchInfo?.marketStory || '';
-  const incidents = review.matchIncidents || '';
-
-  let kickoffToUse = '临场';
-  if (rawMatchTime && rawMatchTime !== '临场' && rawMatchTime !== '已完场') {
-    kickoffToUse = rawMatchTime;
-  } else if (currentKickoff && currentKickoff !== '临场' && currentKickoff !== '已完场') {
-    kickoffToUse = currentKickoff;
+export function detectDominantSalesDate(items: Array<{
+  matchInfo?: { matchTime?: string };
+  data?: { matchInfo?: { matchTime?: string } };
+  timestamp?: number;
+  salesDate?: string;
+}>): string | null {
+  const counts = new Map<string, number>();
+  for (const item of items || []) {
+    const time = item.data?.matchInfo?.matchTime || item.matchInfo?.matchTime;
+    const info = calculateSalesDate(time, item.timestamp, item.salesDate);
+    counts.set(info.salesDate, (counts.get(info.salesDate) || 0) + (hasExplicitKickoffDate(time) ? 3 : 1));
   }
-
-  // 若尚未提取到具体开赛时间，尝试从盘面描述、故事或事件中深度反查提取
-  if (kickoffToUse === '临场' || !/(?:周|星期|\d{1,2}:|\d{1,2}[-/.])/.test(kickoffToUse)) {
-    const extracted = extractKickoffTime(story, incidents);
-    if (extracted && extracted !== '临场') {
-      kickoffToUse = extracted;
-    }
-  }
-
-  // 检查故事或原始数据中是否携带明确星期（周五/周六/周日/周一等）
-  const textContext = `${rawMatchTime || ''} ${story} ${incidents}`;
-  const weekdayInText = textContext.match(/(?:周|星期)([一二三四五六日天])/);
-  if (weekdayInText && !kickoffToUse.includes('周') && !kickoffToUse.includes('星期')) {
-    kickoffToUse = `${weekdayInText[0]} ${kickoffToUse}`;
-  }
-
-  // 确定参考锚定日期
-  let effectivePreferred = anchorSalesDate || review.salesDate;
-
-  const updatedInfo = calculateSalesDate(kickoffToUse, review.reviewTimestamp, effectivePreferred);
-
-  return {
-    ...review,
-    salesDate: updatedInfo.salesDate,
-    salesDateLabel: updatedInfo.salesDateLabel,
-    salesCycleText: updatedInfo.salesCycleText,
-    kickoffTime: updatedInfo.kickoffTimeFormatted,
-  };
+  return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] || null;
 }
 
-/**
- * 将全量或指定批次复盘战报强制统一归入同一个指定的竞彩销售日周期中
- */
-export function unifyReviewsToOneSalesDay(
-  reviews: PostMatchReview[],
-  targetSalesDate: string
-): PostMatchReview[] {
-  if (!targetSalesDate || !/^\d{4}-\d{2}-\d{2}$/.test(targetSalesDate)) {
-    return reviews;
-  }
-  return reviews.map((r) => calibrateReviewSalesDate(r, targetSalesDate));
+export function calibrateReviewSalesDate(review: PostMatchReview, anchorSalesDate?: string): PostMatchReview {
+  const info = getReviewSalesInfo(anchorSalesDate ? { ...review, salesDate: anchorSalesDate } : review);
+  return { ...review, salesDate: info.salesDate, salesDateLabel: info.salesDateLabel,
+    salesCycleText: info.salesCycleText, kickoffTime: info.kickoffTimeFormatted };
+}
+
+/** Explicitly confirmed grouping keeps the original kickoff data for later inspection. */
+export function unifyReviewsToOneSalesDay(reviews: PostMatchReview[], targetSalesDate: string): PostMatchReview[] {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetSalesDate) || !parseSalesDate(targetSalesDate)) return reviews;
+  return reviews.map(review => calibrateReviewSalesDate({ ...review, salesDateOverride: targetSalesDate }));
 }

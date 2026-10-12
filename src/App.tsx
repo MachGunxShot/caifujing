@@ -15,6 +15,7 @@ import { ReviewEvolutionView } from './components/ReviewEvolutionView';
 import { FullMatchData, AnalysisReportResult, BatchMatchItem } from './types/fortuneActuary';
 import { PRESET_CASES, PresetCase } from './utils/presetCases';
 import { generateActuarialRuleReport } from './utils/actuaryEngine';
+import { calculateSalesDate, calibrateReviewSalesDate, getReviewSalesInfo, hasExplicitKickoffDate } from './utils/salesDayUtils';
 import {
   getActiveExperiencePromptText,
   evaluateMatchOutcomeAndExtractLesson,
@@ -49,14 +50,19 @@ function syncQueueWithSavedReviews(queue: BatchMatchItem[]): BatchMatchItem[] {
     if (!reviews || reviews.length === 0) return queue;
 
     return queue.map((item) => {
-      // If already fully populated with review and finalScore, keep it
-      if (item.isReviewed && item.finalScore && item.review) return item;
+      // Refresh embedded copies from the authoritative archive after sales-day corrections.
+      if (item.isReviewed && item.finalScore && item.review) {
+        const savedReview = reviews.find((review) => review.id === item.review!.id);
+        return savedReview ? { ...item, review: savedReview } : item;
+      }
 
       const home = (item.data?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
       const away = (item.data?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
 
       const matchedReview = reviews.find((r) => {
         if (r.id === item.id || r.id === item.review?.id) return true;
+        if (hasExplicitKickoffDate(item.data?.matchInfo?.matchTime) &&
+            calculateSalesDate(item.data.matchInfo.matchTime, item.timestamp).salesDate !== getReviewSalesInfo(r).salesDate) return false;
         const rHome = (r.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
         const rAway = (r.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
         return (
@@ -467,7 +473,9 @@ export default function App() {
         const existingIndex = updatedQueue.findIndex(
           (item) =>
             item.data.matchInfo.homeTeam.trim() === home &&
-            item.data.matchInfo.awayTeam.trim() === away
+            item.data.matchInfo.awayTeam.trim() === away &&
+            !(hasExplicitKickoffDate(m.matchInfo.matchTime) && hasExplicitKickoffDate(item.data.matchInfo.matchTime) &&
+              calculateSalesDate(m.matchInfo.matchTime).salesDate !== calculateSalesDate(item.data.matchInfo.matchTime, item.timestamp).salesDate)
         );
 
         if (existingIndex >= 0) {
@@ -658,13 +666,20 @@ export default function App() {
       prev.map((item) => {
         if (item.id === id) {
           const rep = item.report || generateActuarialRuleReport(item.data);
-          const review = evaluateMatchOutcomeAndExtractLesson(
+          let review = evaluateMatchOutcomeAndExtractLesson(
             item.data,
             rep,
             homeScore,
             awayScore,
-            incidents
+            incidents,
+            false,
+            item.review?.salesDateOverride || item.review?.salesDate,
+            item.timestamp,
+            item.review
           );
+          if (item.review?.salesDateOverride) {
+            review = calibrateReviewSalesDate({ ...review, salesDateOverride: item.review.salesDateOverride });
+          }
           // Persist into PostMatchReviews storage
           savePostMatchReview(review);
 

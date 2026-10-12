@@ -1,5 +1,5 @@
 import { FullMatchData } from '../types/fortuneActuary';
-import { extractKickoffTime, matchTeamsFuzzy } from './salesDayUtils';
+import { calculateSalesDate, extractDocumentGlobalDate, extractKickoffTime, hasExplicitKickoffDate, matchTeamsFuzzy } from './salesDayUtils';
 
 /**
  * Standardize handicap string to numeric handicap from Home perspective
@@ -694,8 +694,9 @@ export interface ParsedScoreItem {
   awayTeam: string;
   homeScore: number;
   awayScore: number;
-  incidents?: string;
   matchTime?: string;
+  salesDate?: string;
+  incidents?: string;
   matchedId?: string; // 'current' or batch item id
   matchedName?: string;
   confidence: 'HIGH' | 'MEDIUM' | 'MANUAL';
@@ -708,22 +709,144 @@ function normalizeTeamForMatch(name: string): string {
     .trim();
 }
 
+function normalizeScoreDate(raw: string, yearAnchor?: string): string | undefined {
+  const full = raw.match(/(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})/);
+  const monthDay = raw.match(/(\d{1,2})[-/.月](\d{1,2})(?:日)?/);
+  const year = full ? Number(full[1]) : Number(yearAnchor?.slice(0, 4) || new Date().getFullYear());
+  const month = full ? Number(full[2]) : Number(monthDay?.[1]);
+  const day = full ? Number(full[3]) : Number(monthDay?.[2]);
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return undefined;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function normalizeScoreClock(raw: string): string | undefined {
+  const match = raw.match(/(\d{1,2})[:：](\d{2})/);
+  if (!match || Number(match[1]) > 23 || Number(match[2]) > 59) return undefined;
+  return `${match[1].padStart(2, '0')}:${match[2]}`;
+}
+
+function splitScoreColumns(line: string): string[] {
+  return line.split(/[|\t,，]/).map(part => part.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+}
+
+/** Extract only unambiguous kickoff metadata; a plain score such as 2:45 is not a clock. */
+function extractScoreLineMetadata(
+  line: string,
+  salesDateAnchor?: string,
+  yearAnchor?: string,
+  timeColumnIndex?: number
+): { cleanLine: string; matchTime?: string; salesDate?: string } {
+  let cleanLine = line;
+  let anchor = salesDateAnchor;
+  let date: string | undefined;
+  let clock: string | undefined;
+
+  const salesLabel = cleanLine.match(/(?:竞彩)?销售日\s*[：:]?\s*(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?)/);
+  const salesSuffix = cleanLine.match(/(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?)\s*销售日/);
+  const salesMatch = salesLabel || salesSuffix;
+  if (salesMatch) {
+    anchor = normalizeScoreDate(salesMatch[1], yearAnchor) || anchor;
+    cleanLine = cleanLine.replace(salesMatch[0], ' ');
+  }
+
+  // Full calendar dates always describe the actual kickoff, including dates in parentheses.
+  const fullDateTime = cleanLine.match(/(?:20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}(?:\s+|T)|(?:20\d{2}年)?\d{1,2}月\d{1,2}日\s*)(\d{1,2}[:：]\d{2}(?:[:：]\d{2})?)/);
+  if (fullDateTime) {
+    date = normalizeScoreDate(fullDateTime[0], anchor || yearAnchor);
+    clock = normalizeScoreClock(fullDateTime[1]);
+    cleanLine = cleanLine.replace(fullDateTime[0], ' ');
+  }
+
+  // Month/day requires a time label or its own column, so a score like "2-1 2:45" stays a score.
+  const labeledTime = cleanLine.match(/(?:开赛时间|比赛时间|开赛时刻|开赛|时刻|时间)\s*[：:]?\s*((?:\d{1,2}[-/.]\d{1,2}\s+)?\d{1,2}[:：]\d{2}(?:[:：]\d{2})?)/);
+  if (labeledTime) {
+    if (!clock) {
+      clock = normalizeScoreClock(labeledTime[1]);
+      if (/[-/.]/.test(labeledTime[1])) date = normalizeScoreDate(labeledTime[1], anchor || yearAnchor);
+    }
+    cleanLine = cleanLine.replace(labeledTime[0], ' ');
+  }
+
+  if (!clock && /[|\t,，]/.test(cleanLine)) {
+    const columns = splitScoreColumns(cleanLine);
+    const dateTimeColumn = columns.find(column => /^\d{1,2}[-/.]\d{1,2}\s+\d{1,2}[:：]\d{2}$/.test(column));
+    if (dateTimeColumn) {
+      date = normalizeScoreDate(dateTimeColumn, anchor || yearAnchor);
+      clock = normalizeScoreClock(dateTimeColumn);
+      cleanLine = cleanLine.replace(dateTimeColumn, ' ');
+    } else {
+      const labeledColumn = timeColumnIndex === undefined ? undefined : columns[timeColumnIndex];
+      // Without a header, require a separate score column and a padded HH:mm clock.
+      const clockColumn = labeledColumn && /^\d{1,2}[:：]\d{2}$/.test(labeledColumn)
+        ? labeledColumn
+        : columns.find((column, index) => /^(?:[01]\d|2[0-3])[:：][0-5]\d$/.test(column)
+          && columns.some((other, otherIndex) => otherIndex !== index && /^\d{1,2}\s*[-:：比]\s*\d{1,2}$/.test(other)));
+      if (clockColumn) {
+        clock = normalizeScoreClock(clockColumn);
+        cleanLine = cleanLine.replace(clockColumn, ' ');
+      }
+    }
+  }
+
+  // A separate calendar-date column can accompany a clock column or omit the time altogether.
+  const fullDate = cleanLine.match(/20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?/);
+  if (fullDate) {
+    if (!date) date = normalizeScoreDate(fullDate[0], anchor || yearAnchor);
+    cleanLine = cleanLine.replace(fullDate[0], ' ');
+  }
+  cleanLine = cleanLine.replace(/(?:开赛日期|开赛时间|比赛时间|开赛时刻|开赛|时刻|时间)\s*[：:]\s*/g, ' ');
+
+  if (!date && clock && anchor) {
+    const [year, month, day] = anchor.split('-').map(Number);
+    const actualDate = new Date(year, month - 1, day + (Number(clock.slice(0, 2)) < 11 ? 1 : 0));
+    date = `${actualDate.getFullYear()}-${String(actualDate.getMonth() + 1).padStart(2, '0')}-${String(actualDate.getDate()).padStart(2, '0')}`;
+  }
+  const matchTime = date ? `${date}${clock ? ` ${clock}` : ''}` : clock;
+  const salesDate = date ? calculateSalesDate(matchTime, undefined, anchor).salesDate : anchor;
+  return { cleanLine, matchTime, salesDate };
+}
+
 /**
  * Parses batch match scores from plain text, markdown, CSV, or OCR outputs
  */
 export function parseBatchMatchScoresFromText(
   rawText: string,
-  candidates: { id: string; home: string; away: string; league?: string }[] = []
+  candidates: { id: string; home: string; away: string; league?: string; matchTime?: string; timestamp?: number; salesDate?: string }[] = []
 ): ParsedScoreItem[] {
   const lines = rawText.split('\n');
   const results: ParsedScoreItem[] = [];
   let itemCounter = 0;
+  const documentDate = extractDocumentGlobalDate(rawText) || undefined;
+  let salesDateAnchor: string | undefined;
+  let timeColumnIndex: number | undefined;
+  const candidatesWithDates = candidates.map(candidate => ({
+    candidate,
+    salesDate: (candidate.salesDate && /^\d{4}-\d{2}-\d{2}$/.test(candidate.salesDate)) || hasExplicitKickoffDate(candidate.matchTime)
+      ? calculateSalesDate(candidate.matchTime, candidate.timestamp, candidate.salesDate).salesDate
+      : undefined,
+  }));
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
-    if (!line || line.startsWith('#') || line.startsWith('---') || line.startsWith('===') || line.includes('主队') && line.includes('客队') && line.includes('比分')) {
+    const isDateHeading = line.startsWith('#')
+      || /^(?:[>\-*]\s*)?(?:竞彩)?(?:销售日|日期|比赛日)\s*[：:]?\s*20\d{2}/.test(line)
+      || /^(?:[>\-*]\s*)?20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?\s*销售日\s*$/.test(line);
+    if (isDateHeading) {
+      const headingDate = extractDocumentGlobalDate(line) || normalizeScoreDate(line, documentDate);
+      if (headingDate) salesDateAnchor = headingDate;
+    }
+    if (line.includes('主队') && line.includes('客队') && line.includes('比分')) {
+      const columns = splitScoreColumns(line);
+      const columnIndex = columns.findIndex(column => /^(?:开赛时间|比赛时间|开赛|时间|日期时间)$/.test(column));
+      timeColumnIndex = columnIndex < 0 ? undefined : columnIndex;
       continue;
     }
+    if (!line || line.startsWith('#') || line.startsWith('---') || line.startsWith('===') || isDateHeading) {
+      continue;
+    }
+
+    const metadata = extractScoreLineMetadata(line, salesDateAnchor, documentDate, timeColumnIndex);
 
     let home = '';
     let away = '';
@@ -732,15 +855,15 @@ export function parseBatchMatchScoresFromText(
     let incidents = '';
 
     // Check for incident notes in parentheses
-    const incidentMatch = line.match(/[（(]([^）)]+)[）)]/);
+    const incidentMatch = metadata.cleanLine.match(/[（(]([^）)]+)[）)]/);
     if (incidentMatch) {
-      incidents = incidentMatch[1].trim();
+      incidents = incidentMatch[1].replace(/^[\s,，;；]+|[\s,，;；]+$/g, '').trim();
     }
 
-    const cleanLine = line.replace(/[（(][^）)]+[）)]/g, '').trim();
+    const cleanLine = metadata.cleanLine.replace(/[（(][^）)]*[）)]/g, '').trim();
 
     // Pattern 1: [TeamA] vs [TeamB] [Score] (e.g. "曼城 vs 埃弗顿 2-1" or "曼城 VS 埃弗顿 : 2:1")
-    const p1 = cleanLine.match(/([^\d\n\r|:,;\t]{2,12})\s*(?:vs|VS|对阵|对)\s*([^\d\n\r|:,;\t]{2,12})[\s\t,，:：|]+(?:比分)?\s*(\d{1,2})\s*[-:：比\s]\s*(\d{1,2})/i);
+    const p1 = cleanLine.match(/([^\d\n\r|:：,，;；\t]{2,12})\s*(?:vs|VS|对阵|对)\s*([^\d\n\r|:：,，;；\t]{2,12})[\s\t,，:：|]+(?:比分)?\s*(\d{1,2})\s*[-:：比\s]\s*(\d{1,2})/i);
     if (p1) {
       home = p1[1].trim();
       away = p1[2].trim();
@@ -750,7 +873,7 @@ export function parseBatchMatchScoresFromText(
 
     // Pattern 2: [TeamA] [Score] [TeamB] (e.g. "曼城 2-1 埃弗顿", "瑞士 1:0 斯洛文尼亚", "完场 曼城 2比1 埃弗顿")
     if (homeScore === -1) {
-      const p2 = cleanLine.match(/(?:完场|全场|终场|赛果)?\s*([^\d\n\r|:,;\t]{2,12})\s*(\d{1,2})\s*[-:：比\s]\s*(\d{1,2})\s*([^\d\n\r|:,;\t]{2,12})/);
+      const p2 = cleanLine.match(/(?:完场|全场|终场|赛果)?\s*([^\d\n\r|:：,，;；\t]{2,12})\s*(\d{1,2})\s*[-:：比\s]\s*(\d{1,2})\s*([^\d\n\r|:：,，;；\t]{2,12})/);
       if (p2) {
         home = p2[1].replace(/完场|全场|终场|赛果/g, '').trim();
         homeScore = parseInt(p2[2], 10);
@@ -760,8 +883,8 @@ export function parseBatchMatchScoresFromText(
     }
 
     // Pattern 3: Markdown table row with pipes (e.g. "| 瑞士 | 1-0 | 斯洛文尼亚 |" or "| 瑞士 vs 斯洛文尼亚 | 1:0 |")
-    if (homeScore === -1 && line.includes('|')) {
-      const parts = line.split('|').map((p) => p.trim()).filter(Boolean);
+    if (homeScore === -1 && cleanLine.includes('|')) {
+      const parts = cleanLine.split('|').map((p) => p.trim()).filter(Boolean);
       if (parts.length >= 2) {
         for (let i = 0; i < parts.length; i++) {
           const scoreMatch = parts[i].match(/^(\d{1,2})\s*[-:：比]\s*(\d{1,2})$/);
@@ -769,13 +892,16 @@ export function parseBatchMatchScoresFromText(
             homeScore = parseInt(scoreMatch[1], 10);
             awayScore = parseInt(scoreMatch[2], 10);
             // Team names from previous or next columns
-            if (i > 0 && parts[i - 1].includes('vs')) {
-              const [h, a] = parts[i - 1].split(/vs/i);
+            if (i > 0 && /vs|对阵|对/i.test(parts[i - 1])) {
+              const [h, a] = parts[i - 1].split(/vs|对阵|对/i);
               home = h.trim();
               away = a.trim();
             } else if (i > 0 && i < parts.length - 1) {
               home = parts[i - 1];
               away = parts[i + 1];
+            } else if (i >= 2) {
+              home = parts[i - 2];
+              away = parts[i - 1];
             }
             break;
           }
@@ -784,8 +910,8 @@ export function parseBatchMatchScoresFromText(
     }
 
     // Pattern 4: CSV / Tab separated line: "瑞士,1,0,斯洛文尼亚" or "瑞士,斯洛文尼亚,1-0"
-    if (homeScore === -1 && (line.includes(',') || line.includes('\t'))) {
-      const tokens = line.split(/[\t,，]/).map(t => t.trim()).filter(Boolean);
+    if (homeScore === -1 && /[,，\t]/.test(cleanLine)) {
+      const tokens = splitScoreColumns(cleanLine);
       if (tokens.length >= 3) {
         for (const token of tokens) {
           const sm = token.match(/^(\d{1,2})\s*[-:：比]\s*(\d{1,2})$/);
@@ -801,26 +927,33 @@ export function parseBatchMatchScoresFromText(
             home = nonScoreTokens[0];
             away = nonScoreTokens[1];
           }
+        } else {
+          const scoreIndex = tokens.findIndex((token, index) => /^\d{1,2}$/.test(token)
+            && index < tokens.length - 1 && /^\d{1,2}$/.test(tokens[index + 1]));
+          if (scoreIndex > 0 && scoreIndex + 2 < tokens.length) {
+            home = tokens[scoreIndex - 1];
+            away = tokens[scoreIndex + 2];
+            homeScore = Number(tokens[scoreIndex]);
+            awayScore = Number(tokens[scoreIndex + 1]);
+          }
         }
       }
     }
 
     if (homeScore >= 0 && awayScore >= 0 && (home || away)) {
       itemCounter++;
-
-      // Extract matchTime / date / weekday if present in the raw text line
-      let matchTime: string | undefined = undefined;
-      const timeMatch = rawLine.match(/(?:(?:20\d{2}[-/.]|\d{1,2}[-/.])\d{1,2}(?:\s+\d{1,2}:\d{2})?|(?:周|星期)[一二三四五六日天](?:\d{1,3})?(?:\s+\d{1,2}:\d{2})?|\b\d{1,2}:\d{2}\b)/);
-      if (timeMatch) {
-        matchTime = timeMatch[0].trim();
-      }
-
       // Fuzzy matching with candidate matches in queue
       let matchedId: string | undefined = undefined;
       let matchedName: string | undefined = undefined;
       let confidence: 'HIGH' | 'MEDIUM' | 'MANUAL' = 'MEDIUM';
 
-      for (const cand of candidates) {
+      const matchingDates = new Set(candidatesWithDates
+        .filter(({ candidate, salesDate }) => salesDate && matchTeamsFuzzy(home, candidate.home) && matchTeamsFuzzy(away, candidate.away))
+        .map(({ salesDate }) => salesDate));
+      const ambiguousDate = !metadata.salesDate && matchingDates.size > 1;
+
+      for (const { candidate: cand, salesDate: candidateSalesDate } of candidatesWithDates) {
+        if (ambiguousDate || (metadata.salesDate && candidateSalesDate && metadata.salesDate !== candidateSalesDate)) continue;
         const homeMatch = matchTeamsFuzzy(home, cand.home);
         const awayMatch = matchTeamsFuzzy(away, cand.away);
 
@@ -842,8 +975,9 @@ export function parseBatchMatchScoresFromText(
         awayTeam: away || '客队',
         homeScore,
         awayScore,
+        matchTime: metadata.matchTime,
+        salesDate: metadata.salesDate,
         incidents,
-        matchTime,
         matchedId,
         matchedName,
         confidence,

@@ -129,6 +129,7 @@ export interface PostMatchReview {
   
   // Sports lottery sales day (竞彩销售日：当日11:00至次日11:00)
   salesDate?: string;            // e.g. "2026-03-28"
+  salesDateOverride?: string;    // 用户手动确认的销售日；不改原始开赛时间
   salesDateLabel?: string;       // e.g. "2026年03月28日 销售日"
   salesCycleText?: string;       // e.g. "03-28 11:00 ~ 03-29 11:00"
   kickoffTime?: string;          // 识别的比赛开赛时间 (如 "2026-03-28 23:00")

@@ -62,6 +62,7 @@ import {
   clearAllPostMatchReviews,
   savePostMatchReview,
   saveAllPostMatchReviews,
+  replacePostMatchReviews,
   auditRulesHealth,
   pruneAndClusterExperienceRules,
   pruneZeroHitRules,
@@ -76,8 +77,10 @@ import {
   extractDocumentGlobalDate,
   detectDominantSalesDate,
   calibrateReviewSalesDate,
+  getReviewSalesInfo as resolveReviewSalesInfo,
   SalesDateInfo,
   matchTeamsFuzzy,
+  hasExplicitKickoffDate,
 } from '../utils/salesDayUtils';
 
 interface ReviewEvolutionViewProps {
@@ -87,6 +90,22 @@ interface ReviewEvolutionViewProps {
   onUpdateQueue: (updated: BatchMatchItem[]) => void;
   onSelectMatch?: (match: FullMatchData) => void;
 }
+
+const hasFullKickoffDate = (time?: string): boolean =>
+  !!time && !time.includes('临场') &&
+  /(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{4}年\d{1,2}月\d{1,2}日)/.test(time);
+
+const knownSalesDate = (time?: string, timestamp?: number, salesDate?: string): string | undefined =>
+  hasExplicitKickoffDate(time) ? calculateSalesDate(time, timestamp, salesDate).salesDate : salesDate;
+
+const salesDatesCompatible = (
+  timeA?: string, timestampA?: number, salesDateA?: string,
+  timeB?: string, timestampB?: number, salesDateB?: string
+): boolean => {
+  const dateA = knownSalesDate(timeA, timestampA, salesDateA);
+  const dateB = knownSalesDate(timeB, timestampB, salesDateB);
+  return !dateA || !dateB || dateA === dateB;
+};
 
 export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
   queue,
@@ -191,6 +210,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
   const [dateGroupStarFilter, setDateGroupStarFilter] = useState<Record<string, 'ALL' | 5 | 4 | 3>>({});
   const [collapsedDateGroups, setCollapsedDateGroups] = useState<Record<string, boolean>>({});
   const [expandedDissections, setExpandedDissections] = useState<Record<string, boolean>>({});
+  const [selectedReviewIds, setSelectedReviewIds] = useState<Record<string, boolean>>({});
+  const [adjustSalesDate, setAdjustSalesDate] = useState<string>('');
 
   // Helper to render star rating badge for pre-match analysis
   const renderStarRatingBadge = (stars?: number, showLabel: boolean = true) => {
@@ -278,22 +299,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
   // Helper to determine the Sales Day (竞彩销售日：当日11:00至次日11:00) for a review item
   const getReviewSalesInfo = (rev: PostMatchReview): SalesDateInfo => {
-    // If the review item ALREADY has a persisted salesDate, strictly preserve it
-    if (rev.salesDate && /^\d{4}-\d{2}-\d{2}$/.test(rev.salesDate)) {
-      const days = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
-      const [y, m, d] = rev.salesDate.split('-').map(Number);
-      const dayOfWeek = days[new Date(y, m - 1, d).getDay()] || '星期六';
-      return {
-        salesDate: rev.salesDate,
-        salesDateLabel: rev.salesDateLabel || `${rev.salesDate} 销售日`,
-        salesCycleText: rev.salesCycleText || '',
-        dayOfWeek,
-        isCurrentSalesDay: false,
-        kickoffTimeFormatted: rev.kickoffTime || rev.matchData?.matchInfo?.matchTime || '临场',
-      };
-    }
-    const kickoff = rev.kickoffTime || rev.matchData?.matchInfo?.matchTime || '临场';
-    return calculateSalesDate(kickoff, rev.reviewTimestamp);
+    return resolveReviewSalesInfo(rev);
   };
 
   // Group reviews hierarchically by Sports Lottery Sales Day (当日 11:00 至次日 11:00 为一个销售日)
@@ -382,6 +388,59 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     return Array.from(groupsMap.values()).sort((a, b) => b.dateKey.localeCompare(a.dateKey));
   }, [reviews]);
 
+  const visibleReviews = reviews.filter((rev) =>
+    (selectedDateFilter === 'ALL' || getReviewSalesInfo(rev).salesDate === selectedDateFilter) &&
+    (selectedStarFilter === 'ALL' || (rev.priorReport?.decision?.starRating || 3) === selectedStarFilter)
+  );
+  const selectedReviews = reviews.filter((rev) => selectedReviewIds[rev.id]);
+  const allVisibleSelected = visibleReviews.length > 0 && visibleReviews.every((rev) => selectedReviewIds[rev.id]);
+  const incompleteReviewDateCount = reviews.filter((rev) =>
+    !hasFullKickoffDate(rev.matchData?.matchInfo?.matchTime) && !rev.salesDateOverride
+  ).length;
+
+  // Keep queue copies aligned with the authoritative review store without rewriting match data.
+  const syncQueueReviewCopies = (updatedReviews: PostMatchReview[]) => {
+    const byId = new Map(updatedReviews.map((rev) => [rev.id, rev]));
+    const updatedQueue = queue.map((item) => {
+      let updated = byId.get(item.review?.id || '') || byId.get(item.id);
+      if (!updated) {
+        const matches = updatedReviews.filter((rev) =>
+          salesDatesCompatible(item.data?.matchInfo?.matchTime, item.timestamp, item.review?.salesDateOverride || item.review?.salesDate,
+            rev.matchData?.matchInfo?.matchTime, rev.reviewTimestamp, rev.salesDateOverride || rev.salesDate) &&
+          matchTeamsFuzzy(item.data?.matchInfo?.homeTeam, rev.matchData?.matchInfo?.homeTeam) &&
+          matchTeamsFuzzy(item.data?.matchInfo?.awayTeam, rev.matchData?.matchInfo?.awayTeam)
+        );
+        if (matches.length === 1) updated = matches[0];
+      }
+      return updated ? { ...item, review: updated } : item;
+    });
+    onUpdateQueue(updatedQueue);
+  };
+
+  const handleAdjustSelectedSalesDate = () => {
+    if (selectedReviews.length === 0 || !/^\d{4}-\d{2}-\d{2}$/.test(adjustSalesDate)) return;
+    const [year, month, day] = adjustSalesDate.split('-').map(Number);
+    const parsedDate = new Date(year, month - 1, day);
+    if (parsedDate.getFullYear() !== year || parsedDate.getMonth() + 1 !== month || parsedDate.getDate() !== day) {
+      setHealthNotification('❌ 请选择有效的销售日日期。');
+      return;
+    }
+    const updatedReviews = reviews.map((rev) => selectedReviewIds[rev.id]
+      ? calibrateReviewSalesDate({ ...rev, salesDateOverride: adjustSalesDate })
+      : rev
+    );
+    if (!replacePostMatchReviews(updatedReviews)) {
+      setHealthNotification('❌ 备份或保存失败，销售日未调整。请检查浏览器本地存储后重试。');
+      return;
+    }
+    const savedReviews = getPostMatchReviews();
+    setReviews(savedReviews);
+    syncQueueReviewCopies(savedReviews);
+    setSelectedReviewIds({});
+    setSelectedDateFilter(adjustSalesDate);
+    setHealthNotification(`✅ 已将 ${selectedReviews.length} 场复盘归入 ${adjustSalesDate} 销售日（11:00 至次日 11:00），原始开赛数据已保留。`);
+  };
+
   // Toggle group collapse
   const toggleDateCollapse = (dateKey: string) => {
     setCollapsedDateGroups((prev) => ({
@@ -412,8 +471,11 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           const iHome = (item.data?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
           const iAway = (item.data?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
           if (
-            item.review?.id === reviewId ||
-            (home && away && iHome && iAway && (home.includes(iHome) || iHome.includes(home)) && (away.includes(iAway) || iAway.includes(away)))
+            item.review ? item.review.id === reviewId :
+            (home && away && iHome && iAway &&
+              salesDatesCompatible(item.data?.matchInfo?.matchTime, item.timestamp, undefined,
+                targetReview.matchData?.matchInfo?.matchTime, targetReview.reviewTimestamp, targetReview.salesDateOverride || targetReview.salesDate) &&
+              (home.includes(iHome) || iHome.includes(home)) && (away.includes(iAway) || iAway.includes(away)))
           ) {
             return {
               ...item,
@@ -446,7 +508,9 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
       const updatedQueue = queue.map((item) => {
         const isMatched = toDelete.some((r) => {
-          if (r.id === item.review?.id) return true;
+          if (item.review) return r.id === item.review.id;
+          if (!salesDatesCompatible(item.data?.matchInfo?.matchTime, item.timestamp, undefined,
+            r.matchData?.matchInfo?.matchTime, r.reviewTimestamp, r.salesDateOverride || r.salesDate)) return false;
           const rHome = (r.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
           const rAway = (r.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
           const iHome = (item.data?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
@@ -482,74 +546,50 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     }
   };
 
-  // Calibrate sales dates for all existing reviews (按各场真实开赛时间与竞彩11:00法则独立归纳)
+  // Calibrate sales dates for all existing reviews
   const handleCalibrateSalesDates = () => {
     setIsCalibratingDates(true);
-    let calibratedCount = 0;
-    const dateGroupsSet = new Set<string>();
-
-    // 基准参考日（仅用作周/月/年份上下文参考，不强制覆盖各场独立时间）
-    const referenceBaseDate =
-      batchTargetSalesDate ||
-      detectDominantSalesDate(queue) ||
-      reviews[0]?.salesDate ||
-      calculateSalesDate().salesDate;
-
-    const updatedReviews = reviews.map((rev) => {
-      // 深度反查队列中的原始开赛时间（如 周六 20:30、周日 03:00、周一 04:00 等）
-      const qItem = queue.find(
-        (q) =>
-          q.id === rev.id ||
-          (matchTeamsFuzzy(q.data?.matchInfo?.homeTeam, rev.matchData?.matchInfo?.homeTeam) &&
-            matchTeamsFuzzy(q.data?.matchInfo?.awayTeam, rev.matchData?.matchInfo?.awayTeam))
-      );
-      const queueTime = qItem?.data?.matchInfo?.matchTime;
-      const reviewToCalibrate =
-        queueTime && queueTime !== '临场' && queueTime !== '已完场'
-          ? {
-              ...rev,
-              matchData: {
-                ...rev.matchData,
-                matchInfo: {
-                  ...rev.matchData?.matchInfo,
-                  matchTime: queueTime,
-                },
-              },
-            }
-          : rev;
-
-      const calibrated = calibrateReviewSalesDate(reviewToCalibrate, referenceBaseDate);
-      if (calibrated.salesDate !== rev.salesDate) {
-        calibratedCount++;
+    try {
+      let calibratedCount = 0;
+      let incompleteDateCount = 0;
+      const updatedReviews = reviews.map((rev) => {
+        const linkedItem = queue.find((q) => q.review?.id === rev.id || q.id === rev.id);
+        const teamMatches = linkedItem ? [] : queue.filter((q) =>
+          matchTeamsFuzzy(q.data?.matchInfo?.homeTeam, rev.matchData?.matchInfo?.homeTeam) &&
+          matchTeamsFuzzy(q.data?.matchInfo?.awayTeam, rev.matchData?.matchInfo?.awayTeam)
+        );
+        const qItem = linkedItem || (teamMatches.length === 1 ? teamMatches[0] : undefined);
+        const queueTime = qItem?.data?.matchInfo?.matchTime;
+        const rawTime = rev.matchData?.matchInfo?.matchTime;
+        // Only supplement incomplete data; a complete original date remains authoritative.
+        const useQueueTime = !hasFullKickoffDate(rawTime) && queueTime && !queueTime.includes('临场') &&
+          queueTime !== '已完场' && (hasFullKickoffDate(queueTime) || !rawTime || rawTime === '临场' || rawTime === '已完场');
+        const reviewToCalibrate = useQueueTime ? {
+          ...rev,
+          matchData: {
+            ...rev.matchData,
+            matchInfo: { ...rev.matchData.matchInfo, matchTime: queueTime },
+          },
+        } : rev;
+        if (!hasFullKickoffDate(reviewToCalibrate.matchData?.matchInfo?.matchTime) && !rev.salesDateOverride) {
+          incompleteDateCount++;
+        }
+        const calibrated = calibrateReviewSalesDate(reviewToCalibrate);
+        if (calibrated.salesDate !== rev.salesDate) calibratedCount++;
+        return calibrated;
+      });
+      if (!replacePostMatchReviews(updatedReviews)) {
+        setHealthNotification('❌ 备份或保存失败，历史销售日未校准。请检查浏览器本地存储后重试。');
+        return;
       }
-      if (calibrated.salesDate) {
-        dateGroupsSet.add(calibrated.salesDate);
-      }
-      return calibrated;
-    });
-
-    updatedReviews.forEach((r) => savePostMatchReview(r));
-    setReviews(getPostMatchReviews());
-
-    // 同步更新队列中的已复盘战报
-    const updatedQueue = queue.map((item) => {
-      if (item.review) {
-        return {
-          ...item,
-          review: calibrateReviewSalesDate(item.review, referenceBaseDate),
-        };
-      }
-      return item;
-    });
-    onUpdateQueue(updatedQueue);
-
-    setIsCalibratingDates(false);
-
-    const dateLabels = Array.from(dateGroupsSet).sort().join('、');
-    setHealthNotification(
-      `✅ 销售日各场次独立校准归档完成！已按各场真实开赛时间与竞彩11:00法则，分别归入 ${dateGroupsSet.size} 个独立销售日周期（涉及: ${dateLabels || '多日归档'}，共覆盖 ${updatedReviews.length} 场历史战报，校准修复 ${calibratedCount} 场）！便于每日分段对照验证。`
-    );
-    setTimeout(() => setHealthNotification(null), 8000);
+      const savedReviews = getPostMatchReviews();
+      setReviews(savedReviews);
+      syncQueueReviewCopies(savedReviews);
+      const dateCount = new Set(savedReviews.map((rev) => getReviewSalesInfo(rev).salesDate)).size;
+      setHealthNotification(`✅ 已按 11:00 销售日规则校准 ${savedReviews.length} 场，调整 ${calibratedCount} 场，归入 ${dateCount} 个销售日。${incompleteDateCount ? `其中 ${incompleteDateCount} 场缺少完整开赛日期，可选中后手动修正销售日。` : ''}`);
+    } finally {
+      setIsCalibratingDates(false);
+    }
   };
 
   // Calibrate star tiers across all existing reviews using latest actuarial graduated rules
@@ -676,12 +716,21 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     if (queue && queue.length > 0 && currentReviews.length > 0) {
       let needsHeal = false;
       const healedQueue = queue.map((item) => {
-        if (item.isReviewed && item.review && item.finalScore) return item;
+        const linkedReview = currentReviews.find((rev) => rev.id === item.review?.id || rev.id === item.id);
+        if (item.isReviewed && item.review && item.finalScore) {
+          if (linkedReview && JSON.stringify(linkedReview) !== JSON.stringify(item.review)) {
+            needsHeal = true;
+            return { ...item, review: linkedReview };
+          }
+          return item;
+        }
 
         const home = (item.data?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
         const away = (item.data?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
-        const matched = currentReviews.find((r) => {
+        const matchingReviews = currentReviews.filter((r) => {
           if (r.id === item.id || r.id === item.review?.id) return true;
+          if (!salesDatesCompatible(item.data?.matchInfo?.matchTime, item.timestamp, item.review?.salesDateOverride || item.review?.salesDate,
+            r.matchData?.matchInfo?.matchTime, r.reviewTimestamp, r.salesDateOverride || r.salesDate)) return false;
           const rHome = (r.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
           const rAway = (r.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
           return (
@@ -693,6 +742,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
             (away.includes(rAway) || rAway.includes(away))
           );
         });
+        const matched = linkedReview || (matchingReviews.length === 1 ? matchingReviews[0] : undefined);
 
         if (matched) {
           needsHeal = true;
@@ -744,8 +794,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
       try {
         const candidateList = [
-          { id: 'current', home: currentMatch.matchInfo.homeTeam, away: currentMatch.matchInfo.awayTeam, league: currentMatch.matchInfo.league },
-          ...queue.map((q) => ({ id: q.id, home: q.data.matchInfo.homeTeam, away: q.data.matchInfo.awayTeam, league: q.data.matchInfo.league })),
+          { id: 'current', home: currentMatch.matchInfo.homeTeam, away: currentMatch.matchInfo.awayTeam, league: currentMatch.matchInfo.league, matchTime: currentMatch.matchInfo.matchTime },
+          ...queue.map((q) => ({ id: q.id, home: q.data.matchInfo.homeTeam, away: q.data.matchInfo.awayTeam, league: q.data.matchInfo.league, matchTime: q.data.matchInfo.matchTime, timestamp: q.timestamp, salesDate: q.review?.salesDateOverride || q.review?.salesDate })),
         ];
 
         const resp = await fetch('/api/recognize-scores', {
@@ -778,8 +828,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     if (!batchRawText.trim()) return;
     setBatchReviewSummary(null);
     const candidateList = [
-      { id: 'current', home: currentMatch.matchInfo.homeTeam, away: currentMatch.matchInfo.awayTeam, league: currentMatch.matchInfo.league },
-      ...queue.map((q) => ({ id: q.id, home: q.data.matchInfo.homeTeam, away: q.data.matchInfo.awayTeam, league: q.data.matchInfo.league })),
+      { id: 'current', home: currentMatch.matchInfo.homeTeam, away: currentMatch.matchInfo.awayTeam, league: currentMatch.matchInfo.league, matchTime: currentMatch.matchInfo.matchTime },
+      ...queue.map((q) => ({ id: q.id, home: q.data.matchInfo.homeTeam, away: q.data.matchInfo.awayTeam, league: q.data.matchInfo.league, matchTime: q.data.matchInfo.matchTime, timestamp: q.timestamp, salesDate: q.review?.salesDateOverride || q.review?.salesDate })),
     ];
     const results = parseBatchMatchScoresFromText(batchRawText, candidateList);
     if (results.length > 0) {
@@ -824,8 +874,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     setBatchRawText(text);
 
     const candidateList = [
-      { id: 'current', home: currentMatch.matchInfo.homeTeam, away: currentMatch.matchInfo.awayTeam, league: currentMatch.matchInfo.league },
-      ...queue.map((q) => ({ id: q.id, home: q.data.matchInfo.homeTeam, away: q.data.matchInfo.awayTeam, league: q.data.matchInfo.league })),
+      { id: 'current', home: currentMatch.matchInfo.homeTeam, away: currentMatch.matchInfo.awayTeam, league: currentMatch.matchInfo.league, matchTime: currentMatch.matchInfo.matchTime },
+      ...queue.map((q) => ({ id: q.id, home: q.data.matchInfo.homeTeam, away: q.data.matchInfo.awayTeam, league: q.data.matchInfo.league, matchTime: q.data.matchInfo.matchTime, timestamp: q.timestamp, salesDate: q.review?.salesDateOverride || q.review?.salesDate })),
     ];
     const parsed = parseBatchMatchScoresFromText(text, candidateList);
     setParsedScores(parsed);
@@ -854,6 +904,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
       let totalExecuted = 0;
       let rulesEvolvedCount = 0;
       const updatedQueue = [...queue];
+      const existingQueueIds = new Set(queue.map((match) => match.id));
 
       // 1. Determine anchor batch sales date (统领性批次销售日)
       // 优先顺序: 用户手动选择 > 赛果文本标头日期 > 队列主流销售日 > 当前活跃销售日
@@ -874,9 +925,12 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         let targetMatch: FullMatchData | undefined;
         let targetReport: AnalysisReportResult | undefined;
         let queueIdx = -1;
+        const scoreFitsQueueItem = (q: BatchMatchItem) =>
+          salesDatesCompatible(q.data?.matchInfo?.matchTime, q.timestamp, q.review?.salesDateOverride || q.review?.salesDate,
+            item.matchTime, undefined, item.salesDate);
 
         if (item.matchedId && item.matchedId !== 'current') {
-          queueIdx = updatedQueue.findIndex((q) => q.id === item.matchedId);
+          queueIdx = updatedQueue.findIndex((q) => q.id === item.matchedId && scoreFitsQueueItem(q));
           if (queueIdx >= 0) {
             targetMatch = updatedQueue[queueIdx].data;
             targetReport = updatedQueue[queueIdx].report;
@@ -887,6 +941,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         if (!targetMatch) {
           queueIdx = updatedQueue.findIndex(
             (q) =>
+              existingQueueIds.has(q.id) &&
+              scoreFitsQueueItem(q) &&
               (matchTeamsFuzzy(q.data.matchInfo.homeTeam, item.homeTeam) ||
                 item.homeTeam.includes(q.data.matchInfo.homeTeam) ||
                 q.data.matchInfo.homeTeam.includes(item.homeTeam)) &&
@@ -903,6 +959,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         // Check against currentMatch
         if (!targetMatch) {
           if (
+            salesDatesCompatible(currentMatch.matchInfo.matchTime, undefined, undefined, item.matchTime, undefined, item.salesDate) &&
             (matchTeamsFuzzy(currentMatch.matchInfo.homeTeam, item.homeTeam) ||
               item.homeTeam.includes(currentMatch.matchInfo.homeTeam) ||
               currentMatch.matchInfo.homeTeam.includes(item.homeTeam)) &&
@@ -915,14 +972,14 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           }
         }
 
-        // If still not matched, synthesize baseline match with parsed matchTime or anchor batch sales date
+        // If not matched, retain any observed kickoff time without inventing a calendar date.
         if (!targetMatch) {
           targetMatch = {
             matchInfo: {
               league: '实战复盘录入',
               homeTeam: item.homeTeam,
               awayTeam: item.awayTeam,
-              matchTime: item.matchTime || `${batchSalesDate} 临场`,
+              matchTime: item.matchTime || '临场',
               marketStory: '批量实战赛果导入',
             },
             asianHandicap: {
@@ -951,23 +1008,29 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
             },
           };
           targetReport = generateActuarialRuleReport(targetMatch);
-        } else if (item.matchTime && (!targetMatch.matchInfo?.matchTime || targetMatch.matchInfo.matchTime === '临场' || targetMatch.matchInfo.matchTime === '已完场')) {
-          targetMatch = {
-            ...targetMatch,
-            matchInfo: {
-              ...targetMatch.matchInfo,
-              matchTime: item.matchTime,
-            },
-          };
         }
 
         if (!targetReport) {
           targetReport = generateActuarialRuleReport(targetMatch);
         }
 
+        // Preserve a complete source date; otherwise use a date observed on the score row.
+        const originalMatchTime = targetMatch.matchInfo?.matchTime || '';
+        if (!hasFullKickoffDate(originalMatchTime) && item.matchTime && item.matchTime !== '临场') {
+          targetMatch = {
+            ...targetMatch,
+            matchInfo: { ...targetMatch.matchInfo, matchTime: item.matchTime },
+          };
+        }
+        const matchTimeStr = targetMatch.matchInfo?.matchTime || '';
+        const existingReview = queueIdx >= 0 ? updatedQueue[queueIdx].review : undefined;
+        const effectivePreferredDate = existingReview?.salesDateOverride || (hasFullKickoffDate(matchTimeStr)
+          ? undefined
+          : item.salesDate || existingReview?.salesDate || batchSalesDate);
+
         // Evaluate deterministically: 依各场真实开赛时间与竞彩销售日法则独立精算归属（方便分销售日对照验证）
-        // 复盘时间戳严格记录用户实际点击执行复盘的时刻 (Date.now())，确保复盘时间精准真实
-        const reviewExecutionTimestamp = Date.now();
+        // 后备时间戳沿用队列创建/导入时间戳，避免复盘时刻把历史场次改判到今天的销售日
+        const queueTimestamp = queueIdx >= 0 ? updatedQueue[queueIdx].timestamp : Date.now();
         const review = evaluateMatchOutcomeAndExtractLesson(
           targetMatch,
           targetReport,
@@ -975,8 +1038,9 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           item.awayScore,
           item.incidents || '批量赛果智能归因',
           batchSyncToCoreRules, // 是否沉淀进《财富经》核心法则库
-          batchSalesDate,       // 作为周/月基准参考锚点，保留各场自身真实开赛时间的独立销售日归属
-          reviewExecutionTimestamp // 准确记录用户点击复盘的操作时间
+          effectivePreferredDate, // 缺完整开赛日期时才使用逐场或批次销售日锚
+          queueTimestamp,       // 后备时间戳使用队列创建/导入时间戳
+          existingReview        // 保留已归档场次的稳定 ID 与人工确认销售日
         );
 
         if (review.outcomeEvaluation.modelVerified) {
@@ -997,6 +1061,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
         if (matchedIdx < 0) {
           matchedIdx = updatedQueue.findIndex((q) => {
+            if (!existingQueueIds.has(q.id) || !scoreFitsQueueItem(q)) return false;
             const qHome = (q.data.matchInfo.homeTeam || '').replace(/\s+/g, '').toLowerCase();
             const qAway = (q.data.matchInfo.awayTeam || '').replace(/\s+/g, '').toLowerCase();
             const iHome = (item.homeTeam || '').replace(/\s+/g, '').toLowerCase();
@@ -1043,7 +1108,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
       const cleanRules = getExperienceRules();
 
       setBatchReviewSummary(
-        `🎉 成功批量完成 ${totalExecuted} 场赛果深度复盘！已按真实开赛时间与竞彩销售日法则分别独立归档（共覆盖 ${distinctSalesDates.size} 个独立销售日周期，支持分日精准对照复盘）！其中 ${newlyVerified} 场完全印证盘口风控${
+        `🎉 成功批量完成 ${totalExecuted} 场赛果深度复盘！已按开赛日期或销售日锚归档入库（历史共覆盖 ${distinctSalesDates.size} 个销售日周期，缺日期记录可在历史中选中修正）！其中 ${newlyVerified} 场完全印证盘口风控${
           batchSyncToCoreRules
             ? `，已全量调用去重合并引擎收敛沉淀入《财富经》核心法则库（累加实战印证命中并收纳最新样板，核心法则库保持 ${cleanRules.length} 套权威通则）！`
             : '（未勾选同步法则库，仅留存归档战报）'
@@ -1065,6 +1130,27 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     selectedMatchId === 'current'
       ? currentMatch
       : queue.find((q) => q.id === selectedMatchId)?.data || currentMatch;
+
+  const activeReviewQueueMatches = queue.filter((item) =>
+    item.data === activeReviewMatchData || (
+      item.data?.matchInfo?.homeTeam === activeReviewMatchData.matchInfo.homeTeam &&
+      item.data?.matchInfo?.awayTeam === activeReviewMatchData.matchInfo.awayTeam &&
+      item.data?.matchInfo?.matchTime === activeReviewMatchData.matchInfo.matchTime
+    )
+  );
+  const activeReviewQueueItem = selectedMatchId !== 'current'
+    ? queue.find((item) => item.id === selectedMatchId)
+    : activeReviewQueueMatches.length === 1 ? activeReviewQueueMatches[0] : undefined;
+  const matchingActiveReviews = reviews.filter((rev) =>
+    rev.matchData?.matchInfo?.homeTeam === activeReviewMatchData.matchInfo.homeTeam &&
+    rev.matchData?.matchInfo?.awayTeam === activeReviewMatchData.matchInfo.awayTeam &&
+    rev.matchData?.matchInfo?.matchTime === activeReviewMatchData.matchInfo.matchTime
+  );
+  const existingActiveReview = activeReviewQueueItem?.review ||
+    (matchingActiveReviews.length === 1 ? matchingActiveReviews[0] : undefined);
+  const activeReviewFallbackTimestamp = activeReviewQueueItem?.timestamp || existingActiveReview?.reviewTimestamp || Date.now();
+  const activeReviewPreferredSalesDate = existingActiveReview?.salesDateOverride || existingActiveReview?.salesDate ||
+    calculateSalesDate(undefined, activeReviewFallbackTimestamp).salesDate;
 
   const activeReviewReport: AnalysisReportResult =
     selectedMatchId === 'current'
@@ -1099,7 +1185,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         console.warn('AI review fallback:', err);
       }
 
-      // 2. Perform baseline evaluation (复盘时间戳严格记录用户实际点击复盘的当前时刻 Date.now())
+      // 2. 基准复盘：以导入时间戳与已确认销售日为锚，避免历史场次被改判到今天的销售日
       const localReview = evaluateMatchOutcomeAndExtractLesson(
         activeReviewMatchData,
         activeReviewReport,
@@ -1107,8 +1193,9 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         actualAwayScore,
         incidents,
         false,
-        undefined,
-        Date.now()
+        activeReviewPreferredSalesDate,
+        activeReviewFallbackTimestamp,
+        existingActiveReview
       );
 
       // If AI dissection is available, enhance the review
@@ -1147,18 +1234,10 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
       // Update in queue - strictly mark isReviewed: true, finalScore, isLocked, and review!
       const finalScoreStr = `${actualHomeScore}-${actualAwayScore}`;
-      const targetHome = (activeReviewMatchData.matchInfo.homeTeam || '').replace(/\s+/g, '').toLowerCase();
-      const targetAway = (activeReviewMatchData.matchInfo.awayTeam || '').replace(/\s+/g, '').toLowerCase();
-
       let matchedInQueue = false;
+      const targetQueueId = selectedMatchId !== 'current' ? selectedMatchId : activeReviewQueueItem?.id;
       const updated = queue.map((item) => {
-        const itemHome = (item.data.matchInfo.homeTeam || '').replace(/\s+/g, '').toLowerCase();
-        const itemAway = (item.data.matchInfo.awayTeam || '').replace(/\s+/g, '').toLowerCase();
-        const isMatched =
-          item.id === selectedMatchId ||
-          (targetHome && targetAway && itemHome && itemAway &&
-            (itemHome.includes(targetHome) || targetHome.includes(itemHome)) &&
-            (itemAway.includes(targetAway) || targetAway.includes(itemAway)));
+        const isMatched = !!targetQueueId && item.id === targetQueueId;
 
         if (isMatched) {
           matchedInQueue = true;
@@ -1760,8 +1839,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                           const demo = `瑞士 1-0 斯洛文尼亚 (点球绝杀)\n北马其顿 0:1 苏格兰 (客队全场铁桶阵防守反击)\n西班牙 3-0 捷克 (早早两球领先，全场压制)\n曼城 2:1 埃弗顿 (补时阶段被客队打入安慰球)\n皇家马德里 0-1 赫塔菲 (全场狂攻未果，冷门收割)`;
                           setBatchRawText(demo);
                           const candidateList = [
-                            { id: 'current', home: currentMatch.matchInfo.homeTeam, away: currentMatch.matchInfo.awayTeam, league: currentMatch.matchInfo.league },
-                            ...queue.map((q) => ({ id: q.id, home: q.data.matchInfo.homeTeam, away: q.data.matchInfo.awayTeam, league: q.data.matchInfo.league })),
+                            { id: 'current', home: currentMatch.matchInfo.homeTeam, away: currentMatch.matchInfo.awayTeam, league: currentMatch.matchInfo.league, matchTime: currentMatch.matchInfo.matchTime },
+                            ...queue.map((q) => ({ id: q.id, home: q.data.matchInfo.homeTeam, away: q.data.matchInfo.awayTeam, league: q.data.matchInfo.league, matchTime: q.data.matchInfo.matchTime, timestamp: q.timestamp, salesDate: q.review?.salesDateOverride || q.review?.salesDate })),
                           ];
                           const parsed = parseBatchMatchScoresFromText(demo, candidateList);
                           setParsedScores(parsed);
@@ -1919,7 +1998,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                       <div className="flex items-center gap-2 flex-wrap">
                         <Calendar className="w-4 h-4 text-emerald-400" />
                         <span className="text-xs font-bold text-slate-200">
-                          批次参考基准销售日：
+                          缺日期场次的默认销售日：
                         </span>
                         <span className="px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                           {(() => {
@@ -1932,7 +2011,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                         </span>
                       </div>
                       <span className="text-[11px] text-slate-400">
-                        ⚡ 各场次依真实开赛时间与竞彩11:00法则独立归纳（周五/周六/周日/周一分别建档，方便分日对照验证）
+                        完整开赛日期优先按 11:00 分日；缺日期时采用逐场或此处销售日，历史记录可选中后修正。
                       </span>
                     </div>
 
@@ -2027,13 +2106,15 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
               {/* Kickoff & Sales Day Banner */}
               {(() => {
                 const kickoff = activeReviewMatchData.matchInfo.matchTime || '临场';
-                const sInfo = calculateSalesDate(kickoff, Date.now());
+                const sInfo = existingActiveReview
+                  ? getReviewSalesInfo(existingActiveReview)
+                  : calculateSalesDate(kickoff, activeReviewFallbackTimestamp, activeReviewPreferredSalesDate);
                 return (
                   <div className="bg-slate-950/80 px-3 py-2 rounded-lg border border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="flex items-center gap-1.5 text-cyan-300 font-mono font-bold bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/60">
                         <Clock className="w-3.5 h-3.5 text-cyan-400" />
-                        <span>比赛开赛时间：{kickoff}</span>
+                        <span>比赛开赛时间：{sInfo.kickoffTimeFormatted}</span>
                       </span>
                       <span className="text-slate-600">|</span>
                       <span className="flex items-center gap-1.5 text-emerald-400 font-bold bg-emerald-950/50 px-2 py-0.5 rounded border border-emerald-800/50">
@@ -2972,7 +3053,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-400 mt-0.5">
-                      按年月日时间线自动归纳 · 已自动过滤重复点击记录 · 支持单场与整日精准删除
+                      当日 11:00 至次日 11:00 为一个销售日 · 完整开赛日期优先 · 缺日期可选中修正
                     </p>
                   </div>
                 </div>
@@ -3003,7 +3084,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                     disabled={isCalibratingDates}
                     onClick={handleCalibrateSalesDates}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
-                    title="重新依据真实开赛时间与竞彩11:00销售日法则独立归纳校准所有历史复盘，消除跨天误分，便于每日精准对照复盘"
+                    title="按完整开赛日期优先校准销售日；缺日期记录可选中后手动修正"
                   >
                     {isCalibratingDates ? (
                       <>
@@ -3048,6 +3129,53 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                     <span>清空全部战报</span>
                   </button>
                 </div>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center gap-3 flex-wrap text-xs">
+                <label className="flex items-center gap-1.5 text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      setSelectedReviewIds((previous) => {
+                        const updated = { ...previous };
+                        visibleReviews.forEach((rev) => { updated[rev.id] = checked; });
+                        return updated;
+                      });
+                    }}
+                    className="accent-cyan-400"
+                  />
+                  全选当前筛选
+                </label>
+                <span className="text-cyan-300 font-bold">已选 {selectedReviews.length} 场</span>
+                <label className="flex items-center gap-2 text-slate-300">
+                  归入销售日
+                  <input
+                    type="date"
+                    aria-label="调整所选场次的销售日"
+                    value={adjustSalesDate}
+                    onChange={(event) => setAdjustSalesDate(event.target.value)}
+                    className="rounded-md bg-slate-950 border border-slate-700 px-2 py-1.5 text-white [color-scheme:dark]"
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={selectedReviews.length === 0 || !adjustSalesDate}
+                  onClick={handleAdjustSelectedSalesDate}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  调整所选场次销售日
+                </button>
+                {selectedReviews.length > 0 && (
+                  <button type="button" onClick={() => setSelectedReviewIds({})} className="text-slate-400 hover:text-white">
+                    取消选择
+                  </button>
+                )}
+                <span className="w-full text-[11px] text-slate-400">
+                  选中需要修正的场次，再选择销售日；原始开赛数据保留，首次调整前会自动备份历史复盘。
+                  {incompleteReviewDateCount > 0 && <span className="text-amber-300 ml-1">{incompleteReviewDateCount} 场缺少完整开赛日期，可选中调整销售日。</span>}
+                </span>
               </div>
 
               {/* STAR TIER REALIZATION VALUE DASHBOARD */}
@@ -3661,6 +3789,16 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                                   {/* Card Header */}
                                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-2">
                                     <div className="flex items-center gap-2 flex-wrap">
+                                      <input
+                                        type="checkbox"
+                                        aria-label={`选择 ${rev.matchData.matchInfo.homeTeam} 对 ${rev.matchData.matchInfo.awayTeam} 的复盘`}
+                                        checked={!!selectedReviewIds[rev.id]}
+                                        onChange={(event) => {
+                                          const checked = event.target.checked;
+                                          setSelectedReviewIds((previous) => ({ ...previous, [rev.id]: checked }));
+                                        }}
+                                        className="accent-cyan-400 w-3.5 h-3.5 cursor-pointer"
+                                      />
                                       <span className="font-black text-white text-sm">
                                         {rev.matchData.matchInfo.homeTeam} VS{' '}
                                         {rev.matchData.matchInfo.awayTeam}
@@ -3675,8 +3813,11 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                                       </span>
                                       <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-950/70 text-cyan-300 border border-cyan-800/60 flex items-center gap-1">
                                         <Clock className="w-3 h-3 text-cyan-400" />
-                                        <span>开赛: {rev.kickoffTime || rev.matchData.matchInfo.matchTime || '临场'}</span>
+                                        <span>开赛: {getReviewSalesInfo(rev).kickoffTimeFormatted}</span>
                                       </span>
+                                      {rev.salesDateOverride && (
+                                        <span className="text-[10px] text-cyan-300">销售日已手动确认</span>
+                                      )}
                                       <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
                                         <span>(复盘: {timeInfo.timeStr})</span>
                                       </span>

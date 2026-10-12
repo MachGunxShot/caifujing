@@ -5,10 +5,33 @@ import {
   EvolvedExperienceRule,
 } from '../types/fortuneActuary';
 import { parseHandicapValue, parseOverUnderValue } from './actuaryEngine';
-import { calculateSalesDate } from './salesDayUtils';
+import { calculateSalesDate, calibrateReviewSalesDate, getReviewSalesInfo } from './salesDayUtils';
 
 const RULES_STORAGE_KEY = 'fortune_actuary_evolved_rules_v1';
 const REVIEWS_STORAGE_KEY = 'fortune_actuary_reviews_v1';
+const SALES_DAY_BACKUP_KEY = 'fortune_reviews_sales_day_backup_v1';
+
+/** Back up the original archive before the first sales-day repair or replacement. */
+export function replacePostMatchReviews(reviews: PostMatchReview[]): boolean {
+  try {
+    const previous = localStorage.getItem(REVIEWS_STORAGE_KEY);
+    if (previous && localStorage.getItem(SALES_DAY_BACKUP_KEY) === null) {
+      localStorage.setItem(SALES_DAY_BACKUP_KEY, previous);
+    }
+    localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(reviews));
+    return true;
+  } catch (error) {
+    console.error('Error saving sales-day archive:', error);
+    return false;
+  }
+}
+
+function reviewMatchKey(review: PostMatchReview): string {
+  const home = (review.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').trim();
+  const away = (review.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').trim();
+  const score = (review.actualScore || '').replace(/\s+/g, '').trim();
+  return home && away ? `${getReviewSalesInfo(review).salesDate}_${home}_vs_${away}_${score}` : review.id;
+}
 
 // Seed Initial Battle-tested Core Rules (5 Core Models + 3 Lie Detector Matrix + Workflow + Staking + Philosophy)
 export const SEED_RULES: EvolvedExperienceRule[] = [
@@ -1201,7 +1224,12 @@ export function getPostMatchReviews(): PostMatchReview[] {
       const seen = new Set<string>();
       const deduplicated: PostMatchReview[] = [];
 
-      for (const rev of parsed) {
+      let datesChanged = false;
+      for (const savedReview of parsed) {
+        const rev = calibrateReviewSalesDate(savedReview);
+        datesChanged ||= rev.salesDate !== savedReview.salesDate ||
+          rev.salesDateLabel !== savedReview.salesDateLabel ||
+          rev.salesCycleText !== savedReview.salesCycleText || rev.kickoffTime !== savedReview.kickoffTime;
         // Ensure scoreHit boolean is accurately evaluated
         if (rev.outcomeEvaluation && typeof rev.outcomeEvaluation.scoreHit !== 'boolean') {
           const predicted = rev.priorReport?.decision?.predictedScores || [];
@@ -1220,11 +1248,8 @@ export function getPostMatchReviews(): PostMatchReview[] {
             rev.outcomeEvaluation.euroHit && rev.outcomeEvaluation.handicapHit;
         }
 
-        // Deduplicate key: home vs away + actual score
-        const home = (rev.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').trim();
-        const away = (rev.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').trim();
-        const score = (rev.actualScore || '').replace(/\s+/g, '').trim();
-        const key = home && away ? `${home}_vs_${away}_${score}` : rev.id;
+        // The same teams and score on different sales days are distinct matches.
+        const key = reviewMatchKey(rev);
 
         if (!seen.has(key)) {
           seen.add(key);
@@ -1233,8 +1258,8 @@ export function getPostMatchReviews(): PostMatchReview[] {
       }
 
       // If duplicates were pruned, sync back to localStorage
-      if (deduplicated.length !== parsed.length) {
-        localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(deduplicated));
+      if (datesChanged || deduplicated.length !== parsed.length) {
+        replacePostMatchReviews(deduplicated);
       }
       return deduplicated;
     }
@@ -1251,28 +1276,22 @@ export function getPostMatchReviews(): PostMatchReview[] {
 export function savePostMatchReview(review: PostMatchReview): void {
   try {
     const reviews = getPostMatchReviews();
-    const getMatchKey = (r: PostMatchReview) => {
-      const home = (r.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').trim();
-      const away = (r.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').trim();
-      const score = (r.actualScore || '').replace(/\s+/g, '').trim();
-      return `${home}_vs_${away}_${score}`;
-    };
-
-    const targetKey = getMatchKey(review);
+    const targetKey = reviewMatchKey(review);
     const existingIdx = reviews.findIndex(
-      (r) => r.id === review.id || getMatchKey(r) === targetKey
+      (r) => r.id === review.id || reviewMatchKey(r) === targetKey
     );
 
     if (existingIdx >= 0) {
-      reviews[existingIdx] = {
+      reviews[existingIdx] = calibrateReviewSalesDate({
         ...review,
+        salesDateOverride: review.salesDateOverride || reviews[existingIdx].salesDateOverride,
         id: reviews[existingIdx].id, // preserve ID
         reviewTimestamp: review.reviewTimestamp || reviews[existingIdx].reviewTimestamp || Date.now(),
-      };
+      });
     } else {
-      reviews.unshift(review);
+      reviews.unshift(calibrateReviewSalesDate(review));
     }
-    localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(reviews));
+    if (!replacePostMatchReviews(reviews)) throw new Error('Unable to save review archive');
   } catch (e) {
     console.error('Error saving review:', e);
   }
@@ -1428,7 +1447,8 @@ export function evaluateMatchOutcomeAndExtractLesson(
   matchIncidents: string = '',
   persistToCoreRules: boolean = false,
   preferredSalesDate?: string,
-  fallbackTimestamp?: number
+  fallbackTimestamp?: number,
+  existingReview?: PostMatchReview
 ): PostMatchReview {
   const { homeTeam, awayTeam, league } = matchData.matchInfo;
   const actualScoreStr = `${actualHomeScore}-${actualAwayScore}`;
@@ -1543,8 +1563,8 @@ export function evaluateMatchOutcomeAndExtractLesson(
   const kickoffTime = matchData.matchInfo?.matchTime || '临场';
   const salesInfo = calculateSalesDate(kickoffTime, effectiveTimestamp, preferredSalesDate);
 
-  const review: PostMatchReview = {
-    id: `rev-${safeHome}-${safeAway}-${actualScoreStr}`,
+  const draftReview: PostMatchReview = {
+    id: existingReview?.id || `rev-${salesInfo.salesDate}-${safeHome}-${safeAway}-${actualScoreStr}`,
     matchData,
     priorReport,
     actualScore: actualScoreStr,
@@ -1556,6 +1576,7 @@ export function evaluateMatchOutcomeAndExtractLesson(
     salesDateLabel: salesInfo.salesDateLabel,
     salesCycleText: salesInfo.salesCycleText,
     kickoffTime: salesInfo.kickoffTimeFormatted,
+    salesDateOverride: existingReview?.salesDateOverride,
     outcomeEvaluation: {
       euroHit,
       handicapHit,
@@ -1571,6 +1592,11 @@ export function evaluateMatchOutcomeAndExtractLesson(
   };
 
   // Automatically save this review to history (idempotent)
+  const matchingReview = existingReview || getPostMatchReviews().find(saved => reviewMatchKey(saved) === reviewMatchKey(draftReview));
+  const review = calibrateReviewSalesDate({ ...draftReview,
+    id: matchingReview?.id || draftReview.id,
+    salesDateOverride: matchingReview?.salesDateOverride,
+  });
   savePostMatchReview(review);
 
   // Only persist to core experience rules if explicitly requested (preventing runaway rule bloat)
