@@ -11,6 +11,38 @@ dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Overridable via .env so a saturated or retired model can be swapped without
+// editing code. Full flash tiers currently answer 503 while lite stays healthy,
+// so a saturated model falls through to the next entry instead of failing.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+const GEMINI_MODEL_FALLBACKS = (process.env.GEMINI_MODEL_FALLBACKS
+  || 'gemini-3.5-flash-lite,gemini-3.1-flash-lite')
+  .split(',').map((m) => m.trim()).filter(Boolean);
+const GEMINI_MODELS = [GEMINI_MODEL, ...GEMINI_MODEL_FALLBACKS.filter((m) => m !== GEMINI_MODEL)];
+
+// A saturated model returns 503 UNAVAILABLE or 429 RESOURCE_EXHAUSTED while
+// other tiers stay healthy, so those two are worth retrying on the next model.
+function isRetryableModelError(err: any): boolean {
+  const status = err?.status ?? err?.code ?? err?.error?.code;
+  if (status === 503 || status === 429) return true;
+  const message = String(err?.message ?? '');
+  return /UNAVAILABLE|RESOURCE_EXHAUSTED|overloaded|high demand|fetch failed/i.test(message);
+}
+
+async function generateWithFallback(params: { contents: any; config?: any }) {
+  let lastError: any;
+  for (const model of GEMINI_MODELS) {
+    try {
+      return await ai.models.generateContent({ ...params, model });
+    } catch (err: any) {
+      lastError = err;
+      if (!isRetryableModelError(err)) throw err;
+      console.warn(`Gemini model ${model} unavailable, trying next: ${String(err?.message ?? err).slice(0, 140)}`);
+    }
+  }
+  throw lastError;
+}
+
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || '',
   httpOptions: {
@@ -67,8 +99,7 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
 
       let aiResponseText = '';
       if (process.env.GEMINI_API_KEY) {
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
+        const response = await generateWithFallback({
           contents: promptText,
           config: {
             systemInstruction: `你是一位精通《财富经》足彩盘赔分析与博弈论的顶级精算师与风险控制专家。你的职责是依据《财富经》的底线逻辑与研判公式，结合系统持续沉淀的实战复盘经验法则库，剥离球队名气与市场虚火，直击博彩机构（大庄）的真实风控底牌。
@@ -152,8 +183,7 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
       let dissectionData = null;
       if (process.env.GEMINI_API_KEY) {
         try {
-          const response = await ai.models.generateContent({
-            model: 'gemini-3.8-flash',
+          const response = await generateWithFallback({
             contents: promptText,
             config: {
               systemInstruction: '你是一位精通欧亚足彩风控内幕的顶级操盘复盘专家。你的分析绝不浮于表面，必须深刻归因庄家真实赔付、筹码诱导陷阱或黑天鹅事件，提炼出可被未来研判复用的实战金律。',
@@ -277,8 +307,7 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
           },
         };
 
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
+        const response = await generateWithFallback({
           contents: {
             parts: [imagePart, { text: promptText }],
           },
@@ -361,8 +390,7 @@ ${candidateListStr ? `【待匹配的目标赛事参考列表】：${candidateLi
 `;
 
         try {
-          const response = await ai.models.generateContent({
-            model: 'gemini-3.8-flash',
+          const response = await generateWithFallback({
             contents: [
               { text: promptText },
               {
@@ -464,7 +492,8 @@ ${candidateListStr ? `【待匹配的目标赛事参考列表】：${candidateLi
     res.json({
       status: 'ok',
       hasApiKey: !!process.env.GEMINI_API_KEY,
-      model: 'gemini-3.8-flash',
+      model: GEMINI_MODEL,
+      models: GEMINI_MODELS,
     });
   });
 

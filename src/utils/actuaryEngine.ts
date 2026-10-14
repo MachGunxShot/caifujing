@@ -72,7 +72,14 @@ export function parseOverUnderValue(line: string): number {
 }
 
 export function computeActuarialMetrics(data: FullMatchData): ActuarialMetrics {
-  const { earlyWin, earlyDraw, earlyLoss, lateWin, lateDraw, lateLoss } = data.euroOdds;
+  // Callers reach this through the rule-engine fallback, which runs exactly when
+  // the AI path failed and may hand over a partial match. Destructuring a
+  // missing euroOdds threw and terminated the whole server process.
+  const euroOdds = data?.euroOdds ?? {
+    earlyWin: 2.5, earlyDraw: 3.2, earlyLoss: 2.6,
+    lateWin: 2.5, lateDraw: 3.2, lateLoss: 2.6,
+  };
+  const { earlyWin, earlyDraw, earlyLoss, lateWin, lateDraw, lateLoss } = euroOdds;
 
   // 欧指返还率
   const earlyReturnRate = earlyWin > 0 && earlyDraw > 0 && earlyLoss > 0

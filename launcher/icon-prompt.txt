@@ -1,0 +1,9 @@
+Generated with the built-in imagegen tool, transparent_background=true.
+The tool exposes no model selection parameter; an image2.5 model ID was not verified.
+
+Use case: stylized-concept
+Asset type: Windows desktop launcher icon for a Chinese local website named 财富经, PNG.
+Primary request: a polished money-themed icon, a compact sculpted golden Chinese yuanbao ingot with a few stacked gold coins, one front coin with a clear ¥ symbol. Rich warm gold, subtle emerald accents, elegant rounded 3D illustration, crisp clean silhouette readable at 32 pixels.
+Composition: single centered compact object, square image, comfortable transparent padding, no cropping.
+Background: genuinely transparent alpha, absolutely no backdrop, no square tile, no fake checkerboard, no floor, no drop shadow outside the object.
+Constraints: no words, no watermark, no extra symbols, produce one transparent PNG icon.
