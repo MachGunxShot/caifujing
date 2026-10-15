@@ -221,7 +221,7 @@ export function parseNaturalTextOdds(text: string, currentData: FullMatchData): 
   // 3. Asian Handicap extraction
   // Check for dual match: 亚初一球/球半[0.910/0.800]即球半[1.060/0.780]
   const asianDualMatch = fullText.match(
-    /亚初\s*([^\d\[\]\s]+)\[([\d.]+)[/ ]+([\d.]+)\]\s*即\s*([^\d\[\]\s]+)\[([\d.]+)[/ ]+([\d.]+)\]/
+    /亚初\s*([^\s\[\]]+)\[([\d.]+)[/ ]+([\d.]+)\]\s*即\s*([^\s\[\]]+)\[([\d.]+)[/ ]+([\d.]+)\]/
   );
   if (asianDualMatch && result.asianHandicap) {
     result.asianHandicap.earlyHandicap = asianDualMatch[1];
