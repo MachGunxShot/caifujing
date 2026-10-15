@@ -26,6 +26,7 @@ const memoryStorage: Storage = {
   setItem: (key: string, value: string) => { archive.set(key, String(value)); },
 };
 Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: memoryStorage });
+Object.defineProperty(globalThis, 'window', { configurable: true, value: globalThis });
 
 const REVIEWS_KEY = 'fortune_actuary_reviews_v1';
 const BACKUP_KEY = 'fortune_reviews_sales_day_backup_v1';

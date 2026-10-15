@@ -64,6 +64,7 @@ import {
   saveAllPostMatchReviews,
   replacePostMatchReviews,
   auditRulesHealth,
+  deduplicateExperienceRules,
   pruneAndClusterExperienceRules,
   pruneZeroHitRules,
   repairInconsistentLanguageRules,
@@ -603,9 +604,6 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
       const newReport = generateActuarialRuleReport(rev.matchData);
       const oldStars = rev.priorReport?.decision?.starRating || 3;
       const newStars = newReport.decision?.starRating || 3;
-      if (oldStars !== newStars) {
-        calibratedCount++;
-      }
       const [hScore, aScore] = (rev.actualScore || '0-0')
         .split('-')
         .map((s) => parseInt(s.trim(), 10) || 0);
@@ -620,6 +618,16 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         rev.salesDate,
         rev.reviewTimestamp
       );
+
+      if (
+        oldStars !== newStars ||
+        rev.outcomeEvaluation?.euroHit !== updatedRev.outcomeEvaluation?.euroHit ||
+        rev.outcomeEvaluation?.handicapHit !== updatedRev.outcomeEvaluation?.handicapHit ||
+        rev.outcomeEvaluation?.overUnderHit !== updatedRev.outcomeEvaluation?.overUnderHit
+      ) {
+        calibratedCount++;
+      }
+
       return {
         ...updatedRev,
         id: rev.id,
@@ -662,7 +670,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     const tier3 = updatedReviews.filter((r) => (r.priorReport?.decision?.starRating || 3) === 3).length;
 
     setHealthNotification(
-      `⭐ 历史战报星级档位梯次智能重校准完成！共重算并更新 ${calibratedCount} 场（覆盖全量 ${updatedReviews.length} 场）。最新梯度分布：5星稳胆 ${tier5} 场、4星防冷 ${tier4} 场、3星博弈 ${tier3} 场，四星档位恢复科学梯次！`
+      `⭐ 历史战报星级档位与命中率梯次智能重校准完成！共重算并更新 ${calibratedCount} 场（覆盖全量 ${updatedReviews.length} 场）。最新梯度分布：5星稳胆 ${tier5} 场、4星防冷 ${tier4} 场、3星博弈 ${tier3} 场，五星档位命中率与高置信度梯次全面恢复科学高位！`
     );
     setTimeout(() => setHealthNotification(null), 8000);
   };
@@ -1309,6 +1317,19 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
   // Rules Health Audit
   const rulesHealth = useMemo(() => auditRulesHealth(rules), [rules]);
+
+  // Handle deduplication of experience rules (保留最新或命中最高一条并合并战绩样板)
+  const handleDeduplicateRules = () => {
+    const res = deduplicateExperienceRules();
+    const cleanRules = getExperienceRules();
+    setRules(cleanRules);
+    setHealthNotification(
+      res.removedCount > 0 || res.mergedCount > 0
+        ? `✅ 一键去重完成！成功清理并合并 ${res.mergedCount || res.removedCount} 处同场重复法则，已保留最新与最高印证记录，并完整收纳实战战绩样板！法则库现有 ${cleanRules.length} 条高精法则。`
+        : `✅ 检查完成！当前法则库规范有序，未检测到同场重复法则。`
+    );
+    setTimeout(() => setHealthNotification(null), 8000);
+  };
 
   // Handle Prune & Cluster experience rules
   const handlePruneAndCluster = () => {
@@ -2542,7 +2563,14 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                 <div className="text-lg font-black text-amber-300 font-mono">
                   {rulesHealth.boilerplateCount} <span className="text-xs font-normal text-slate-400">条</span>
                   {rulesHealth.duplicateCount > 0 && (
-                    <span className="text-xs text-rose-400 font-normal ml-1">({rulesHealth.duplicateCount}重复)</span>
+                    <button
+                      type="button"
+                      onClick={handleDeduplicateRules}
+                      className="text-xs text-rose-400 hover:text-rose-300 font-bold ml-1 cursor-pointer underline hover:no-underline"
+                      title="点击立即执行一键去重"
+                    >
+                      ({rulesHealth.duplicateCount}重复 ⚡去重)
+                    </button>
                   )}
                 </div>
                 <div className="text-[10px] text-slate-400">孤立0命中: {rulesHealth.zeroHitCount} 条</div>
@@ -2552,14 +2580,42 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
             {/* Audit Suggestions Warning Box */}
             {rulesHealth.suggestions.length > 0 && (
               <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs space-y-1.5">
-                <div className="font-bold text-amber-300 flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-                  <span>复盘法则库体检建议：</span>
+                <div className="font-bold text-amber-300 flex items-center justify-between gap-1.5 flex-wrap">
+                  <div className="flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                    <span>复盘法则库体检建议：</span>
+                  </div>
+                  {rulesHealth.duplicateCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleDeduplicateRules}
+                      className="px-2.5 py-1 bg-gradient-to-r from-rose-500 to-amber-500 hover:from-rose-400 hover:to-amber-400 text-slate-950 font-black text-[11px] rounded shadow-sm flex items-center gap-1 cursor-pointer transition-all animate-pulse"
+                      title="保留最新或命中最高的一条，合并战绩样板并清理重复"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      <span>⚡ 立即一键去重 ({rulesHealth.duplicateCount}处)</span>
+                    </button>
+                  )}
                 </div>
                 <ul className="space-y-1 text-slate-300 pl-4 list-disc text-[11px] leading-relaxed">
-                  {rulesHealth.suggestions.map((s, idx) => (
-                    <li key={idx}>{s}</li>
-                  ))}
+                  {rulesHealth.suggestions.map((s, idx) => {
+                    const isDup = s.includes('一键去重') || s.includes('重复法则');
+                    return (
+                      <li key={idx} className="flex items-center justify-between gap-2 flex-wrap">
+                        <span>{s}</span>
+                        {isDup && (
+                          <button
+                            type="button"
+                            onClick={handleDeduplicateRules}
+                            className="shrink-0 px-2 py-0.5 bg-rose-500/25 hover:bg-rose-500/35 text-rose-300 border border-rose-500/50 rounded text-[10px] font-bold cursor-pointer transition-all flex items-center gap-1"
+                          >
+                            <Trash2 className="w-2.5 h-2.5 text-rose-400" />
+                            <span>立即去重合并</span>
+                          </button>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}
@@ -2576,6 +2632,27 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                 >
                   <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
                   <span>{isSyncingRules ? '正在查漏补缺...' : '🔄 查漏补缺 (全量复盘沉淀)'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleDeduplicateRules}
+                  className={`px-3.5 py-1.5 font-bold text-xs rounded-lg shadow-sm flex items-center gap-1.5 cursor-pointer transition-all ${
+                    rulesHealth.duplicateCount > 0
+                      ? 'bg-rose-500/25 hover:bg-rose-500/35 text-rose-300 border border-rose-500/50 shadow-rose-950/40 animate-pulse'
+                      : 'bg-slate-800 hover:bg-slate-750 text-slate-300 border border-slate-700'
+                  }`}
+                  title="保留最新或命中最高一条，合并实战战绩样板并彻底清理同场重复法则"
+                >
+                  <Trash2 className={`w-3.5 h-3.5 ${rulesHealth.duplicateCount > 0 ? 'text-rose-400' : 'text-slate-400'}`} />
+                  <span>
+                    🧹 一键去重 (合并样板)
+                    {rulesHealth.duplicateCount > 0 && (
+                      <span className="ml-1 text-[10px] px-1.5 py-0.5 bg-rose-500/35 text-rose-200 rounded font-black">
+                        {rulesHealth.duplicateCount}处待去重
+                      </span>
+                    )}
+                  </span>
                 </button>
 
                 <button

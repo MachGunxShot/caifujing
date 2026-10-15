@@ -1,0 +1,6 @@
+{
+  "summary": "复盘核心法则库「一键去重」功能实施方案：\n1. 在 experienceStore.ts 中实现精准的 deduplicateExperienceRules() 引擎，按用户指定的“保留最新/命中最高一条并合并战绩样板”策略收敛重复法则；\n2. 在 ReviewEvolutionView.tsx 治理操作栏新增「一键去重」按钮，并在体检建议提示框中提供「立即去重」快捷操作响应；\n3. 执行后实时重算体检健康度评分并清零 duplicateCount，提供清晰的去重与合并样板反馈。",
+  "updatedAt": "2026-10-15T08:11:40.458601445Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

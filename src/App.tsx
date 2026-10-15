@@ -14,7 +14,7 @@ import { BatchMatrixDashboard } from './components/BatchMatrixDashboard';
 import { ReviewEvolutionView } from './components/ReviewEvolutionView';
 import { FullMatchData, AnalysisReportResult, BatchMatchItem } from './types/fortuneActuary';
 import { PRESET_CASES, PresetCase } from './utils/presetCases';
-import { generateActuarialRuleReport } from './utils/actuaryEngine';
+import { generateActuarialRuleReport, compareEarlyVsLateConfidence } from './utils/actuaryEngine';
 import { calculateSalesDate, calibrateReviewSalesDate, getReviewSalesInfo, hasExplicitKickoffDate } from './utils/salesDayUtils';
 import {
   getActiveExperiencePromptText,
@@ -75,9 +75,14 @@ function syncQueueWithSavedReviews(queue: BatchMatchItem[]): BatchMatchItem[] {
         );
       });
 
+      const rep = item.report || generateActuarialRuleReport(item.data);
+      const confShift = item.confidenceShift || compareEarlyVsLateConfidence(item.data, item.earlyReportSnapshot, rep, item.earlyDataSnapshot);
+
       if (matchedReview) {
         return {
           ...item,
+          report: rep,
+          confidenceShift: confShift,
           isReviewed: true,
           finalScore: matchedReview.actualScore,
           isLocked: true,
@@ -85,7 +90,11 @@ function syncQueueWithSavedReviews(queue: BatchMatchItem[]): BatchMatchItem[] {
         };
       }
 
-      return item;
+      return {
+        ...item,
+        report: rep,
+        confidenceShift: confShift,
+      };
     });
   } catch (e) {
     console.warn('syncQueueWithSavedReviews error:', e);
@@ -457,6 +466,9 @@ export default function App() {
     let protectedCount = 0;
     let updatedCount = 0;
     let newCount = 0;
+    let incConfidenceCount = 0;
+    let decConfidenceCount = 0;
+    let stableConfidenceCount = 0;
 
     setBatchQueue((prevQueue) => {
       // If queue is currently ONLY the default teaching presets, replace them with user's real imported matches!
@@ -489,6 +501,10 @@ export default function App() {
             updatedCount++;
 
             const prevData = existing.data;
+            const prevReport = existing.report || generateActuarialRuleReport(prevData);
+            const earlyDataToCompare = existing.earlyDataSnapshot || prevData;
+            const earlyReportToCompare = existing.earlyReportSnapshot || prevReport;
+
             const mergedMatchData: FullMatchData = {
               ...m,
               matchInfo: {
@@ -534,11 +550,24 @@ export default function App() {
             };
 
             const updatedReport = generateActuarialRuleReport(mergedMatchData);
+            const confidenceShift = compareEarlyVsLateConfidence(
+              mergedMatchData,
+              earlyReportToCompare,
+              updatedReport,
+              earlyDataToCompare
+            );
+
+            if (confidenceShift.shiftType === 'INCREASED') incConfidenceCount++;
+            else if (confidenceShift.shiftType === 'DECREASED') decConfidenceCount++;
+            else stableConfidenceCount++;
 
             updatedQueue[existingIndex] = {
               ...existing,
               data: mergedMatchData,
               report: updatedReport,
+              earlyDataSnapshot: earlyDataToCompare,
+              earlyReportSnapshot: earlyReportToCompare,
+              confidenceShift,
               status: 'done',
               timestamp: Date.now(),
               isReviewed: existing.isReviewed,
@@ -550,11 +579,19 @@ export default function App() {
         } else {
           // Brand new match, add to queue
           newCount++;
+          const rep = generateActuarialRuleReport(m);
+          const confidenceShift = compareEarlyVsLateConfidence(m, undefined, rep);
+
+          if (confidenceShift.shiftType === 'INCREASED') incConfidenceCount++;
+          else if (confidenceShift.shiftType === 'DECREASED') decConfidenceCount++;
+          else stableConfidenceCount++;
+
           updatedQueue.push({
             id: `batch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             sourceName: `导入场次_${home}vs${away}`,
             data: m,
-            report: generateActuarialRuleReport(m),
+            report: rep,
+            confidenceShift,
             status: 'done',
             timestamp: Date.now(),
           });
@@ -564,11 +601,15 @@ export default function App() {
       return updatedQueue;
     });
 
+    const shiftDetailText = updatedCount > 0
+      ? ` ｜ ⚡ 晚盘变轨：⬆️ 增加信心 ${incConfidenceCount} 场，⬇️ 减少信心 ${decConfidenceCount} 场，⏸️ 走势平稳 ${stableConfidenceCount} 场`
+      : '';
+
     setImportNotification({
       message: `智能差量导入完成：共抓取 ${matches.length} 场赛事`,
       details: protectedCount > 0
-        ? `🔒 已封盘保护 ${protectedCount} 场（终盘快照与原预测 100% 冻结，未受覆盖），🔄 临场更新 ${updatedCount} 场，➕ 新增 ${newCount} 场`
-        : `🔄 更新 ${updatedCount} 场临场赛事盘口，➕ 新增 ${newCount} 场`,
+        ? `🔒 已封盘保护 ${protectedCount} 场（终盘快照与原预测 100% 冻结，未受覆盖），🔄 临场更新 ${updatedCount} 场，➕ 新增 ${newCount} 场${shiftDetailText}`
+        : `🔄 更新 ${updatedCount} 场临场赛事盘口，➕ 新增 ${newCount} 场${shiftDetailText}`,
       protectedCount,
       updatedCount,
       newCount,

@@ -39,9 +39,18 @@ import {
   ChevronUp,
   RotateCcw,
   Upload,
+  TrendingUp,
+  TrendingDown,
+  Minus,
 } from 'lucide-react';
-import { BatchMatchItem, FullMatchData, AnalysisReportResult } from '../types/fortuneActuary';
-import { generateActuarialRuleReport } from '../utils/actuaryEngine';
+import {
+  BatchMatchItem,
+  FullMatchData,
+  AnalysisReportResult,
+  ConfidenceComparisonResult,
+  ConfidenceShiftType,
+} from '../types/fortuneActuary';
+import { generateActuarialRuleReport, compareEarlyVsLateConfidence } from '../utils/actuaryEngine';
 import { PRESET_CASES } from '../utils/presetCases';
 import { MarkdownView } from './MarkdownView';
 import { HandicapOddsDistributionChart } from './HandicapOddsDistributionChart';
@@ -91,7 +100,8 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
 }) => {
   const [viewStyle, setViewStyle] = useState<'matrix' | 'cards' | 'sandbox'>('matrix');
   const [starFilter, setStarFilter] = useState<number | 'ALL'>('ALL');
-  const [sortBy, setSortBy] = useState<'stars' | 'time' | 'default'>('stars');
+  const [confidenceFilter, setConfidenceFilter] = useState<ConfidenceShiftType | 'ALL'>('ALL');
+  const [sortBy, setSortBy] = useState<'stars' | 'time' | 'confidence' | 'default'>('stars');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
   // Secondary sort preference when sorting by stars:
   // 'certainty' (稳胆确定性优先：极限榨水 > 平赔低洼 > 高息吸筹) vs 'time' (临场早开赛优先)
@@ -100,6 +110,14 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
   const [copiedBatch, setCopiedBatch] = useState(false);
   const [copiedCombo, setCopiedCombo] = useState(false);
   const [showD3Chart, setShowD3Chart] = useState(true);
+
+  // Early vs Late Confidence Shift Diff Modal State
+  const [diffModalTarget, setDiffModalTarget] = useState<{
+    item: BatchMatchItem;
+    report: AnalysisReportResult;
+    shift: ConfidenceComparisonResult;
+  } | null>(null);
+  const [copiedDiffNote, setCopiedDiffNote] = useState(false);
 
   // Auto-lock by kickoff time modal & toast
   const [isAutoLockModalOpen, setIsAutoLockModalOpen] = useState(false);
@@ -148,13 +166,19 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
     );
   };
 
-  // Pre-process all items with computed actuarial reports
+  // Pre-process all items with computed actuarial reports and confidence shift trajectories
   const processedItems = useMemo(() => {
     return queue.map((item, originalIndex) => {
       const report = item.report || generateActuarialRuleReport(item.data);
       const dec = report.decision;
       const model = report.identifiedModel;
       const time = item.data.matchInfo.matchTime || '99:99';
+      const shift = item.confidenceShift || compareEarlyVsLateConfidence(
+        item.data,
+        item.earlyReportSnapshot,
+        report,
+        item.earlyDataSnapshot
+      );
       return {
         item,
         originalIndex,
@@ -163,6 +187,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
         model,
         time,
         stars: dec.starRating,
+        shift,
       };
     });
   }, [queue]);
@@ -172,16 +197,45 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
   const threeStarCount = useMemo(() => processedItems.filter((p) => p.stars === 3).length, [processedItems]);
   const lockedMatchesCount = useMemo(() => queue.filter((q) => q.isLocked).length, [queue]);
 
-  // Apply star filter
-  const filteredItems = useMemo(() => {
-    if (starFilter === 'ALL') return processedItems;
-    return processedItems.filter((p) => p.stars === starFilter);
-  }, [processedItems, starFilter]);
+  // Confidence shift counts across all items
+  const increasedConfidenceCount = useMemo(
+    () => processedItems.filter((p) => p.shift.shiftType === 'INCREASED').length,
+    [processedItems]
+  );
+  const decreasedConfidenceCount = useMemo(
+    () => processedItems.filter((p) => p.shift.shiftType === 'DECREASED').length,
+    [processedItems]
+  );
+  const stableConfidenceCount = useMemo(
+    () => processedItems.filter((p) => p.shift.shiftType === 'STABLE').length,
+    [processedItems]
+  );
 
-  // Apply multi-tier sorting (stars, sub-sorting preferences, time, default)
+  // Apply star and confidence shift filters
+  const filteredItems = useMemo(() => {
+    let list = processedItems;
+    if (starFilter !== 'ALL') {
+      list = list.filter((p) => p.stars === starFilter);
+    }
+    if (confidenceFilter !== 'ALL') {
+      list = list.filter((p) => p.shift.shiftType === confidenceFilter);
+    }
+    return list;
+  }, [processedItems, starFilter, confidenceFilter]);
+
+  // Apply multi-tier sorting (stars, confidence, time, default)
   const sortedItems = useMemo(() => {
     const list = [...filteredItems];
     list.sort((a, b) => {
+      if (sortBy === 'confidence') {
+        const confRank = (c: ConfidenceShiftType) => (c === 'INCREASED' ? 3 : c === 'STABLE' ? 2 : 1);
+        const cDiff = sortOrder === 'desc'
+          ? confRank(b.shift.shiftType) - confRank(a.shift.shiftType)
+          : confRank(a.shift.shiftType) - confRank(b.shift.shiftType);
+        if (cDiff !== 0) return cDiff;
+        return b.stars - a.stars;
+      }
+
       if (sortBy === 'stars') {
         const starDiff = sortOrder === 'desc' ? b.stars - a.stars : a.stars - b.stars;
         if (starDiff !== 0) return starDiff;
@@ -244,7 +298,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
     };
   }, [sortedItems]);
 
-  const toggleSort = (field: 'stars' | 'time' | 'default') => {
+  const toggleSort = (field: 'stars' | 'time' | 'confidence' | 'default') => {
     if (sortBy === field) {
       setSortOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'));
     } else {
@@ -442,7 +496,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
 
   // Row Renderer for Matrix Table
   const renderTableRow = (
-    { item, report, dec, originalIndex }: (typeof sortedItems)[0],
+    { item, report, dec, originalIndex, shift }: (typeof sortedItems)[0],
     idx: number
   ) => {
     const badge = getBadgeForModel(report.identifiedModel);
@@ -477,14 +531,22 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
           </div>
         </td>
 
-        {/* 1. 推荐星级 */}
+        {/* 1. 推荐星级 & 变轨信心 */}
         <td className="py-3 px-3 whitespace-nowrap">
           {renderStarRating(dec.starRating)}
           <div className="flex items-center gap-1 mt-0.5">
             <span className={`text-[10px] font-mono ${isFiveStar ? 'text-amber-400 font-bold' : 'text-slate-400'}`}>
               {dec.starRating}星置信度
             </span>
-            {isFiveStar && (
+            {shift.starChange !== 0 ? (
+              <span className={`px-1 py-0.2 rounded text-[9px] font-extrabold font-mono border ${
+                shift.starChange > 0
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                  : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+              }`}>
+                {shift.earlyStars}★➔{shift.lateStars}★ ({shift.starChange > 0 ? `+${shift.starChange}` : shift.starChange})
+              </span>
+            ) : isFiveStar ? (
               <span className="px-1 py-0.2 rounded text-[9px] font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/40">
                 {report.identifiedModel === 'POSITIVE_CONTROL'
                   ? '稳胆'
@@ -492,7 +554,42 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
                   ? '胆平'
                   : '核心'}
               </span>
-            )}
+            ) : null}
+          </div>
+          {/* Quick Confidence Shift Pill */}
+          <div className="mt-1">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setDiffModalTarget({ item, report, shift });
+              }}
+              className={`px-1.5 py-0.5 rounded text-[10px] font-bold border flex items-center gap-1 transition-all cursor-pointer ${
+                shift.shiftType === 'INCREASED'
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/30'
+                  : shift.shiftType === 'DECREASED'
+                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 hover:bg-rose-500/30'
+                  : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:text-slate-200'
+              }`}
+              title="点击查看早盘 vs 晚盘 信心异动轨迹与变轨对比"
+            >
+              {shift.shiftType === 'INCREASED' ? (
+                <>
+                  <TrendingUp className="w-3 h-3 text-emerald-400 shrink-0" />
+                  <span>信心增加</span>
+                </>
+              ) : shift.shiftType === 'DECREASED' ? (
+                <>
+                  <TrendingDown className="w-3 h-3 text-rose-400 shrink-0" />
+                  <span>信心减弱</span>
+                </>
+              ) : (
+                <>
+                  <Minus className="w-3 h-3 text-slate-500 shrink-0" />
+                  <span>走势平稳</span>
+                </>
+              )}
+            </button>
           </div>
         </td>
 
@@ -587,6 +684,20 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
         {/* 单场穿透 & 封盘复盘操作区 */}
         <td className="py-3 px-3 text-right whitespace-nowrap">
           <div className="flex items-center justify-end gap-1.5">
+            {/* Early vs Late Shift Diff Button */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setDiffModalTarget({ item, report, shift });
+              }}
+              className="px-2 py-1 text-[11px] font-bold rounded border bg-slate-800 text-cyan-300 hover:text-cyan-200 hover:bg-slate-750 border-slate-700 flex items-center gap-1 cursor-pointer transition-all"
+              title="对比早盘意图与晚盘临场风控变轨轨迹"
+            >
+              <Activity className="w-3 h-3 text-cyan-400" />
+              <span>变轨对比</span>
+            </button>
+
             {/* Lock / Unlock Toggle Button */}
             {onToggleLockMatch && (
               <button
@@ -669,7 +780,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
 
   // Card Stream Renderer
   const renderCardStreamItem = (
-    { item, report: rep, dec, originalIndex }: (typeof sortedItems)[0],
+    { item, report: rep, dec, originalIndex, shift }: (typeof sortedItems)[0],
     idx: number
   ) => {
     const badge = getBadgeForModel(rep.identifiedModel);
@@ -698,6 +809,38 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
                 {badge.text}
               </span>
               <div className="ml-1">{renderStarRating(dec.starRating)}</div>
+              
+              {/* Confidence Shift Pill */}
+              <button
+                type="button"
+                onClick={() => setDiffModalTarget({ item, report: rep, shift })}
+                className={`px-2 py-0.5 rounded text-xs font-bold border flex items-center gap-1 cursor-pointer transition-all ${
+                  shift.shiftType === 'INCREASED'
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/30'
+                    : shift.shiftType === 'DECREASED'
+                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 hover:bg-rose-500/30'
+                    : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
+                }`}
+                title="查看早晚盘变轨与信心异动"
+              >
+                {shift.shiftType === 'INCREASED' ? (
+                  <>
+                    <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>晚盘信心增加 {shift.starChange > 0 ? `(+${shift.starChange}★)` : ''}</span>
+                  </>
+                ) : shift.shiftType === 'DECREASED' ? (
+                  <>
+                    <TrendingDown className="w-3.5 h-3.5 text-rose-400" />
+                    <span>晚盘信心减弱 {shift.starChange < 0 ? `(${shift.starChange}★)` : ''}</span>
+                  </>
+                ) : (
+                  <>
+                    <Minus className="w-3.5 h-3.5 text-slate-500" />
+                    <span>走势平稳</span>
+                  </>
+                )}
+              </button>
+
               {item.isLocked && (
                 <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold flex items-center gap-1">
                   <Lock className="w-2.5 h-2.5 text-amber-400" />
@@ -710,7 +853,18 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
             </h3>
           </div>
 
-          <div className="flex items-center gap-2 self-start sm:self-auto">
+          <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+            {/* Early vs Late Shift Button */}
+            <button
+              type="button"
+              onClick={() => setDiffModalTarget({ item, report: rep, shift })}
+              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-cyan-300 border border-slate-700 text-xs font-bold rounded-lg transition-all flex items-center gap-1 cursor-pointer"
+              title="查看早晚盘变轨与信心异动"
+            >
+              <Activity className="w-3.5 h-3.5 text-cyan-400" />
+              <span>变轨对比</span>
+            </button>
+
             {onToggleLockMatch && (
               <button
                 type="button"
@@ -770,12 +924,17 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
 
         {/* Batch 5-Core Decision Grid for this Match */}
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
-          {/* 1. 推荐星级 */}
+          {/* 1. 推荐星级 & 变轨信心 */}
           <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
-            <div className="text-[10px] text-slate-400">推荐星级</div>
+            <div className="text-[10px] text-slate-400">推荐星级 & 变轨信心</div>
             <div className="mt-1">{renderStarRating(dec.starRating)}</div>
-            <div className="text-[10px] text-amber-400 font-mono mt-0.5">
-              {dec.starRating} 星置信度
+            <div className="text-[10px] text-amber-400 font-mono mt-0.5 flex items-center gap-1">
+              <span>{dec.starRating} 星置信度</span>
+              {shift.starChange !== 0 && (
+                <span className={`px-1 rounded text-[9px] font-bold ${shift.starChange > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  ({shift.earlyStars}★➔{shift.lateStars}★)
+                </span>
+              )}
             </div>
           </div>
 
@@ -1359,6 +1518,64 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
             <span>{showD3Chart ? '收起趋势图' : '盘口趋势图'}</span>
           </button>
 
+          {/* Confidence Shift Filter Group */}
+          <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs flex-wrap">
+            <span className="text-[10px] text-slate-400 font-bold px-1.5 flex items-center gap-1">
+              <Zap className="w-3 h-3 text-amber-400" />
+              <span>晚盘变轨：</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setConfidenceFilter('ALL')}
+              className={`px-2 py-1 rounded text-[11px] font-bold transition-all cursor-pointer ${
+                confidenceFilter === 'ALL'
+                  ? 'bg-slate-800 text-white border border-slate-600'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              全部 ({queue.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfidenceFilter('INCREASED')}
+              className={`px-2 py-1 rounded text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                confidenceFilter === 'INCREASED'
+                  ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/60 shadow-sm'
+                  : 'text-emerald-400/80 hover:text-emerald-300 hover:bg-emerald-500/10'
+              }`}
+              title="仅筛选晚盘信心增强的赛事（机构大幅压水控赔、欧指暴降、升星）"
+            >
+              <TrendingUp className="w-3 h-3 text-emerald-400" />
+              <span>增加信心 ({increasedConfidenceCount})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfidenceFilter('DECREASED')}
+              className={`px-2 py-1 rounded text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                confidenceFilter === 'DECREASED'
+                  ? 'bg-rose-500/25 text-rose-300 border border-rose-500/60 shadow-sm'
+                  : 'text-rose-400/80 hover:text-rose-300 hover:bg-rose-500/10'
+              }`}
+              title="仅筛选晚盘信心减弱的赛事（机构升水高息诱上、降星、退盘示弱）"
+            >
+              <TrendingDown className="w-3 h-3 text-rose-400" />
+              <span>减少信心 ({decreasedConfidenceCount})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfidenceFilter('STABLE')}
+              className={`px-2 py-1 rounded text-[11px] font-medium transition-all cursor-pointer flex items-center gap-1 ${
+                confidenceFilter === 'STABLE'
+                  ? 'bg-slate-800 text-slate-200 border border-slate-600'
+                  : 'text-slate-500 hover:text-slate-300'
+              }`}
+              title="晚盘与早盘盘面平稳自洽的赛事"
+            >
+              <Minus className="w-3 h-3 text-slate-500" />
+              <span>走势平稳 ({stableConfidenceCount})</span>
+            </button>
+          </div>
+
           {/* Star Filter Pills */}
           <div className="flex items-center gap-1 text-xs">
             <button
@@ -1369,7 +1586,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              全部 ({queue.length})
+              全星级
             </button>
             <button
               onClick={() => setStarFilter(5)}
@@ -1399,6 +1616,22 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
               <SlidersHorizontal className="w-3 h-3 text-cyan-400" />
               <span>排序</span>
             </span>
+            <button
+              type="button"
+              onClick={() => toggleSort('confidence')}
+              className={`px-2 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                sortBy === 'confidence'
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="按信心增减幅度排序（增加信心优先）"
+            >
+              <TrendingUp className="w-3 h-3 text-emerald-400" />
+              <span>信心异动</span>
+              {sortBy === 'confidence' && (
+                sortOrder === 'desc' ? <ArrowDown className="w-3 h-3" /> : <ArrowUp className="w-3 h-3" />
+              )}
+            </button>
             <button
               type="button"
               onClick={() => toggleSort('stars')}
@@ -2056,6 +2289,281 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
                 <Lock className="w-3.5 h-3.5" />
                 <span>立即锁定</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. Early vs Late Confidence Shift Breakdown Modal */}
+      {diffModalTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-3xl w-full shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+              <div className="flex items-center gap-2.5">
+                <div
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${
+                    diffModalTarget.shift.shiftType === 'INCREASED'
+                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                      : diffModalTarget.shift.shiftType === 'DECREASED'
+                      ? 'bg-rose-500/20 text-rose-400 border-rose-500/40'
+                      : 'bg-slate-800 text-slate-400 border-slate-700'
+                  }`}
+                >
+                  {diffModalTarget.shift.shiftType === 'INCREASED' ? (
+                    <TrendingUp className="w-5 h-5" />
+                  ) : diffModalTarget.shift.shiftType === 'DECREASED' ? (
+                    <TrendingDown className="w-5 h-5" />
+                  ) : (
+                    <Minus className="w-5 h-5" />
+                  )}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-bold text-cyan-400 px-2 py-0.5 rounded bg-cyan-950/60 border border-cyan-800/40">
+                      早盘意图 vs 晚盘风控 变轨对比
+                    </span>
+                    <span className="text-xs text-slate-400 font-mono">
+                      {diffModalTarget.item.data.matchInfo.league} ｜ {diffModalTarget.item.data.matchInfo.matchTime || '临场'}
+                    </span>
+                  </div>
+                  <h3 className="text-base font-black text-white mt-0.5">
+                    {diffModalTarget.item.data.matchInfo.homeTeam} VS {diffModalTarget.item.data.matchInfo.awayTeam}
+                  </h3>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDiffModalTarget(null)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-4 overflow-y-auto text-xs">
+              {/* Verdict Banner */}
+              <div
+                className={`p-3.5 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
+                  diffModalTarget.shift.shiftType === 'INCREASED'
+                    ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-300'
+                    : diffModalTarget.shift.shiftType === 'DECREASED'
+                    ? 'bg-rose-950/40 border-rose-500/50 text-rose-300'
+                    : 'bg-slate-950/60 border-slate-800 text-slate-300'
+                }`}
+              >
+                <div className="space-y-0.5">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    《财富经》临场变轨总定性
+                  </div>
+                  <div className="text-sm font-black flex items-center gap-2">
+                    {diffModalTarget.shift.shiftType === 'INCREASED' ? (
+                      <span className="text-emerald-400">🟢 {diffModalTarget.shift.summaryTitle}</span>
+                    ) : diffModalTarget.shift.shiftType === 'DECREASED' ? (
+                      <span className="text-rose-400">🔴 {diffModalTarget.shift.summaryTitle}</span>
+                    ) : (
+                      <span className="text-slate-300">⚪ {diffModalTarget.shift.summaryTitle}</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0 font-mono">
+                  <span className="text-xs px-2 py-1 rounded bg-slate-900 border border-slate-700 font-bold text-slate-300">
+                    早盘: {diffModalTarget.shift.earlyStars}★
+                  </span>
+                  <span className="text-slate-400 font-bold">➔</span>
+                  <span
+                    className={`text-xs px-2 py-1 rounded border font-bold ${
+                      diffModalTarget.shift.starChange > 0
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                        : diffModalTarget.shift.starChange < 0
+                        ? 'bg-rose-500/20 text-rose-300 border-rose-500/50'
+                        : 'bg-slate-900 text-slate-200 border-slate-700'
+                    }`}
+                  >
+                    晚盘: {diffModalTarget.shift.lateStars}★ ({diffModalTarget.shift.starChange > 0 ? `+${diffModalTarget.shift.starChange}` : diffModalTarget.shift.starChange})
+                  </span>
+                </div>
+              </div>
+
+              {/* Side-by-Side 3-column Comparison Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {/* 1. Early Market Baseline */}
+                <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-slate-800/80">
+                    <span className="font-extrabold text-amber-300 text-xs flex items-center gap-1">
+                      <span>🌅 早盘初盘意图</span>
+                    </span>
+                    <span className="font-mono text-[11px] text-amber-400 font-bold">
+                      {diffModalTarget.shift.earlyStars} 星推荐
+                    </span>
+                  </div>
+                  <div className="space-y-1.5 text-[11px] font-mono">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">胜平负首选：</span>
+                      <span className="text-slate-200 font-bold">{diffModalTarget.shift.earlyEuroPick}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">让球首选：</span>
+                      <span className="text-cyan-300 font-bold">{diffModalTarget.shift.earlyHandicapPick}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">亚指盘水：</span>
+                      <span className="text-slate-300">{diffModalTarget.shift.earlyOddsSummary.handicap} ｜ {diffModalTarget.shift.earlyOddsSummary.homeOdds.toFixed(2)} / {diffModalTarget.shift.earlyOddsSummary.awayOdds.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">欧指初赔：</span>
+                      <span className="text-slate-300">{diffModalTarget.shift.earlyOddsSummary.win.toFixed(2)} ｜ {diffModalTarget.shift.earlyOddsSummary.draw.toFixed(2)} ｜ {diffModalTarget.shift.earlyOddsSummary.loss.toFixed(2)}</span>
+                    </div>
+                    <div className="pt-1 border-t border-slate-800/50 text-[10px] text-slate-400 font-sans">
+                      模型定性：<strong className="text-slate-200">{diffModalTarget.shift.earlyModelTitle}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Delta Trajectory */}
+                <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-slate-800/80">
+                    <span className="font-extrabold text-cyan-300 text-xs flex items-center gap-1">
+                      <Zap className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>⚡ 变轨差值 (Delta)</span>
+                    </span>
+                    <span className="font-mono text-[11px] text-cyan-400 font-bold">
+                      早 ➔ 晚
+                    </span>
+                  </div>
+                  <div className="space-y-1.5 text-[11px] font-mono">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">星级跨度：</span>
+                      <span className={`font-bold ${diffModalTarget.shift.starChange > 0 ? 'text-emerald-400' : diffModalTarget.shift.starChange < 0 ? 'text-rose-400' : 'text-slate-300'}`}>
+                        {diffModalTarget.shift.starChange > 0 ? `+${diffModalTarget.shift.starChange} ★` : diffModalTarget.shift.starChange < 0 ? `${diffModalTarget.shift.starChange} ★` : '0 ★ (持平)'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">让步方水位：</span>
+                      <span className={`font-bold ${diffModalTarget.shift.waterDiff.giving < 0 ? 'text-emerald-400' : diffModalTarget.shift.waterDiff.giving > 0 ? 'text-rose-400' : 'text-slate-300'}`}>
+                        {diffModalTarget.shift.waterDiff.giving > 0 ? `+${diffModalTarget.shift.waterDiff.giving.toFixed(2)} (升水)` : diffModalTarget.shift.waterDiff.giving < 0 ? `${diffModalTarget.shift.waterDiff.giving.toFixed(2)} (压水)` : '0.00'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">欧指让步方：</span>
+                      <span className={`font-bold ${diffModalTarget.shift.euroDiff.giving < 0 ? 'text-emerald-400' : diffModalTarget.shift.euroDiff.giving > 0 ? 'text-rose-400' : 'text-slate-300'}`}>
+                        {diffModalTarget.shift.euroDiff.giving > 0 ? `+${diffModalTarget.shift.euroDiff.giving.toFixed(2)} (抬高)` : diffModalTarget.shift.euroDiff.giving < 0 ? `${diffModalTarget.shift.euroDiff.giving.toFixed(2)} (降赔)` : '0.00'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">去水胜率变动：</span>
+                      <span className={`font-bold ${diffModalTarget.shift.probDiff.win > 0 ? 'text-emerald-400' : diffModalTarget.shift.probDiff.win < 0 ? 'text-rose-400' : 'text-slate-300'}`}>
+                        {diffModalTarget.shift.probDiff.win > 0 ? `+${diffModalTarget.shift.probDiff.win}%` : `${diffModalTarget.shift.probDiff.win}%`}
+                      </span>
+                    </div>
+                    <div className="pt-1 border-t border-slate-800/50 text-[10px] text-slate-400 font-sans truncate">
+                      盘口跨度：<strong className="text-slate-200">{diffModalTarget.shift.earlyOddsSummary.handicap} ➔ {diffModalTarget.shift.lateOddsSummary.handicap}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Late Market Real Risk Control */}
+                <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-slate-800/80">
+                    <span className="font-extrabold text-emerald-300 text-xs flex items-center gap-1">
+                      <span>🌙 晚盘临场风控</span>
+                    </span>
+                    <span className="font-mono text-[11px] text-emerald-400 font-bold">
+                      {diffModalTarget.shift.lateStars} 星推荐
+                    </span>
+                  </div>
+                  <div className="space-y-1.5 text-[11px] font-mono">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">胜平负首选：</span>
+                      <span className="text-emerald-300 font-bold">{diffModalTarget.shift.lateEuroPick}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">让球首选：</span>
+                      <span className="text-cyan-300 font-bold">{diffModalTarget.shift.lateHandicapPick}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">亚指终盘：</span>
+                      <span className="text-slate-200 font-bold">{diffModalTarget.shift.lateOddsSummary.handicap} ｜ {diffModalTarget.shift.lateOddsSummary.homeOdds.toFixed(2)} / {diffModalTarget.shift.lateOddsSummary.awayOdds.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">欧指终赔：</span>
+                      <span className="text-slate-200 font-bold">{diffModalTarget.shift.lateOddsSummary.win.toFixed(2)} ｜ {diffModalTarget.shift.lateOddsSummary.draw.toFixed(2)} ｜ {diffModalTarget.shift.lateOddsSummary.loss.toFixed(2)}</span>
+                    </div>
+                    <div className="pt-1 border-t border-slate-800/50 text-[10px] text-slate-400 font-sans">
+                      模型定性：<strong className="text-emerald-300">{diffModalTarget.shift.lateModelTitle}</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Key Reasons */}
+              <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-4 space-y-2">
+                <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-cyan-400" />
+                  <span>《财富经》核心变轨判定动因与依据</span>
+                </div>
+                <div className="space-y-1.5">
+                  {diffModalTarget.shift.keyReasons.map((reason, rIdx) => (
+                    <div key={rIdx} className="flex items-start gap-2 text-[11px] text-slate-300 leading-relaxed">
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0 mt-1.5" />
+                      <span>{reason}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Detailed Dissection */}
+              <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-4 space-y-2">
+                <div className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                  <Flame className="w-4 h-4 text-amber-400" />
+                  <span>操盘手临场博弈实战深剖</span>
+                </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed font-sans">
+                  {diffModalTarget.shift.detailedExplanation}
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-3 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  const shift = diffModalTarget.shift;
+                  const item = diffModalTarget.item;
+                  const text = `### 【变轨研判】${item.data.matchInfo.homeTeam} vs ${item.data.matchInfo.awayTeam}\n- 结论：${shift.summaryTitle}\n- 星级变动：${shift.earlyStars}★ ➔ ${shift.lateStars}★ (${shift.starChange > 0 ? '+' : ''}${shift.starChange}★)\n- 早盘意图：${shift.earlyOddsSummary.handicap} (水 ${shift.earlyOddsSummary.homeOdds.toFixed(2)}) ｜ 欧赔 ${shift.earlyOddsSummary.win.toFixed(2)} / ${shift.earlyOddsSummary.draw.toFixed(2)} / ${shift.earlyOddsSummary.loss.toFixed(2)} ｜ ${shift.earlyModelTitle}\n- 晚盘风控：${shift.lateOddsSummary.handicap} (水 ${shift.lateOddsSummary.homeOdds.toFixed(2)}) ｜ 欧赔 ${shift.lateOddsSummary.win.toFixed(2)} / ${shift.lateOddsSummary.draw.toFixed(2)} / ${shift.lateOddsSummary.loss.toFixed(2)} ｜ ${shift.lateModelTitle}\n- 核心依据：\n${shift.keyReasons.map((k) => `  * ${k}`).join('\n')}\n\n${shift.detailedExplanation}`;
+                  navigator.clipboard.writeText(text);
+                  setCopiedDiffNote(true);
+                  setTimeout(() => setCopiedDiffNote(false), 2000);
+                }}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg text-xs font-bold border border-slate-700 flex items-center gap-1.5 cursor-pointer"
+              >
+                {copiedDiffNote ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
+                <span>{copiedDiffNote ? '已复制变轨解析' : '复制变轨对比解析 (Markdown)'}</span>
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSelectMatch(diffModalTarget.item.data);
+                    setDiffModalTarget(null);
+                  }}
+                  className="px-4 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-lg text-xs flex items-center gap-1 cursor-pointer"
+                >
+                  <span>载入单场精算</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDiffModalTarget(null)}
+                  className="px-4 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold rounded-lg text-xs border border-slate-700 cursor-pointer"
+                >
+                  关闭
+                </button>
+              </div>
             </div>
           </div>
         </div>

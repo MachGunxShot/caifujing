@@ -101,6 +101,62 @@ export interface AnalysisReportResult {
   metrics: ActuarialMetrics;
 }
 
+export type ConfidenceShiftType = 'INCREASED' | 'DECREASED' | 'STABLE';
+
+export interface ConfidenceComparisonResult {
+  shiftType: ConfidenceShiftType; // 'INCREASED' | 'DECREASED' | 'STABLE'
+  starChange: number;            // e.g. +2, +1, 0, -1, -2
+  earlyStars: number;
+  lateStars: number;
+  earlyEuroPick: string;
+  lateEuroPick: string;
+  earlyHandicapPick: string;
+  lateHandicapPick: string;
+  earlyOverUnderPick?: string;
+  lateOverUnderPick?: string;
+  earlyModel: ManipulationModelType;
+  lateModel: ManipulationModelType;
+  earlyModelTitle: string;
+  lateModelTitle: string;
+  summaryTitle: string;          // e.g. "晚盘信心大幅增加 (+2星 · 机构控赔加固)"
+  keyReasons: string[];          // 核心异动判定动因列表
+  detailedExplanation: string;   // 详尽深度博弈研判
+  waterDiff: {
+    home: number;
+    away: number;
+    giving: number;
+  };
+  euroDiff: {
+    win: number;
+    draw: number;
+    loss: number;
+    giving: number;
+  };
+  probDiff: {
+    win: number;
+    draw: number;
+    loss: number;
+  };
+  earlyOddsSummary: {
+    handicap: string;
+    homeOdds: number;
+    awayOdds: number;
+    win: number;
+    draw: number;
+    loss: number;
+    overUnderLine?: string;
+  };
+  lateOddsSummary: {
+    handicap: string;
+    homeOdds: number;
+    awayOdds: number;
+    win: number;
+    draw: number;
+    loss: number;
+    overUnderLine?: string;
+  };
+}
+
 export interface BatchMatchItem {
   id: string;
   sourceName?: string;
@@ -115,6 +171,11 @@ export interface BatchMatchItem {
   lockedReason?: string;      // 锁定理由（如 "开赛封盘保护"）
   finalScore?: string;        // 完赛真实比分 (如 "3-1")
   isReviewed?: boolean;       // 是否已归档到《财富经》复盘进化库
+  
+  // 早晚盘变轨快照与信心异动
+  earlyDataSnapshot?: FullMatchData;          // 早盘原始快照
+  earlyReportSnapshot?: AnalysisReportResult; // 早盘原始精算报告
+  confidenceShift?: ConfidenceComparisonResult; // 早晚盘信心异动分析
 }
 
 export interface PostMatchReview {

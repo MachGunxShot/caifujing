@@ -3,6 +3,8 @@ import {
   ActuarialMetrics,
   AnalysisReportResult,
   ManipulationModelType,
+  ConfidenceComparisonResult,
+  ConfidenceShiftType,
 } from '../types/fortuneActuary';
 
 /**
@@ -389,35 +391,54 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 2. 欧赔走势维度：让步方欧指胜赔持续下调，平赔与负赔同步抬升，欧亚换算严丝合缝，没有出现欧降亚升的虚热背离。
 3. 大小球联动维度：${metrics.overUnderVerdict}。盘面整体逻辑自洽，无资金诱导死角，早盘意图与晚盘风控底牌高度一致。`;
 
-      // 梯次星级精算：<=1.76 或 (<=1.80 且欧赔持续大降或低赔 <=1.55) 为5星稳胆；1.77~1.84 为4星次稳优质档
+      // 梯次星级精算：
+      // 5星稳胆必须满足极限真风控：
+      // (1) 亚指水位被暴力砸至极限冰点超低水 givingOdds <= 1.74
+      // (2) 或 欧赔持续下调至极致低赔 <= 1.45 (givingOdds <= 1.78)
+      // (3) 或 临场让步方欧赔剧烈狂跌 >= 0.18
+      const favEuroDrop = isHomeGiving
+        ? data.euroOdds.earlyWin - data.euroOdds.lateWin
+        : data.euroOdds.earlyLoss - data.euroOdds.lateLoss;
       const isExtremePositive =
-        givingOdds <= 1.76 ||
-        (givingOdds <= 1.80 && (givingEuroLate <= 1.55 || metrics.winTrend === 'DROP' || metrics.lossTrend === 'DROP'));
+        givingOdds <= 1.74 ||
+        (givingOdds <= 1.78 && givingEuroLate <= 1.45) ||
+        (givingOdds <= 1.80 && favEuroDrop >= 0.18);
 
       if (isExtremePositive) {
         starRating = 5;
-        confidenceReason = `机构真实避险下调 ${givingTeam} 胜赔，水位强砸至 ${givingOdds.toFixed(2)} 冰点低水，5星顶级稳胆。`;
+        confidenceReason = `机构真实避险下调 ${givingTeam} 胜赔，水位强砸至 ${givingOdds.toFixed(2)} 冰点超低水，5星顶级稳胆。`;
       } else {
         starRating = 4;
         confidenceReason = `机构维持让步方（${givingTeam}）低水控赔区间（${givingOdds.toFixed(2)}），正路避险打出意图明确，4星次稳优质胆。`;
       }
 
+      // 深盘区间对冲保护：深让步 (>=1.25) 且进球数偏浅 (<=2.5) 谨防 1-0/2-0 经济型小胜赢球输半/输盘，采用独赢主胜+受让下盘对冲
+      const needsDeepHedge = handicapGoals >= 1.25 && lateOUNum <= 2.5;
+
       if (isHomeGiving) {
         euroPick = isExtremePositive ? '主胜 (稳胆)' : '主胜';
-        handicapPick = `上盘 ${homeTeam} (${lateHandicap})`;
-        finalDirection = `【推荐方向】：主队（上盘 ${homeTeam} ${lateHandicap}）及主胜稳胆`;
-        finalDirectionDetail = handicapGoals >= 1.25
-          ? `竞彩/盘口：主胜独赢 / 亚指上盘；机构真实避险控赔，首选上盘净胜穿盘大胜。`
-          : handicapGoals === 1.0
+        handicapPick = needsDeepHedge
+          ? `下盘 ${awayTeam} (+${handicapGoals}受让对冲)`
+          : `上盘 ${homeTeam} (${lateHandicap})`;
+        finalDirection = needsDeepHedge
+          ? `【推荐方向】：双向对冲（竞彩主胜独赢稳胆 + 亚指下盘 ${awayTeam} +${handicapGoals}防小胜）`
+          : `【推荐方向】：主队（上盘 ${homeTeam} ${lateHandicap}）及主胜稳胆`;
+        finalDirectionDetail = needsDeepHedge
+          ? `【操盘精算对冲】：让步深（${lateHandicap}）且大小球仅（${lateOUNum}），严防主队控场 1-0 或 2-0 经济型赢球赢盘倒挂。竞彩独赢主胜稳胆，亚指首选下盘对冲保本！`
+          : handicapGoals >= 1.0
           ? `竞彩/盘口：主胜独赢 / 亚指上盘；机构真实避险控赔，首选主胜赢球保走争穿。`
           : `竞彩/盘口：主胜独赢 / 亚指上盘；机构真实避险控赔，首选上盘正路赢盘打出。`;
       } else if (isAwayGiving) {
         euroPick = isExtremePositive ? '客胜 (稳胆)' : '客胜';
-        handicapPick = `上盘 ${awayTeam} (-${handicapGoals}客让)`;
-        finalDirection = `【推荐方向】：客队（上盘 ${awayTeam} 客让${handicapGoals}球）及客胜稳胆`;
-        finalDirectionDetail = handicapGoals >= 1.25
-          ? `竞彩/盘口：客胜独赢 / 亚指客让上盘；机构真实避险控赔，首选客队净胜穿盘大胜。`
-          : handicapGoals === 1.0
+        handicapPick = needsDeepHedge
+          ? `下盘 ${homeTeam} (+${handicapGoals}受让对冲)`
+          : `上盘 ${awayTeam} (-${handicapGoals}客让)`;
+        finalDirection = needsDeepHedge
+          ? `【推荐方向】：双向对冲（竞彩客胜独赢稳胆 + 亚指下盘 ${homeTeam} +${handicapGoals}防小胜）`
+          : `【推荐方向】：客队（上盘 ${awayTeam} 客让${handicapGoals}球）及客胜稳胆`;
+        finalDirectionDetail = needsDeepHedge
+          ? `【操盘精算对冲】：客让深（-${handicapGoals}）且进球数偏浅（${lateOUNum}），防范客队 0-1 经济型小胜。竞彩独赢客胜稳胆，亚指首选主队下盘对冲！`
+          : handicapGoals >= 1.0
           ? `竞彩/盘口：客胜独赢 / 亚指客让上盘；机构真实避险控赔，首选客队赢球保走争穿。`
           : `竞彩/盘口：客胜独赢 / 亚指客让上盘；机构真实避险控赔，首选客队正路赢盘打出。`;
       } else {
@@ -427,7 +448,23 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
         finalDirectionDetail = `竞彩/盘口：平手盘保平争胜；机构压低水位控赔。`;
       }
 
-      overUnderPick = lateOUNum <= 2.25 ? `小球 (<=${data.overUnder.lateLine})` : `大球 (>=${data.overUnder.lateLine})`;
+      // 大小球联动：优先遵循 metrics.overUnderVerdict 测谎结论
+      if (
+        metrics.overUnderVerdict.includes('首选小球') ||
+        metrics.overUnderVerdict.includes('反向小球') ||
+        metrics.overUnderVerdict.includes('反向防小') ||
+        lateOUNum <= 2.25
+      ) {
+        overUnderPick = `小球 (<=${data.overUnder.lateLine})`;
+      } else if (
+        metrics.overUnderVerdict.includes('首选大球') ||
+        metrics.overUnderVerdict.includes('直追大球') ||
+        lateOUNum >= 3.0
+      ) {
+        overUnderPick = `大球 (>=${data.overUnder.lateLine})`;
+      } else {
+        overUnderPick = lateOUNum <= 2.5 ? `小球 (<=${data.overUnder.lateLine})` : `大球 (>=${data.overUnder.lateLine})`;
+      }
       riskWarning = `避坑风险提示：此类超低水盘面切忌因“赔率过低、回报太少”而盲目博冷去下盘。大庄的底牌已毫无保留地向让步强队倾斜，顺应机构风控是唯一正解。`;
       break;
     }
@@ -439,14 +476,17 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 2. 欧赔走势维度：让步方欧指并未出现深幅夯实，反而遭遇断崖式抛售暴涨，受让方（${receivingTeam}）胜平赔持续压低，欧亚折算呈现明显的“虚张声势掩护出货”，机构在用盘口障眼法为强队吸纳巨量筹码。
 3. 大小球与北单去水联动维度：${metrics.overUnderVerdict}。若配合让负去水或受让赔率持续走低，下盘 ${receivingTeam} 爆冷不败甚至客胜独赢形态已彻底确立。`;
 
-      // 梯次星级精算：欧赔断崖跳涨 >=0.22 或 水位 >=2.05 满水毒药盘 或 多模型重合 -> 5星顶级杀猪盘；常规诱上 -> 4星重点防冷档
+      // 梯次星级精算：
+      // 只有真实的欧赔断崖跳涨 (favEuroJump >= 0.16) 配套亚指高水毒药 (givingOdds >= 2.04)，
+      // 或欧赔胜赔飙涨至 >= 2.05 (初盘 <= 1.76) 才是真正的5星顶级杀猪盘！
+      // 剔除多模型冲突杂音。
       const earlyEuroFav = isHomeGiving ? data.euroOdds.earlyWin : data.euroOdds.earlyLoss;
       const favEuroJump = givingEuroLate - earlyEuroFav;
       const isExtremeTrap =
-        favEuroJump >= 0.22 ||
-        givingOdds >= 2.05 ||
-        (givingEuroLate >= 2.02 && earlyEuroFav <= 1.78) ||
-        metrics.detectedModels.length >= 2;
+        (favEuroJump >= 0.16 && givingOdds >= 2.04) ||
+        favEuroJump >= 0.25 ||
+        givingOdds >= 2.10 ||
+        (givingEuroLate >= 2.05 && earlyEuroFav <= 1.76);
 
       if (isExtremeTrap) {
         starRating = 5;
@@ -457,23 +497,29 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
       }
 
       if (isHomeGiving) {
-        euroPick = '让球负 (客队受让胜)';
+        euroPick = '让球负 (客胜/平 双重保险)';
         handicapPick = `下盘 ${awayTeam} (+${handicapGoals}受让)`;
         finalDirection = `【推荐方向】：客队（下盘 ${awayTeam} +${handicapGoals}受让）坚决反选`;
         finalDirectionDetail = `竞彩/盘口：让球客胜（客队受让赢盘） / 重点防平局客胜爆大冷（0-1、1-2、1-1）；坚决不碰主队上盘毒药满水。`;
       } else if (isAwayGiving) {
-        euroPick = '让球胜 (主队受让胜)';
+        euroPick = '让球胜 (主胜/平 双重保险)';
         handicapPick = `下盘 ${homeTeam} (+${handicapGoals}受让)`;
         finalDirection = `【推荐方向】：主队（下盘 ${homeTeam} +${handicapGoals}受让）坚决反选`;
         finalDirectionDetail = `竞彩/盘口：让球主胜（主队受让赢盘） / 重点防主队爆冷不败（1-0、2-1、1-1）；坚决不碰客队上盘毒药满水。`;
       } else {
-        euroPick = '平 / 负';
+        euroPick = '平 / 负 (客队受让不败)';
         handicapPick = `下盘 ${receivingTeam} (+0)`;
         finalDirection = `【推荐方向】：${receivingTeam} 受让不败`;
         finalDirectionDetail = `高水诱盘，反选低水受让方。`;
       }
 
-      overUnderPick = lateOUNum >= 2.75 ? `大球 (>=${data.overUnder.lateLine})` : `小球 (<=${data.overUnder.lateLine})`;
+      if (metrics.overUnderVerdict.includes('首选小球') || metrics.overUnderVerdict.includes('反向小球')) {
+        overUnderPick = `小球 (<=${data.overUnder.lateLine})`;
+      } else if (metrics.overUnderVerdict.includes('首选大球') || metrics.overUnderVerdict.includes('直追大球') || lateOUNum >= 2.75) {
+        overUnderPick = `大球 (>=${data.overUnder.lateLine})`;
+      } else {
+        overUnderPick = lateOUNum >= 2.75 ? `大球 (>=${data.overUnder.lateLine})` : `小球 (<=${data.overUnder.lateLine})`;
+      }
       riskWarning = `避坑风险提示：千万警惕名气虚火与主队情怀！凡是“让步方高水出货、欧赔反常狂飙暴涨”的杀猪盘，99% 为机构收割局，坚决不碰上盘，拥抱下盘避风港。`;
       break;
     }
@@ -485,9 +531,12 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 2. 欧赔走势维度：让步方欧指大幅抬高，平赔低压或受让方胜赔暴跌，欧赔异动彻底证伪了早盘对让步方的信心。
 3. 大小球联动维度：${metrics.overUnderVerdict}。进球数防线伴随胜负盘同步收缩，反映出让球方在进攻端存在难以弥补的硬伤。`;
 
-      // 梯次星级精算：深度雪崩（跨两档）或欧赔胜赔飙涨 >=0.25 为5星顶级防冷；常规退盘为4星防冷档
+      // 梯次星级精算：深度雪崩（跨两档 >=0.5）或欧赔让步方飙涨 >=0.25 为5星顶级防冷；常规退盘为4星防冷档
       const earlyHandicapVal = parseHandicapValue(data.asianHandicap.earlyHandicap);
-      const isDeepAvalanche = Math.abs(lateHandicapNum - earlyHandicapVal) >= 0.5;
+      const favEuroJump = isHomeGiving
+        ? data.euroOdds.lateWin - data.euroOdds.earlyWin
+        : data.euroOdds.lateLoss - data.euroOdds.earlyLoss;
+      const isDeepAvalanche = Math.abs(lateHandicapNum - earlyHandicapVal) >= 0.5 || favEuroJump >= 0.25;
 
       if (isDeepAvalanche) {
         starRating = 5;
@@ -498,12 +547,12 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
       }
 
       if (isHomeGiving) {
-        euroPick = '平 / 负 (客队不败)';
+        euroPick = '平 / 负 (客队受让不败)';
         handicapPick = `下盘 ${awayTeam} (+${handicapGoals}受让)`;
         finalDirection = `【推荐方向】：客队（下盘 ${awayTeam} +${handicapGoals}受让）`;
         finalDirectionDetail = `竞彩/盘口：让球平负 / 客队不败；主力利空坐实，跟退盘走向下盘。`;
       } else {
-        euroPick = '胜 / 平 (主队不败)';
+        euroPick = '胜 / 平 (主队受让不败)';
         handicapPick = `下盘 ${homeTeam} (+${handicapGoals}受让)`;
         finalDirection = `【推荐方向】：主队（下盘 ${homeTeam} +${handicapGoals}受让）`;
         finalDirectionDetail = `竞彩/盘口：让球胜平 / 主队不败；客让退盘示弱，跟退盘走主队。`;
@@ -521,16 +570,22 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 2. 欧赔走势维度：平赔 ${lateDraw.toFixed(2)} 异常低企，凯利指数在平局上形成牢不可破的安全垫，主胜与客胜均缺乏绝对防范价值。
 3. 大小球联动维度：${metrics.overUnderVerdict}。与平局模型最契合的比分多为小球对峙。`;
 
-      // 梯次星级精算：平赔 <= 2.90 为5星绝对胆平；2.91~3.10 为4星防冷防平档
-      if (lateDraw <= 2.90) {
+      // 梯次星级精算：平赔 <= 2.88 且 亚盘为平手/平半 为5星绝对胆平防御；2.89~3.10 为4星防冷防平档
+      if (lateDraw <= 2.88 && Math.abs(lateHandicapNum) <= 0.25) {
         starRating = 5;
-        confidenceReason = `主流欧指平赔死压至 ${lateDraw.toFixed(2)} 极度防御区，两端分流打掩护，5星绝对胆平。`;
+        confidenceReason = `主流欧指平赔死压至 ${lateDraw.toFixed(2)} 极度防御区，两端分流打掩护，5星绝对胆平防御。`;
       } else {
         starRating = 4;
         confidenceReason = `平赔压制在 ${lateDraw.toFixed(2)} 低位防御带，两端胶着严防平局，4星防冷防平。`;
       }
 
-      euroPick = starRating === 5 ? '平局 (首选胆平)' : '平局 / 让球胜平';
+      if (isHomeGiving) {
+        euroPick = starRating === 5 ? '平局 / 让球负 (首选胆平，客队受让不败)' : '平局 / 让球负';
+      } else if (isAwayGiving) {
+        euroPick = starRating === 5 ? '平局 / 让球胜 (首选胆平，主队受让不败)' : '平局 / 让球胜';
+      } else {
+        euroPick = '平局 / 独赢双选 (首选胆平 1-1/0-0)';
+      }
       handicapPick = `下盘 ${receivingTeam} (+${handicapGoals || 0.25}/平手)`;
       finalDirection = `【推荐方向】：首选平局（胆平 / 下盘受让平局），次选小球`;
       finalDirectionDetail = `竞彩/盘口：直接博平局 (Draw) / 双选平+让平；比分参考 1-1、0-0`;
@@ -546,23 +601,23 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 2. 欧赔走势维度：让步方欧赔居高不下，与两队真实战力严重脱节，受让方不败概率被严重低估。
 3. 大小球联动维度：${metrics.overUnderVerdict}。`;
 
-      // 梯次星级精算：浅盘满水天然为“4星重点防冷档”；当水位达到 >=2.08 或多模型叠加时晋级为5星顶级冷门
-      if (givingOdds >= 2.08 || metrics.detectedModels.length >= 2) {
+      // 梯次星级精算：浅盘满水天然为“4星重点防冷档”；当水位达到 >=2.08 且欧指让步方无力 (givingEuroLate >= 2.05) 时晋级为5星顶级冷门
+      if (givingOdds >= 2.08 && givingEuroLate >= 2.05) {
         starRating = 5;
-        confidenceReason = `强队（${givingTeam}）浅盘死卡 ${givingOdds.toFixed(2)} 毒药超高水，机构大门敞开收割，5星必杀冷门下盘。`;
+        confidenceReason = `强队（${givingTeam}）浅盘死卡 ${givingOdds.toFixed(2)} 毒药超高水，欧指毫无支撑，5星必杀冷门下盘。`;
       } else {
         starRating = 4;
         confidenceReason = `强队（${givingTeam}）浅盘挂 ${givingOdds.toFixed(2)} 满水，阻力不足买得舒服必有诈，4星重点防冷坚决走下盘。`;
       }
 
       if (isHomeGiving) {
-        euroPick = '让球负 (客胜/平)';
-        handicapPick = `下盘 ${awayTeam} (+0.25/0)`;
+        euroPick = '让球负 (客胜/平 杀绝上盘)';
+        handicapPick = `下盘 ${awayTeam} (+${handicapGoals || 0.25})`;
         finalDirection = `【推荐方向】：坚决走下盘（${awayTeam} 不败）`;
         finalDirectionDetail = `竞彩/盘口：让球负（客队受让胜） / 博客队爆冷独赢；比分参考 0-1、1-2、1-1`;
       } else {
-        euroPick = '让球胜 (主胜/平)';
-        handicapPick = `下盘 ${homeTeam} (+0.25/0)`;
+        euroPick = '让球胜 (主胜/平 杀绝上盘)';
+        handicapPick = `下盘 ${homeTeam} (+${handicapGoals || 0.25})`;
         finalDirection = `【推荐方向】：坚决走下盘（${homeTeam} 不败）`;
         finalDirectionDetail = `竞彩/盘口：让球胜（主队受让胜） / 博主队爆冷独赢；比分参考 1-0、2-1、1-1`;
       }
@@ -729,5 +784,258 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
     modelTitle: primaryModel.title,
     source: 'ACTUARIAL_RULE_ENGINE',
     metrics,
+  };
+}
+
+/**
+ * Compares Early Market baseline vs Late Market odds to evaluate confidence trajectory:
+ * - INCREASED: 晚盘增加信心 (e.g. 升星、机构暴压水位控赔、欧指大幅下调、正向控赔成立)
+ * - DECREASED: 晚盘减少信心 (e.g. 降星、高息诱上陷阱、退盘示弱、平赔下压分流冷平)
+ * - STABLE: 晚盘盘面平稳 (早晚盘步调一致，微幅常规调仓)
+ */
+export function compareEarlyVsLateConfidence(
+  data: FullMatchData,
+  explicitEarlyReport?: AnalysisReportResult,
+  explicitLateReport?: AnalysisReportResult,
+  explicitEarlyData?: FullMatchData
+): ConfidenceComparisonResult {
+  // Late report
+  const lateReport = explicitLateReport || generateActuarialRuleReport(data);
+
+  // Synthesize or use early data
+  const earlyAH = explicitEarlyData?.asianHandicap || data.asianHandicap;
+  const earlyEO = explicitEarlyData?.euroOdds || data.euroOdds;
+  const earlyOU = explicitEarlyData?.overUnder || data.overUnder;
+
+  const earlyHandicap = earlyAH.earlyHandicap || earlyAH.lateHandicap || '平手';
+  const earlyHomeOdds = earlyAH.earlyHomeOdds > 0 ? earlyAH.earlyHomeOdds : (earlyAH.lateHomeOdds || 1.90);
+  const earlyAwayOdds = earlyAH.earlyAwayOdds > 0 ? earlyAH.earlyAwayOdds : (earlyAH.lateAwayOdds || 1.90);
+  const earlyWin = earlyEO.earlyWin > 0 ? earlyEO.earlyWin : (earlyEO.lateWin || 2.50);
+  const earlyDraw = earlyEO.earlyDraw > 0 ? earlyEO.earlyDraw : (earlyEO.lateDraw || 3.20);
+  const earlyLoss = earlyEO.earlyLoss > 0 ? earlyEO.earlyLoss : (earlyEO.lateLoss || 2.60);
+  const earlyLine = earlyOU.earlyLine || earlyOU.lateLine || '2.5';
+  const earlyOverOdds = earlyOU.earlyOverOdds > 0 ? earlyOU.earlyOverOdds : (earlyOU.lateOverOdds || 1.90);
+  const earlyUnderOdds = earlyOU.earlyUnderOdds > 0 ? earlyOU.earlyUnderOdds : (earlyOU.lateUnderOdds || 1.90);
+
+  let earlyReport = explicitEarlyReport;
+  if (!earlyReport) {
+    const syntheticEarlyMatch: FullMatchData = {
+      ...data,
+      asianHandicap: {
+        ...data.asianHandicap,
+        earlyHandicap,
+        earlyHomeOdds,
+        earlyAwayOdds,
+        lateHandicap: earlyHandicap,
+        lateHomeOdds: earlyHomeOdds,
+        lateAwayOdds: earlyAwayOdds,
+      },
+      euroOdds: {
+        ...data.euroOdds,
+        earlyWin,
+        earlyDraw,
+        earlyLoss,
+        lateWin: earlyWin,
+        lateDraw: earlyDraw,
+        lateLoss: earlyLoss,
+      },
+      overUnder: {
+        ...data.overUnder,
+        earlyLine,
+        earlyOverOdds,
+        earlyUnderOdds,
+        lateLine: earlyLine,
+        lateOverOdds: earlyOverOdds,
+        lateUnderOdds: earlyUnderOdds,
+      },
+    };
+    earlyReport = generateActuarialRuleReport(syntheticEarlyMatch);
+  }
+
+  const earlyStars = earlyReport.decision?.starRating || 3;
+  const lateStars = lateReport.decision?.starRating || 3;
+  const starChange = lateStars - earlyStars;
+
+  const homeWaterDiff = Number(((data.asianHandicap?.lateHomeOdds || 1.90) - earlyHomeOdds).toFixed(2));
+  const awayWaterDiff = Number(((data.asianHandicap?.lateAwayOdds || 1.90) - earlyAwayOdds).toFixed(2));
+  const winDiff = Number(((data.euroOdds?.lateWin || 2.50) - earlyWin).toFixed(2));
+  const drawDiff = Number(((data.euroOdds?.lateDraw || 3.20) - earlyDraw).toFixed(2));
+  const lossDiff = Number(((data.euroOdds?.lateLoss || 2.60) - earlyLoss).toFixed(2));
+
+  const lateHandicapNum = parseHandicapValue(data.asianHandicap?.lateHandicap || '平手');
+  const isHomeGiving = lateHandicapNum < 0;
+  const isAwayGiving = lateHandicapNum > 0;
+  const givingTeam = isHomeGiving
+    ? data.matchInfo.homeTeam
+    : isAwayGiving
+    ? data.matchInfo.awayTeam
+    : (data.euroOdds.lateWin <= data.euroOdds.lateLoss ? data.matchInfo.homeTeam : data.matchInfo.awayTeam);
+
+  const givingWaterDiff = isHomeGiving
+    ? homeWaterDiff
+    : isAwayGiving
+    ? awayWaterDiff
+    : (data.euroOdds.lateWin <= data.euroOdds.lateLoss ? homeWaterDiff : awayWaterDiff);
+  const givingEuroDiff = isHomeGiving
+    ? winDiff
+    : isAwayGiving
+    ? lossDiff
+    : (data.euroOdds.lateWin <= data.euroOdds.lateLoss ? winDiff : lossDiff);
+
+  const lateGivingOdds = isHomeGiving
+    ? (data.asianHandicap?.lateHomeOdds || 1.90)
+    : isAwayGiving
+    ? (data.asianHandicap?.lateAwayOdds || 1.90)
+    : (data.euroOdds.lateWin <= data.euroOdds.lateLoss ? (data.asianHandicap?.lateHomeOdds || 1.90) : (data.asianHandicap?.lateAwayOdds || 1.90));
+  const earlyGivingOdds = isHomeGiving
+    ? earlyHomeOdds
+    : isAwayGiving
+    ? earlyAwayOdds
+    : (earlyWin <= earlyLoss ? earlyHomeOdds : earlyAwayOdds);
+
+  const lateGivingEuro = isHomeGiving
+    ? (data.euroOdds?.lateWin || 2.50)
+    : isAwayGiving
+    ? (data.euroOdds?.lateLoss || 2.60)
+    : (data.euroOdds.lateWin <= data.euroOdds.lateLoss ? data.euroOdds.lateWin : data.euroOdds.lateLoss);
+  const earlyGivingEuro = isHomeGiving
+    ? earlyWin
+    : isAwayGiving
+    ? earlyLoss
+    : (earlyWin <= earlyLoss ? earlyWin : earlyLoss);
+
+  // Implied probabilities difference
+  const probDiff = {
+    win: Number(((lateReport.metrics?.lateHomeProb || 0) - (earlyReport.metrics?.lateHomeProb || 0)).toFixed(1)),
+    draw: Number(((lateReport.metrics?.lateDrawProb || 0) - (earlyReport.metrics?.lateDrawProb || 0)).toFixed(1)),
+    loss: Number(((lateReport.metrics?.lateAwayProb || 0) - (earlyReport.metrics?.lateAwayProb || 0)).toFixed(1)),
+  };
+
+  // Determine shiftType:
+  let shiftType: ConfidenceShiftType = 'STABLE';
+  const keyReasons: string[] = [];
+
+  // 1. Star Rating changes
+  if (starChange > 0) {
+    shiftType = 'INCREASED';
+    keyReasons.push(`推荐星级跳升：由早盘 ${earlyStars}星 ⭐ 跃升至晚盘 ${lateStars}星 ⭐ (+${starChange}★)，置信度与风控等级大幅强化。`);
+  } else if (starChange < 0) {
+    shiftType = 'DECREASED';
+    keyReasons.push(`推荐星级下调：由早盘 ${earlyStars}星 ⭐ 下调至晚盘 ${lateStars}星 ⭐ (${starChange}★)，盘面出现诱导或风控松动，建议谨慎设防。`);
+  }
+
+  // 2. Asian Handicap water & line shift
+  if (givingWaterDiff <= -0.05) {
+    if (shiftType === 'STABLE') shiftType = 'INCREASED';
+    keyReasons.push(`让步方极限压水：${givingTeam} 亚盘水位由早盘 ${earlyGivingOdds.toFixed(2)} 降至晚盘 ${lateGivingOdds.toFixed(2)} (${givingWaterDiff > 0 ? '+' : ''}${givingWaterDiff.toFixed(2)})，机构强行压降赔付空间。`);
+  } else if (givingWaterDiff >= 0.06 || lateGivingOdds >= 2.02) {
+    if (shiftType === 'STABLE') shiftType = 'DECREASED';
+    keyReasons.push(`让步方异常升水：${givingTeam} 亚盘水位由早盘 ${earlyGivingOdds.toFixed(2)} 飙升至晚盘 ${lateGivingOdds.toFixed(2)} (${givingWaterDiff > 0 ? '+' : ''}${givingWaterDiff.toFixed(2)})，高息满水暗藏“大热必死”诱上风险。`);
+  }
+
+  // 3. Euro Odds shift
+  if (givingEuroDiff <= -0.06) {
+    if (shiftType === 'STABLE') shiftType = 'INCREASED';
+    keyReasons.push(`欧赔胜指持续下调：${givingTeam} 胜赔由早盘 ${earlyGivingEuro.toFixed(2)} 压低至晚盘 ${lateGivingEuro.toFixed(2)} (${givingEuroDiff > 0 ? '+' : ''}${givingEuroDiff.toFixed(2)})，欧亚同向避险。`);
+  } else if (givingEuroDiff >= 0.08) {
+    if (shiftType === 'STABLE') shiftType = 'DECREASED';
+    keyReasons.push(`欧赔胜指反常抬高：${givingTeam} 胜赔由早盘 ${earlyGivingEuro.toFixed(2)} 抬高至晚盘 ${lateGivingEuro.toFixed(2)} (${givingEuroDiff > 0 ? '+' : ''}${givingEuroDiff.toFixed(2)})，机构对正路打出存在顾虑。`);
+  }
+
+  // 4. Model transition
+  if (earlyReport.identifiedModel !== lateReport.identifiedModel) {
+    const earlyM = earlyReport.identifiedModel;
+    const lateM = lateReport.identifiedModel;
+
+    if (lateM === 'POSITIVE_CONTROL' && earlyM !== 'POSITIVE_CONTROL') {
+      shiftType = 'INCREASED';
+      keyReasons.push(`操盘模型确立：晚盘正式确立为【极限榨水 / 正向控赔】操盘模型，大庄坚决以低赔超低水避险打出。`);
+    } else if (lateM === 'HIGH_INTEREST_TRAP') {
+      shiftType = 'DECREASED';
+      keyReasons.push(`警惕操盘陷阱：晚盘变轨触发【高息吸筹 / 名气诱导】模型，机构以高回报诱导大众投注让步方。`);
+    } else if (lateM === 'AVALANCHE_RETREAT') {
+      shiftType = 'DECREASED';
+      keyReasons.push(`盘口退热示弱：晚盘变轨触发【雪崩退盘 / 退热示弱】模型，让步力度不足，首选防冷下盘。`);
+    } else if (lateM === 'LOW_DRAW_DEFENSE') {
+      if (shiftType === 'STABLE') shiftType = 'INCREASED';
+      keyReasons.push(`平局防线加固：晚盘平赔压低触发【平赔低洼 / 胆平设防】模型，胜负两端分流，首选重点设防平局。`);
+    }
+  }
+
+  // If still no key reasons, add stability note
+  if (keyReasons.length === 0) {
+    keyReasons.push(`早盘初盘与晚盘临场盘口水位高度吻合，欧亚变轨无剧烈偏离，盘面逻辑自洽稳定。`);
+  }
+
+  // Summary title
+  let summaryTitle = '';
+  if (shiftType === 'INCREASED') {
+    summaryTitle = starChange > 0
+      ? `晚盘信心大幅增加 (+${starChange}星 · 机构控赔加固)`
+      : `晚盘信心增强 (水位持续压低 · 避险打出)`;
+  } else if (shiftType === 'DECREASED') {
+    summaryTitle = starChange < 0
+      ? `晚盘信心显著衰减 (${starChange}星 · 谨防诱盘陷阱)`
+      : `晚盘信心减弱 (水位高企诱上 · 风险攀升)`;
+  } else {
+    summaryTitle = `晚盘盘面平稳 (早晚盘步调自洽 · 维持研判)`;
+  }
+
+  // Detailed dissection
+  const detailedExplanation =
+    shiftType === 'INCREASED'
+      ? `【《财富经》临场信心增加解析】：本场比赛在早盘确认双方初始实力盘后，临场晚盘资金真实注入阶段，机构并未通过升盘升水制造虚幻热度，而是欧亚联动持续向下封锁赔付空间。让步方水位由 ${earlyGivingOdds.toFixed(2)} 降至 ${lateGivingOdds.toFixed(2)}，欧赔下调 ${Math.abs(givingEuroDiff).toFixed(2)}，去水隐含胜率提升至 ${lateReport.metrics.lateHomeProb.toFixed(1)}%。机构“宁可不赚钱也不承担高赔付风险”的底牌彻底暴露，临场信心较早盘显著提升，推荐方向可重点作为实战核心胆码。`
+      : shiftType === 'DECREASED'
+      ? `【《财富经》临场信心衰减避坑提示】：对比早盘初盘，晚盘临场出现明显背离。让步方在名气热度加持下，机构非但没有压低水位封锁赔付，反而在亚指端维持 ${lateGivingOdds.toFixed(2)} 高水甚至升水，欧赔让步方不降反升（${givingEuroDiff > 0 ? '+' : ''}${givingEuroDiff.toFixed(2)}）。这完全违背了“降低赔付”的真实避险逻辑，属于典型的高息吸筹或让步乏力。早盘建立的信心在晚盘被彻底证伪，必须降低投资等级或果断反选下盘/设防平局！`
+      : `【《财富经》临场盘面平稳自洽解析】：早盘初设基石盘口与晚盘临场变轨保持高度一致，欧赔三项与亚盘水位均在 ±0.03 的常规调仓容差范围内，未出现诱盘或急剧退热异动。早盘研判的五项核心决策依然成立，可按既定方案执行。`;
+
+  return {
+    shiftType,
+    starChange,
+    earlyStars,
+    lateStars,
+    earlyEuroPick: earlyReport.decision?.euroPick || '主胜',
+    lateEuroPick: lateReport.decision?.euroPick || '主胜',
+    earlyHandicapPick: earlyReport.decision?.handicapPick || '上盘',
+    lateHandicapPick: lateReport.decision?.handicapPick || '上盘',
+    earlyOverUnderPick: earlyReport.decision?.overUnderPick,
+    lateOverUnderPick: lateReport.decision?.overUnderPick,
+    earlyModel: earlyReport.identifiedModel,
+    lateModel: lateReport.identifiedModel,
+    earlyModelTitle: earlyReport.modelTitle,
+    lateModelTitle: lateReport.modelTitle,
+    summaryTitle,
+    keyReasons,
+    detailedExplanation,
+    waterDiff: {
+      home: homeWaterDiff,
+      away: awayWaterDiff,
+      giving: givingWaterDiff,
+    },
+    euroDiff: {
+      win: winDiff,
+      draw: drawDiff,
+      loss: lossDiff,
+      giving: givingEuroDiff,
+    },
+    probDiff,
+    earlyOddsSummary: {
+      handicap: earlyHandicap,
+      homeOdds: earlyHomeOdds,
+      awayOdds: earlyAwayOdds,
+      win: earlyWin,
+      draw: earlyDraw,
+      loss: earlyLoss,
+      overUnderLine: earlyLine,
+    },
+    lateOddsSummary: {
+      handicap: data.asianHandicap?.lateHandicap || '平手',
+      homeOdds: data.asianHandicap?.lateHomeOdds || 1.90,
+      awayOdds: data.asianHandicap?.lateAwayOdds || 1.90,
+      win: data.euroOdds?.lateWin || 2.50,
+      draw: data.euroOdds?.lateDraw || 3.20,
+      loss: data.euroOdds?.lateLoss || 2.60,
+      overUnderLine: data.overUnder?.lateLine || '2.5',
+    },
   };
 }

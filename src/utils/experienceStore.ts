@@ -5,33 +5,11 @@ import {
   EvolvedExperienceRule,
 } from '../types/fortuneActuary';
 import { parseHandicapValue, parseOverUnderValue } from './actuaryEngine';
-import { calculateSalesDate, calibrateReviewSalesDate, getReviewSalesInfo } from './salesDayUtils';
+import { calculateSalesDate, calibrateReviewSalesDate } from './salesDayUtils';
 
 const RULES_STORAGE_KEY = 'fortune_actuary_evolved_rules_v1';
 const REVIEWS_STORAGE_KEY = 'fortune_actuary_reviews_v1';
 const SALES_DAY_BACKUP_KEY = 'fortune_reviews_sales_day_backup_v1';
-
-/** Back up the original archive before the first sales-day repair or replacement. */
-export function replacePostMatchReviews(reviews: PostMatchReview[]): boolean {
-  try {
-    const previous = localStorage.getItem(REVIEWS_STORAGE_KEY);
-    if (previous && localStorage.getItem(SALES_DAY_BACKUP_KEY) === null) {
-      localStorage.setItem(SALES_DAY_BACKUP_KEY, previous);
-    }
-    localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(reviews));
-    return true;
-  } catch (error) {
-    console.error('Error saving sales-day archive:', error);
-    return false;
-  }
-}
-
-function reviewMatchKey(review: PostMatchReview): string {
-  const home = (review.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').trim();
-  const away = (review.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').trim();
-  const score = (review.actualScore || '').replace(/\s+/g, '').trim();
-  return home && away ? `${getReviewSalesInfo(review).salesDate}_${home}_vs_${away}_${score}` : review.id;
-}
 
 // Seed Initial Battle-tested Core Rules (5 Core Models + 3 Lie Detector Matrix + Workflow + Staking + Philosophy)
 export const SEED_RULES: EvolvedExperienceRule[] = [
@@ -253,11 +231,31 @@ export function consolidateRulesToCoreMaster(rules: EvolvedExperienceRule[]): Ev
 
     // B. Check if it's an explicit manual custom rule (created via user "+ 追加经验" modal)
     if (r.id.startsWith('manual-')) {
-      const isDuplicate = userManualRules.some(
-        (mr) => mr.id === r.id || (mr.title === r.title && mr.ruleContent === r.ruleContent)
+      const cleanSourceR = (r.sourceMatch || '')
+        .replace(/\(完场[^\)]*\)/g, '')
+        .replace(/\(实盘验证\)/g, '')
+        .replace(/\(实战验证\)/g, '')
+        .replace(/\s+/g, '')
+        .trim();
+      const existing = userManualRules.find(
+        (mr) =>
+          mr.id === r.id ||
+          (mr.title === r.title && mr.ruleContent === r.ruleContent) ||
+          (cleanSourceR &&
+            (mr.sourceMatch || '')
+              .replace(/\(完场[^\)]*\)/g, '')
+              .replace(/\(实盘验证\)/g, '')
+              .replace(/\(实战验证\)/g, '')
+              .replace(/\s+/g, '')
+              .trim() === cleanSourceR)
       );
-      if (!isDuplicate) {
-        userManualRules.push(r);
+      if (existing) {
+        existing.hitCount = Math.max(existing.hitCount || 0, (existing.hitCount || 0) + (r.hitCount || 0));
+        if (r.sourceMatch && !existing.sourceMatch?.includes(r.sourceMatch)) {
+          existing.sourceMatch = `${existing.sourceMatch || ''} / ${r.sourceMatch}`.replace(/^\s*\/\s*/, '');
+        }
+      } else {
+        userManualRules.push({ ...r });
       }
       continue;
     }
@@ -588,6 +586,223 @@ export function auditRulesHealth(customRules?: EvolvedExperienceRule[]): RulesHe
 }
 
 /**
+ * 一键去重引擎：
+ * 消除法则库体检中发现的重复法则（同场比赛多条法则或同质重复），
+ * 严格执行用户确认的去重策略：“保留最新或命中最高的一条并合并战绩样板”
+ */
+export function deduplicateExperienceRules(): {
+  beforeCount: number;
+  afterCount: number;
+  removedCount: number;
+  mergedCount: number;
+  newRules: EvolvedExperienceRule[];
+} {
+  let rawRules: EvolvedExperienceRule[] = [];
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(RULES_STORAGE_KEY) : null;
+    if (raw) rawRules = JSON.parse(raw);
+  } catch (e) {
+    rawRules = [];
+  }
+  const sourceRules = rawRules.length > 0 ? rawRules : getExperienceRules();
+  const beforeCount = sourceRules.length;
+
+  if (beforeCount === 0) {
+    return {
+      beforeCount: 0,
+      afterCount: 0,
+      removedCount: 0,
+      mergedCount: 0,
+      newRules: [],
+    };
+  }
+
+  // 辅助函数：提取归一化赛果对阵（去除多余标记与空格）
+  const getCleanSource = (r: EvolvedExperienceRule) =>
+    (r.sourceMatch || '')
+      .replace(/【|】/g, '')
+      .replace(/\(完场[^\)]*\)/g, '')
+      .replace(/\(实盘验证\)/g, '')
+      .replace(/\(实战验证\)/g, '')
+      .replace(/\s+/g, '')
+      .trim();
+
+  // 辅助函数：提取归一化标题
+  const getCleanTitle = (r: EvolvedExperienceRule) =>
+    (r.title || '')
+      .replace(/【|】|《|》/g, '')
+      .replace(/\s+/g, '')
+      .trim()
+      .toLowerCase();
+
+  // 并查集构建重复归并群组
+  const n = sourceRules.length;
+  const parent = Array.from({ length: n }, (_, i) => i);
+  const find = (i: number): number => {
+    if (parent[i] === i) return i;
+    parent[i] = find(parent[i]);
+    return parent[i];
+  };
+  const union = (i: number, j: number) => {
+    const rootI = find(i);
+    const rootJ = find(j);
+    if (rootI !== rootJ) {
+      parent[rootJ] = rootI;
+    }
+  };
+
+  const idMap = new Map<string, number>();
+  const sourceMap = new Map<string, number>();
+  const titleMap = new Map<string, number>();
+
+  for (let i = 0; i < n; i++) {
+    const r = sourceRules[i];
+    if (!r) continue;
+
+    // 1. 同 ID 归并
+    if (r.id) {
+      if (idMap.has(r.id)) {
+        union(i, idMap.get(r.id)!);
+      } else {
+        idMap.set(r.id, i);
+      }
+    }
+
+    // 2. 同场赛果样板归并
+    const cs = getCleanSource(r);
+    if (cs) {
+      if (sourceMap.has(cs)) {
+        union(i, sourceMap.get(cs)!);
+      } else {
+        sourceMap.set(cs, i);
+      }
+    }
+
+    // 3. 同标题核心规则归并（标题长度>=4避免过于宽泛的通则被误并）
+    const ct = getCleanTitle(r);
+    if (ct && ct.length >= 4) {
+      if (titleMap.has(ct)) {
+        union(i, titleMap.get(ct)!);
+      } else {
+        titleMap.set(ct, i);
+      }
+    }
+  }
+
+  // 按根节点分组
+  const groups = new Map<number, EvolvedExperienceRule[]>();
+  for (let i = 0; i < n; i++) {
+    const root = find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root)!.push(sourceRules[i]);
+  }
+
+  let mergedCount = 0;
+  const cleanRules: EvolvedExperienceRule[] = [];
+
+  groups.forEach((group) => {
+    if (group.length === 1) {
+      cleanRules.push(group[0]);
+      return;
+    }
+
+    // 发现重复组：合并战绩样板，择优保留
+    mergedCount += group.length - 1;
+
+    // 按照用户确认的去重保留策略排序：
+    // 1. hitCount 实战印证命中最高者优先
+    // 2. 若命中次数一致，则 createdAt 最新者优先
+    // 3. 若均一致，官方种子核心母本法则优先
+    // 4. 丰富度（ruleContent 详细程度）优先
+    const sorted = [...group].sort((a, b) => {
+      const hitDiff = (b.hitCount || 0) - (a.hitCount || 0);
+      if (hitDiff !== 0) return hitDiff;
+
+      const dateA = a.createdAt || '';
+      const dateB = b.createdAt || '';
+      const dateDiff = dateB.localeCompare(dateA);
+      if (dateDiff !== 0) return dateDiff;
+
+      const aIsCore =
+        a.id.startsWith('rule-model-') ||
+        a.id.startsWith('rule-philosophy-') ||
+        a.id.startsWith('rule-risk-') ||
+        a.id.startsWith('rule-workflow-') ||
+        a.id.startsWith('rule-goals-');
+      const bIsCore =
+        b.id.startsWith('rule-model-') ||
+        b.id.startsWith('rule-philosophy-') ||
+        b.id.startsWith('rule-risk-') ||
+        b.id.startsWith('rule-workflow-') ||
+        b.id.startsWith('rule-goals-');
+      if (aIsCore && !bIsCore) return -1;
+      if (!aIsCore && bIsCore) return 1;
+
+      return (b.ruleContent || '').length - (a.ruleContent || '').length;
+    });
+
+    const winner: EvolvedExperienceRule = { ...sorted[0] };
+
+    // 合并实战战绩样板：汇总各重复项中的 sourceMatch 赛果案例，去重后拼合
+    const samplesSet = new Set<string>();
+    const normalizedSamples = new Set<string>();
+
+    for (const item of group) {
+      if (!item.sourceMatch) continue;
+      const parts = item.sourceMatch.split(/\s*[\/\n]\s*/);
+      for (const rawPart of parts) {
+        const part = rawPart.trim();
+        if (!part) continue;
+        const norm = part
+          .replace(/【|】/g, '')
+          .replace(/\(完场[^\)]*\)/g, '')
+          .replace(/\(实盘验证\)/g, '')
+          .replace(/\(实战验证\)/g, '')
+          .replace(/\s+/g, '')
+          .trim();
+        if (norm && !normalizedSamples.has(norm)) {
+          normalizedSamples.add(norm);
+          samplesSet.add(part);
+        }
+      }
+    }
+
+    if (samplesSet.size > 0) {
+      winner.sourceMatch = Array.from(samplesSet).join(' / ');
+    }
+
+    // 累加所有被合并重复项的实盘印证命中次数
+    const totalHitCount = group.reduce((sum, item) => sum + (item.hitCount || 0), 0);
+    winner.hitCount = Math.max(winner.hitCount || 0, totalHitCount);
+
+    // 状态保持：若有任一条激活，则母本保持激活
+    winner.isActive = group.some((item) => item.isActive !== false);
+
+    cleanRules.push(winner);
+  });
+
+  const afterCount = cleanRules.length;
+  const removedCount = Math.max(0, beforeCount - afterCount);
+
+  // 直接写回持久化存储
+  try {
+    if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      localStorage.setItem(RULES_STORAGE_KEY, JSON.stringify(cleanRules));
+    }
+  } catch (e) {
+    console.error('Error saving deduplicated experience rules:', e);
+  }
+
+  return {
+    beforeCount,
+    afterCount,
+    removedCount,
+    mergedCount,
+    newRules: cleanRules,
+  };
+}
+
+/**
  * Smart Prune & Cluster experience rules:
  * Clusters repetitive boilerplate single-match rules into synthesized master rules and eliminates duplicates!
  */
@@ -598,14 +813,10 @@ export function pruneAndClusterExperienceRules(): {
   clusteredCount: number;
   newRules: EvolvedExperienceRule[];
 } {
-  let rawRules: EvolvedExperienceRule[] = [];
-  try {
-    const raw = localStorage.getItem(RULES_STORAGE_KEY);
-    if (raw) rawRules = JSON.parse(raw);
-  } catch (e) {
-    rawRules = [];
-  }
-  const beforeCount = Math.max(rawRules.length, getExperienceRules().length);
+  // First run thorough deduplication
+  const dedupRes = deduplicateExperienceRules();
+  const rawRules = dedupRes.newRules;
+  const beforeCount = dedupRes.beforeCount;
 
   // Use core consolidation engine to fold single match rules into master models
   const consolidated = consolidateRulesToCoreMaster(rawRules.length > 0 ? rawRules : getExperienceRules());
@@ -740,7 +951,37 @@ export function repairInconsistentLanguageRules(): {
   });
 
   if (repairedCount > 0) {
+    try {
+      if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+        localStorage.setItem(RULES_STORAGE_KEY, JSON.stringify(repaired));
+      }
+    } catch (e) {
+      console.error(e);
+    }
     saveExperienceRules(repaired);
+
+    // Also sanitize any corresponding post-match review titles to avoid recurring inverted text
+    try {
+      const storedReviews = getPostMatchReviews();
+      let revChanged = false;
+      for (const rev of storedReviews) {
+        if (rev.evolvedRuleTitle?.includes('【主胜】冷门反杀') || rev.evolvedRuleContent?.includes('【主胜】冷门反杀')) {
+          rev.evolvedRuleTitle = rev.evolvedRuleTitle.replace(/【主胜】冷门反杀/g, '深盘实力穿盘').replace(/逆向避险修正法/g, '实力穿盘验证法');
+          rev.evolvedRuleContent = (rev.evolvedRuleContent || '').replace(/【主胜】冷门反杀/g, '【主队实力穿盘】');
+          revChanged = true;
+        }
+        if (rev.evolvedRuleTitle?.includes('【客胜】冷门反杀') || rev.evolvedRuleContent?.includes('【客胜】冷门反杀')) {
+          rev.evolvedRuleTitle = rev.evolvedRuleTitle.replace(/【客胜】冷门反杀/g, '客让实力穿盘').replace(/逆向避险修正法/g, '客让实力穿透法');
+          rev.evolvedRuleContent = (rev.evolvedRuleContent || '').replace(/【客胜】冷门反杀/g, '【客队实力穿透】');
+          revChanged = true;
+        }
+      }
+      if (revChanged && typeof localStorage !== 'undefined') {
+        localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(storedReviews));
+      }
+    } catch (e) {
+      // ignore
+    }
   }
 
   return { repairedCount, totalRules: repaired.length, newRules: repaired };
@@ -1217,6 +1458,7 @@ ${activeRules
  */
 export function getPostMatchReviews(): PostMatchReview[] {
   try {
+    if (typeof localStorage === 'undefined') return [];
     const raw = localStorage.getItem(REVIEWS_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
@@ -1224,42 +1466,64 @@ export function getPostMatchReviews(): PostMatchReview[] {
       const seen = new Set<string>();
       const deduplicated: PostMatchReview[] = [];
 
-      let datesChanged = false;
-      for (const savedReview of parsed) {
-        const rev = calibrateReviewSalesDate(savedReview);
-        datesChanged ||= rev.salesDate !== savedReview.salesDate ||
-          rev.salesDateLabel !== savedReview.salesDateLabel ||
-          rev.salesCycleText !== savedReview.salesCycleText || rev.kickoffTime !== savedReview.kickoffTime;
+      let hasCalibrationChange = false;
+      for (const rev of parsed) {
+        const cal = calibrateReviewSalesDate(rev);
+        if (cal.salesDate !== rev.salesDate || cal.kickoffTime !== rev.kickoffTime) {
+          hasCalibrationChange = true;
+        }
+
         // Ensure scoreHit boolean is accurately evaluated
-        if (rev.outcomeEvaluation && typeof rev.outcomeEvaluation.scoreHit !== 'boolean') {
-          const predicted = rev.priorReport?.decision?.predictedScores || [];
-          rev.outcomeEvaluation.scoreHit = predicted.includes(rev.actualScore);
+        if (cal.outcomeEvaluation && typeof cal.outcomeEvaluation.scoreHit !== 'boolean') {
+          const predicted = cal.priorReport?.decision?.predictedScores || [];
+          cal.outcomeEvaluation.scoreHit = predicted.includes(cal.actualScore);
         }
 
-        // Re-evaluate handicapHit and modelVerified with precise Asian Handicap logic
-        if (rev.matchData && rev.priorReport && rev.outcomeEvaluation) {
-          rev.outcomeEvaluation.handicapHit = evaluateHandicapHit(
-            rev.matchData,
-            rev.priorReport,
-            rev.actualHomeScore,
-            rev.actualAwayScore
+        // Re-evaluate euroHit, handicapHit, overUnderHit, and modelVerified with latest precise actuarial logic
+        if (cal.matchData && cal.priorReport && cal.outcomeEvaluation) {
+          const hScore = typeof cal.actualHomeScore === 'number' ? cal.actualHomeScore : parseInt((cal.actualScore || '0-0').split('-')[0], 10) || 0;
+          const aScore = typeof cal.actualAwayScore === 'number' ? cal.actualAwayScore : parseInt((cal.actualScore || '0-0').split('-')[1], 10) || 0;
+          const goalDiff = hScore - aScore;
+          const actualEuroOutcome = goalDiff > 0 ? 'WIN' : goalDiff === 0 ? 'DRAW' : 'LOSS';
+
+          cal.outcomeEvaluation.euroHit = evaluateEuroHit(
+            cal.priorReport.decision?.euroPick || '',
+            actualEuroOutcome
           );
-          rev.outcomeEvaluation.modelVerified =
-            rev.outcomeEvaluation.euroHit && rev.outcomeEvaluation.handicapHit;
+          cal.outcomeEvaluation.handicapHit = evaluateHandicapHit(
+            cal.matchData,
+            cal.priorReport,
+            hScore,
+            aScore
+          );
+          cal.outcomeEvaluation.overUnderHit = evaluateOverUnderHit(
+            cal.matchData.overUnder.lateLine,
+            cal.priorReport.decision?.overUnderPick || '',
+            hScore,
+            aScore
+          );
+          cal.outcomeEvaluation.modelVerified =
+            cal.outcomeEvaluation.euroHit && cal.outcomeEvaluation.handicapHit;
         }
 
-        // The same teams and score on different sales days are distinct matches.
-        const key = reviewMatchKey(rev);
+        // Deduplicate key: home vs away + salesDate + actual score
+        const home = (cal.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').trim();
+        const away = (cal.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').trim();
+        const score = (cal.actualScore || '').replace(/\s+/g, '').trim();
+        const key = home && away ? `${home}_vs_${away}_${cal.salesDate || ''}_${score}` : cal.id;
 
         if (!seen.has(key)) {
           seen.add(key);
-          deduplicated.push(rev);
+          deduplicated.push(cal);
         }
       }
 
-      // If duplicates were pruned, sync back to localStorage
-      if (datesChanged || deduplicated.length !== parsed.length) {
-        replacePostMatchReviews(deduplicated);
+      // If calibrated or duplicates were pruned, sync back to localStorage and backup if needed
+      if ((hasCalibrationChange || deduplicated.length !== parsed.length) && typeof localStorage !== 'undefined') {
+        if (!localStorage.getItem(SALES_DAY_BACKUP_KEY)) {
+          localStorage.setItem(SALES_DAY_BACKUP_KEY, raw);
+        }
+        localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(deduplicated));
       }
       return deduplicated;
     }
@@ -1275,23 +1539,40 @@ export function getPostMatchReviews(): PostMatchReview[] {
  */
 export function savePostMatchReview(review: PostMatchReview): void {
   try {
+    if (typeof localStorage === 'undefined') return;
+    const calReview = calibrateReviewSalesDate(review);
     const reviews = getPostMatchReviews();
-    const targetKey = reviewMatchKey(review);
+    const getMatchKey = (r: PostMatchReview) => {
+      const home = (r.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').trim();
+      const away = (r.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').trim();
+      const score = (r.actualScore || '').replace(/\s+/g, '').trim();
+      return `${home}_vs_${away}_${r.salesDate || ''}_${score}`;
+    };
+
+    const targetKey = getMatchKey(calReview);
     const existingIdx = reviews.findIndex(
-      (r) => r.id === review.id || reviewMatchKey(r) === targetKey
+      (r) => r.id === calReview.id || getMatchKey(r) === targetKey
     );
 
-    if (existingIdx >= 0) {
-      reviews[existingIdx] = calibrateReviewSalesDate({
-        ...review,
-        salesDateOverride: review.salesDateOverride || reviews[existingIdx].salesDateOverride,
-        id: reviews[existingIdx].id, // preserve ID
-        reviewTimestamp: review.reviewTimestamp || reviews[existingIdx].reviewTimestamp || Date.now(),
-      });
-    } else {
-      reviews.unshift(calibrateReviewSalesDate(review));
+    const currentRaw = localStorage.getItem(REVIEWS_STORAGE_KEY);
+    if (currentRaw && !localStorage.getItem(SALES_DAY_BACKUP_KEY)) {
+      localStorage.setItem(SALES_DAY_BACKUP_KEY, currentRaw);
     }
-    if (!replacePostMatchReviews(reviews)) throw new Error('Unable to save review archive');
+
+    if (existingIdx >= 0) {
+      const existing = reviews[existingIdx];
+      const override = calReview.salesDateOverride !== undefined ? calReview.salesDateOverride : existing.salesDateOverride;
+      reviews[existingIdx] = {
+        ...calReview,
+        id: existing.id, // preserve ID
+        salesDateOverride: override,
+        salesDate: override || calReview.salesDate,
+        reviewTimestamp: calReview.reviewTimestamp || existing.reviewTimestamp || Date.now(),
+      };
+    } else {
+      reviews.unshift(calReview);
+    }
+    localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(reviews));
   } catch (e) {
     console.error('Error saving review:', e);
   }
@@ -1302,6 +1583,7 @@ export function savePostMatchReview(review: PostMatchReview): void {
  */
 export function deletePostMatchReview(reviewId: string): PostMatchReview[] {
   try {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return [];
     const reviews = getPostMatchReviews().filter((r) => r.id !== reviewId);
     localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(reviews));
     return reviews;
@@ -1316,7 +1598,9 @@ export function deletePostMatchReview(reviewId: string): PostMatchReview[] {
  */
 export function clearAllPostMatchReviews(): void {
   try {
-    localStorage.removeItem(REVIEWS_STORAGE_KEY);
+    if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      localStorage.removeItem(REVIEWS_STORAGE_KEY);
+    }
   } catch (e) {
     console.error('Error clearing reviews:', e);
   }
@@ -1327,15 +1611,108 @@ export function clearAllPostMatchReviews(): void {
  */
 export function saveAllPostMatchReviews(reviews: PostMatchReview[]): void {
   try {
-    localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(reviews));
+    if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(reviews));
+    }
   } catch (e) {
     console.error('Error batch saving reviews:', e);
   }
 }
 
 /**
+ * Safely replace all post-match reviews with automatic backup and boolean status
+ */
+export function replacePostMatchReviews(reviews: PostMatchReview[]): boolean {
+  try {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return false;
+    const existing = localStorage.getItem(REVIEWS_STORAGE_KEY);
+    if (existing) {
+      localStorage.setItem(`${REVIEWS_STORAGE_KEY}_backup`, existing);
+    }
+    localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(reviews));
+    return true;
+  } catch (e) {
+    console.error('Error replacing reviews:', e);
+    return false;
+  }
+}
+
+/**
+ * Rigorously evaluates whether the Euro outcome (胜平负) was correctly predicted
+ * Supports all single and dual-protection expressions (e.g. 稳胆, 让胜/让负受让不败, 胆平, 双平设防, 主客不败)
+ */
+export function evaluateEuroHit(
+  predictedEuro: string,
+  actualEuroOutcome: 'WIN' | 'DRAW' | 'LOSS'
+): boolean {
+  if (!predictedEuro) return false;
+  const pred = predictedEuro.trim();
+
+  // 1. Home win / unbeaten coverage
+  const coversHomeWin =
+    pred.includes('主胜') ||
+    pred.includes('胜 / 平') ||
+    pred.includes('主队不败') ||
+    pred.includes('主队受让') ||
+    pred.includes('让球胜') ||
+    (pred.includes('保平争胜') && (pred.includes('主') || !pred.includes('客')));
+
+  // 2. Draw coverage
+  const coversDraw =
+    pred.includes('平') ||
+    pred.includes('胆平') ||
+    pred.includes('和') ||
+    pred.includes('让球负') ||
+    pred.includes('让球胜') ||
+    pred.includes('客队不败') ||
+    pred.includes('主队不败') ||
+    pred.includes('客队受让') ||
+    pred.includes('主队受让') ||
+    pred.includes('双重保险');
+
+  // 3. Away win / unbeaten coverage
+  const coversAwayWin =
+    pred.includes('客胜') ||
+    pred.includes('平 / 负') ||
+    pred.includes('客队不败') ||
+    pred.includes('客队受让') ||
+    pred.includes('让球负') ||
+    (pred.includes('保平争胜') && pred.includes('客'));
+
+  if (actualEuroOutcome === 'WIN') return coversHomeWin;
+  if (actualEuroOutcome === 'DRAW') return coversDraw;
+  if (actualEuroOutcome === 'LOSS') return coversAwayWin;
+  return false;
+}
+
+/**
+ * Rigorously evaluates whether Over/Under prediction hit
+ */
+export function evaluateOverUnderHit(
+  lateLine: string,
+  predictedOU: string,
+  actualHomeScore: number,
+  actualAwayScore: number
+): boolean {
+  const ouLineNum = parseOverUnderValue(lateLine);
+  const totalGoals = (actualHomeScore || 0) + (actualAwayScore || 0);
+  const pred = (predictedOU || '').trim();
+
+  // If push on whole lines (e.g. 2.0 or 3.0), principal is safe -> positive cover
+  if (Math.abs(totalGoals - ouLineNum) < 0.001) {
+    return true;
+  }
+
+  const isActualOver = totalGoals > ouLineNum;
+  if (pred.includes('大球') && isActualOver) return true;
+  if (pred.includes('小球') && !isActualOver) return true;
+  return false;
+}
+
+/**
  * Rigorously evaluates whether the Asian Handicap prediction hit (won/covered the spread).
  * Handles all cases: Home giving, Away giving (客让), and Flat (平手盘).
+ * Correctly treats handicap pushes (走盘/走水保本) as capital preservation.
  */
 export function evaluateHandicapHit(
   matchData: FullMatchData,
@@ -1355,9 +1732,6 @@ export function evaluateHandicapHit(
   const parsedHandicapVal = parseHandicapValue(lateHandicapStr);
 
   // Who is giving handicap?
-  // In Asian Handicap notation:
-  // - If parsedHandicapVal > 0 or text has '客让'/'受让'/'受', Away gives handicap to Home.
-  // - If parsedHandicapVal < 0 or text has '主让', Home gives handicap to Away.
   let isAwayGiving =
     parsedHandicapVal > 0 ||
     lateHandicapStr.includes('客让') ||
@@ -1388,8 +1762,13 @@ export function evaluateHandicapHit(
   }
 
   // Determine which side the prediction picked:
+  // High-conviction keywords '上盘' (favorite) and '下盘' (underdog) take first priority
   let pickedSide: 'HOME' | 'AWAY' = 'HOME';
-  if (normAway && normPred.includes(normAway)) {
+  if (normPred.includes('上盘')) {
+    pickedSide = isAwayGiving ? 'AWAY' : 'HOME';
+  } else if (normPred.includes('下盘')) {
+    pickedSide = isAwayGiving ? 'HOME' : 'AWAY';
+  } else if (normAway && normPred.includes(normAway)) {
     pickedSide = 'AWAY';
   } else if (normHome && normPred.includes(normHome)) {
     pickedSide = 'HOME';
@@ -1397,21 +1776,15 @@ export function evaluateHandicapHit(
     pickedSide = 'AWAY';
   } else if (normPred.includes('主')) {
     pickedSide = 'HOME';
-  } else if (normPred.includes('上盘')) {
-    // 上盘 is the favorite giving the handicap!
-    pickedSide = isAwayGiving ? 'AWAY' : 'HOME';
-  } else if (normPred.includes('下盘')) {
-    // 下盘 is the underdog receiving the handicap!
-    pickedSide = isAwayGiving ? 'HOME' : 'AWAY';
   }
 
   // Evaluate outcome based on actual score and handicap line
   if (isAwayGiving) {
-    // Away (e.g. 维京) gives handicapGoals to Home (e.g. 布兰)
+    // Away gives handicapGoals to Home
     const awayLead = actualAwayScore - actualHomeScore;
     const diff = awayLead - handicapGoals;
-    // Push (走盘): net lead exactly equals handicap
-    if (Math.abs(diff) < 0.001) return false;
+    // Push (走盘): net lead exactly equals handicap -> capital preserved
+    if (Math.abs(diff) < 0.001) return true;
 
     if (pickedSide === 'AWAY') {
       return diff > 0; // Away beat the spread (穿盘 / 赢盘)
@@ -1419,10 +1792,11 @@ export function evaluateHandicapHit(
       return diff < 0; // Home covered with +handicap
     }
   } else if (isHomeGiving) {
-    // Home (e.g. 曼城) gives handicapGoals to Away (e.g. 埃弗顿)
+    // Home gives handicapGoals to Away
     const homeLead = actualHomeScore - actualAwayScore;
     const diff = homeLead - handicapGoals;
-    if (Math.abs(diff) < 0.001) return false;
+    // Push (走盘): net lead exactly equals handicap -> capital preserved
+    if (Math.abs(diff) < 0.001) return true;
 
     if (pickedSide === 'HOME') {
       return diff > 0; // Home beat the spread (穿盘 / 赢盘)
@@ -1431,7 +1805,10 @@ export function evaluateHandicapHit(
     }
   } else {
     // Flat / Pick'em (平手 0)
-    if (actualHomeScore === actualAwayScore) return false;
+    if (actualHomeScore === actualAwayScore) {
+      // In flat handicap, draw returns stake (走盘退本)
+      return true;
+    }
     return pickedSide === 'HOME' ? actualHomeScore > actualAwayScore : actualAwayScore > actualHomeScore;
   }
 }
@@ -1452,22 +1829,14 @@ export function evaluateMatchOutcomeAndExtractLesson(
 ): PostMatchReview {
   const { homeTeam, awayTeam, league } = matchData.matchInfo;
   const actualScoreStr = `${actualHomeScore}-${actualAwayScore}`;
-  const totalGoals = actualHomeScore + actualAwayScore;
   const goalDiff = actualHomeScore - actualAwayScore;
 
-  // 1. Euro Pick Evaluation
-  // Determine actual Euro outcome
+  // 1. Euro Pick Evaluation (胜平负 / 让胜让负双重保险)
   const actualEuroOutcome = goalDiff > 0 ? 'WIN' : goalDiff === 0 ? 'DRAW' : 'LOSS';
-  const predictedEuro = priorReport.decision.euroPick;
-  let euroHit = false;
+  const predictedEuro = priorReport.decision.euroPick || '';
+  const euroHit = evaluateEuroHit(predictedEuro, actualEuroOutcome);
 
-  if (predictedEuro.includes('主胜') && actualEuroOutcome === 'WIN') euroHit = true;
-  else if (predictedEuro.includes('平') && actualEuroOutcome === 'DRAW') euroHit = true;
-  else if (predictedEuro.includes('让球负') && (actualEuroOutcome === 'LOSS' || actualEuroOutcome === 'DRAW')) euroHit = true;
-  else if (predictedEuro.includes('客队不败') && (actualEuroOutcome === 'LOSS' || actualEuroOutcome === 'DRAW')) euroHit = true;
-  else if (predictedEuro.includes('客胜') && actualEuroOutcome === 'LOSS') euroHit = true;
-
-  // 2. Handicap Evaluation
+  // 2. Handicap Evaluation (亚指让球赢盘 / 走盘对冲保本)
   const handicapHit = evaluateHandicapHit(
     matchData,
     priorReport,
@@ -1475,19 +1844,18 @@ export function evaluateMatchOutcomeAndExtractLesson(
     actualAwayScore
   );
 
-  // 3. Over/Under Evaluation
-  const ouLineNum = parseOverUnderValue(matchData.overUnder.lateLine);
-  const isActualOver = totalGoals > ouLineNum;
-  const predictedOU = priorReport.decision.overUnderPick;
-  let overUnderHit = false;
+  // 3. Over/Under Evaluation (大小球测谎联动)
+  const overUnderHit = evaluateOverUnderHit(
+    matchData.overUnder.lateLine,
+    priorReport.decision.overUnderPick || '',
+    actualHomeScore,
+    actualAwayScore
+  );
 
-  if (predictedOU.includes('大球') && isActualOver) overUnderHit = true;
-  else if (predictedOU.includes('小球') && !isActualOver) overUnderHit = true;
-
-  // 4. Score Match
+  // 4. Score Match (波胆精准命中)
   const scoreHit = priorReport.decision.predictedScores.includes(actualScoreStr);
 
-  // 5. Model Verification
+  // 5. Model Verification (核心定性模型双核印证)
   const modelVerified = euroHit && handicapHit;
 
   // 6. Actuarial Dissection & Core Lesson Synthesis
@@ -1563,16 +1931,16 @@ export function evaluateMatchOutcomeAndExtractLesson(
   const kickoffTime = matchData.matchInfo?.matchTime || '临场';
   const salesInfo = calculateSalesDate(kickoffTime, effectiveTimestamp, preferredSalesDate);
 
-  const draftReview: PostMatchReview = {
-    id: existingReview?.id || `rev-${salesInfo.salesDate}-${safeHome}-${safeAway}-${actualScoreStr}`,
+  const review: PostMatchReview = {
+    id: existingReview?.id || `rev-${safeHome}-${safeAway}-${actualScoreStr}`,
     matchData,
     priorReport,
     actualScore: actualScoreStr,
     actualHomeScore,
     actualAwayScore,
     matchIncidents,
-    reviewTimestamp: effectiveTimestamp,
-    salesDate: salesInfo.salesDate,
+    reviewTimestamp: existingReview?.reviewTimestamp || effectiveTimestamp,
+    salesDate: existingReview?.salesDateOverride || salesInfo.salesDate,
     salesDateLabel: salesInfo.salesDateLabel,
     salesCycleText: salesInfo.salesCycleText,
     kickoffTime: salesInfo.kickoffTimeFormatted,
@@ -1592,11 +1960,6 @@ export function evaluateMatchOutcomeAndExtractLesson(
   };
 
   // Automatically save this review to history (idempotent)
-  const matchingReview = existingReview || getPostMatchReviews().find(saved => reviewMatchKey(saved) === reviewMatchKey(draftReview));
-  const review = calibrateReviewSalesDate({ ...draftReview,
-    id: matchingReview?.id || draftReview.id,
-    salesDateOverride: matchingReview?.salesDateOverride,
-  });
   savePostMatchReview(review);
 
   // Only persist to core experience rules if explicitly requested (preventing runaway rule bloat)
