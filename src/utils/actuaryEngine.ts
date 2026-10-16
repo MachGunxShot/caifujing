@@ -1020,10 +1020,10 @@ export function compareEarlyVsLateConfidence(
       if (givingEuroDiff <= -0.05) {
         keyReasons.push(`欧赔胜指持续下调：${givingTeam} 胜赔由早盘 ${earlyGivingEuro.toFixed(2)} 压低至晚盘 ${lateGivingEuro.toFixed(2)} (${givingEuroDiff.toFixed(2)})，欧亚同向避险。`);
       }
-    } else if (rawGivingWaterDiff >= 0.08 || lateGivingOdds >= 2.04 || givingEuroDiff >= 0.08) {
+    } else if (rawGivingWaterDiff >= 0.08 || (rawGivingWaterDiff >= 0.04 && lateGivingOdds >= 2.04) || givingEuroDiff >= 0.08) {
       shiftType = 'DECREASED';
-      if (rawGivingWaterDiff >= 0.08 || lateGivingOdds >= 2.04) {
-        keyReasons.push(`让步方异常升水：${givingTeam} 亚盘水位由早盘 ${earlyGivingOdds.toFixed(2)} 飙升至晚盘 ${lateGivingOdds.toFixed(2)} (+${rawGivingWaterDiff.toFixed(2)})，高息满水暗藏“大热必死”诱上风险。`);
+      if (rawGivingWaterDiff >= 0.04) {
+        keyReasons.push(`让步方异常升水：${givingTeam} 亚盘水位由早盘 ${earlyGivingOdds.toFixed(2)} 攀升至晚盘 ${lateGivingOdds.toFixed(2)} (+${rawGivingWaterDiff.toFixed(2)})，高息满水暗藏“大热必死”诱上风险。`);
       }
       if (givingEuroDiff >= 0.08) {
         keyReasons.push(`欧赔胜指反常抬高：${givingTeam} 胜赔由早盘 ${earlyGivingEuro.toFixed(2)} 抬高至晚盘 ${lateGivingEuro.toFixed(2)} (+${givingEuroDiff.toFixed(2)})，机构对正路打出存在顾虑。`);
@@ -1044,6 +1044,19 @@ export function compareEarlyVsLateConfidence(
         keyReasons.push(`平局防线加固：晚盘平赔压低触发【平赔低洼 / 胆平设防】模型，胜负两端分流，首选重点设防平局。`);
       }
     }
+  }
+
+  // Absolute flat guard: if handicap line, water and euro odds are essentially identical and stars unchanged,
+  // ensure shiftType is STABLE without false alarm
+  const isEssentiallyFlat =
+    lineStepDiff === 0 &&
+    Math.abs(rawGivingWaterDiff) < 0.03 &&
+    Math.abs(givingEuroDiff) < 0.03 &&
+    starChange === 0 &&
+    earlyReport.identifiedModel === lateReport.identifiedModel;
+
+  if (isEssentiallyFlat) {
+    shiftType = 'STABLE';
   }
 
   // Over/Under synergy

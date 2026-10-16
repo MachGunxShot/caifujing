@@ -40,16 +40,67 @@ const LEGACY_STORAGE_KEYS = [
 ];
 
 /**
+ * Sanitizes and recalibrates queue items against current actuarial rules,
+ * clearing false shifts from first-time single uploads and fixing inverted confidence states.
+ */
+function sanitizeAndRecalibrateQueue(queue: BatchMatchItem[]): BatchMatchItem[] {
+  return queue.map((item) => {
+    const rep = generateActuarialRuleReport(item.data);
+
+    // Check if match has genuine dual-odds evidence (either intra-text early vs late, or genuine update from early snapshot)
+    const hasDualOdds = Boolean(
+      (item.data.asianHandicap?.earlyHandicap &&
+       item.data.asianHandicap?.lateHandicap &&
+       item.data.asianHandicap.earlyHandicap !== item.data.asianHandicap.lateHandicap) ||
+      Math.abs((item.data.asianHandicap?.earlyHomeOdds || 0) - (item.data.asianHandicap?.lateHomeOdds || 0)) > 0.02 ||
+      Math.abs((item.data.euroOdds?.earlyWin || 0) - (item.data.euroOdds?.lateWin || 0)) > 0.02 ||
+      (item.earlyDataSnapshot && (
+        (item.earlyDataSnapshot.asianHandicap?.lateHandicap &&
+         item.data.asianHandicap?.lateHandicap &&
+         item.earlyDataSnapshot.asianHandicap.lateHandicap !== item.data.asianHandicap.lateHandicap) ||
+        Math.abs((item.earlyDataSnapshot.asianHandicap?.lateHomeOdds || 0) - (item.data.asianHandicap?.lateHomeOdds || 0)) > 0.02 ||
+        Math.abs((item.earlyDataSnapshot.euroOdds?.lateWin || 0) - (item.data.euroOdds?.lateWin || 0)) > 0.02
+      ))
+    );
+
+    let confidenceShift = hasDualOdds
+      ? compareEarlyVsLateConfidence(
+          item.data,
+          item.earlyReportSnapshot,
+          rep,
+          item.earlyDataSnapshot
+        )
+      : undefined;
+
+    // Strict mathematical sanity check: star jumps MUST increase confidence; star drops MUST decrease
+    if (confidenceShift) {
+      if (confidenceShift.starChange > 0 && confidenceShift.shiftType !== 'INCREASED') {
+        confidenceShift = { ...confidenceShift, shiftType: 'INCREASED' };
+      } else if (confidenceShift.starChange < 0 && confidenceShift.shiftType !== 'DECREASED') {
+        confidenceShift = { ...confidenceShift, shiftType: 'DECREASED' };
+      }
+    }
+
+    return {
+      ...item,
+      report: rep,
+      confidenceShift,
+    };
+  });
+}
+
+/**
  * Cross-references matches in the queue against the persistent PostMatchReview store,
  * guaranteeing that any match ever reviewed retains its finalScore, isReviewed flag,
  * and review object even after page reloads or cache re-evaluations.
  */
 function syncQueueWithSavedReviews(queue: BatchMatchItem[]): BatchMatchItem[] {
   try {
+    const sanitizedQueue = sanitizeAndRecalibrateQueue(queue);
     const reviews = getPostMatchReviews();
-    if (!reviews || reviews.length === 0) return queue;
+    if (!reviews || reviews.length === 0) return sanitizedQueue;
 
-    return queue.map((item) => {
+    return sanitizedQueue.map((item) => {
       // Refresh embedded copies from the authoritative archive after sales-day corrections.
       if (item.isReviewed && item.finalScore && item.review) {
         const savedReview = reviews.find((review) => review.id === item.review!.id);
@@ -75,14 +126,9 @@ function syncQueueWithSavedReviews(queue: BatchMatchItem[]): BatchMatchItem[] {
         );
       });
 
-      const rep = item.report || generateActuarialRuleReport(item.data);
-      const confShift = item.confidenceShift || compareEarlyVsLateConfidence(item.data, item.earlyReportSnapshot, rep, item.earlyDataSnapshot);
-
       if (matchedReview) {
         return {
           ...item,
-          report: rep,
-          confidenceShift: confShift,
           isReviewed: true,
           finalScore: matchedReview.actualScore,
           isLocked: true,
@@ -90,15 +136,11 @@ function syncQueueWithSavedReviews(queue: BatchMatchItem[]): BatchMatchItem[] {
         };
       }
 
-      return {
-        ...item,
-        report: rep,
-        confidenceShift: confShift,
-      };
+      return item;
     });
   } catch (e) {
     console.warn('syncQueueWithSavedReviews error:', e);
-    return queue;
+    return sanitizeAndRecalibrateQueue(queue);
   }
 }
 
@@ -124,7 +166,14 @@ function loadUserSavedQueue(): BatchMatchItem[] {
               !PRESET_CASES.some((c) => c.id === item.id)
           );
           if (realMatches.length > 0) {
-            return syncQueueWithSavedReviews(realMatches);
+            const synced = syncQueueWithSavedReviews(realMatches);
+            // Write sanitized state back to storage to clear historical poisoned cache
+            try {
+              localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(synced));
+            } catch (err) {
+              // ignore
+            }
+            return synced;
           }
         }
       }
@@ -583,13 +632,25 @@ export default function App() {
           
           // 仅当文本内明确抓取到双重盘口（如“欧初...即...”或“亚初...即...”）时，才在首次建立变轨比对
           const hasExplicitDualOdds =
-            m.asianHandicap.earlyHandicap !== m.asianHandicap.lateHandicap ||
-            Math.abs(m.asianHandicap.earlyHomeOdds - m.asianHandicap.lateHomeOdds) > 0.01 ||
-            Math.abs(m.euroOdds.earlyWin - m.euroOdds.lateWin) > 0.01;
+            Boolean(
+              m.asianHandicap.earlyHandicap &&
+              m.asianHandicap.lateHandicap &&
+              m.asianHandicap.earlyHandicap !== m.asianHandicap.lateHandicap
+            ) ||
+            Math.abs(m.asianHandicap.earlyHomeOdds - m.asianHandicap.lateHomeOdds) > 0.02 ||
+            Math.abs(m.euroOdds.earlyWin - m.euroOdds.lateWin) > 0.02;
 
-          const confidenceShift = hasExplicitDualOdds
+          let confidenceShift = hasExplicitDualOdds
             ? compareEarlyVsLateConfidence(m, undefined, rep)
             : undefined;
+
+          if (confidenceShift) {
+            if (confidenceShift.starChange > 0 && confidenceShift.shiftType !== 'INCREASED') {
+              confidenceShift = { ...confidenceShift, shiftType: 'INCREASED' };
+            } else if (confidenceShift.starChange < 0 && confidenceShift.shiftType !== 'DECREASED') {
+              confidenceShift = { ...confidenceShift, shiftType: 'DECREASED' };
+            }
+          }
 
           if (confidenceShift?.shiftType === 'INCREASED') incConfidenceCount++;
           else if (confidenceShift?.shiftType === 'DECREASED') decConfidenceCount++;
@@ -614,7 +675,7 @@ export default function App() {
 
     const shiftDetailText = updatedCount > 0
       ? ` ｜ ⚡ 晚盘变轨：⬆️ 增加信心 ${incConfidenceCount} 场，⬇️ 减少信心 ${decConfidenceCount} 场，⏸️ 走势平稳 ${stableConfidenceCount} 场`
-      : '';
+      : (newCount > 0 ? ` ｜ 📌 首次录入初盘基石已锁定（临场二次导入时自动比对变轨轨迹）` : '');
 
     setImportNotification({
       message: `智能差量导入完成：共抓取 ${matches.length} 场赛事`,
@@ -768,17 +829,18 @@ export default function App() {
     setIsBatchAnalyzing(true);
     setActiveTab('batch');
 
-    // Instantly compute deterministic actuarial rule report for all matches
-    const updatedQueue: BatchMatchItem[] = batchQueue.map((item) => {
-      const rep = generateActuarialRuleReport(item.data);
-      return {
-        ...item,
-        report: rep,
-        status: 'done',
-      };
-    });
+    // Instantly compute deterministic actuarial rule report & sanitize confidence shifts for all matches
+    const updatedQueue: BatchMatchItem[] = sanitizeAndRecalibrateQueue(batchQueue).map((item) => ({
+      ...item,
+      status: 'done',
+    }));
 
     setBatchQueue(updatedQueue);
+    try {
+      localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(updatedQueue));
+    } catch (e) {
+      // ignore
+    }
 
     // Simulate minor async processing for smooth UI feedback
     await new Promise((r) => setTimeout(r, 400));

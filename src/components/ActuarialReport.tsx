@@ -93,27 +93,42 @@ export const ActuarialReport: React.FC<ActuarialReportProps> = ({
   }, [batchQueue, matchData]);
 
   const confidenceShift = useMemo(() => {
-    if (currentBatchItem?.confidenceShift) {
-      return currentBatchItem.confidenceShift;
-    }
     const hasDualOdds =
       Boolean(
         matchData.asianHandicap?.earlyHandicap &&
         matchData.asianHandicap?.lateHandicap &&
         matchData.asianHandicap.earlyHandicap !== matchData.asianHandicap.lateHandicap
       ) ||
-      Math.abs((matchData.asianHandicap?.earlyHomeOdds || 0) - (matchData.asianHandicap?.lateHomeOdds || 0)) > 0.01 ||
-      Math.abs((matchData.euroOdds?.earlyWin || 0) - (matchData.euroOdds?.lateWin || 0)) > 0.01;
+      Math.abs((matchData.asianHandicap?.earlyHomeOdds || 0) - (matchData.asianHandicap?.lateHomeOdds || 0)) > 0.02 ||
+      Math.abs((matchData.euroOdds?.earlyWin || 0) - (matchData.euroOdds?.lateWin || 0)) > 0.02 ||
+      (currentBatchItem?.earlyDataSnapshot && (
+        (currentBatchItem.earlyDataSnapshot.asianHandicap?.lateHandicap &&
+         matchData.asianHandicap?.lateHandicap &&
+         currentBatchItem.earlyDataSnapshot.asianHandicap.lateHandicap !== matchData.asianHandicap.lateHandicap) ||
+        Math.abs((currentBatchItem.earlyDataSnapshot.asianHandicap?.lateHomeOdds || 0) - (matchData.asianHandicap?.lateHomeOdds || 0)) > 0.02 ||
+        Math.abs((currentBatchItem.earlyDataSnapshot.euroOdds?.lateWin || 0) - (matchData.euroOdds?.lateWin || 0)) > 0.02
+      ));
 
-    if (hasDualOdds) {
-      return compareEarlyVsLateConfidence(
-        matchData,
-        currentBatchItem?.earlyReportSnapshot,
-        report,
-        currentBatchItem?.earlyDataSnapshot
-      );
+    if (!hasDualOdds) {
+      return undefined;
     }
-    return undefined;
+
+    let shift = currentBatchItem?.confidenceShift || compareEarlyVsLateConfidence(
+      matchData,
+      currentBatchItem?.earlyReportSnapshot,
+      report,
+      currentBatchItem?.earlyDataSnapshot
+    );
+
+    if (shift) {
+      if (shift.starChange > 0 && shift.shiftType !== 'INCREASED') {
+        shift = { ...shift, shiftType: 'INCREASED' };
+      } else if (shift.starChange < 0 && shift.shiftType !== 'DECREASED') {
+        shift = { ...shift, shiftType: 'DECREASED' };
+      }
+    }
+
+    return shift;
   }, [currentBatchItem, matchData, report]);
 
   const fullMarkdownContent = generateMatchMarkdown(matchData, report, rawAiText);

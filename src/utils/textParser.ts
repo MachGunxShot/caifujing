@@ -189,37 +189,39 @@ export function parseNaturalTextOdds(text: string, currentData: FullMatchData): 
   }
 
   // 2. Euro odds extraction
-  // Format: 欧初1.36/4.40/7.50即1.30/4.60/9.50 or 1.45 4.50 7.00 -> 1.30 5.00 9.00
-  const euroDualMatch = fullText.match(
-    /欧初\s*(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})\s*即\s*(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})/
+  // Check for explicit dual / transition syntax:
+  // e.g. "欧初1.36/4.40/7.50即1.30/4.60/9.50", "1.45 4.50 7.00 -> 1.30 5.00 9.00", "初盘 1.45/4.50/7.00 临场 1.30/5.00/9.00"
+  const euroTransitionMatch = fullText.match(
+    /(?:欧初|初盘|初指|初赔)?\s*(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})\s*(?:即|->|➔|转|至|即时|临场)\s*(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})/
   );
   const euroGroups = [
     ...fullText.matchAll(/(\d+\.\d{1,3})[\s/]+(\d+\.\d{1,3})[\s/]+(\d+\.\d{1,3})/g),
   ];
-  if (euroDualMatch && result.euroOdds) {
-    result.euroOdds.earlyWin = parseFloat(euroDualMatch[1]);
-    result.euroOdds.earlyDraw = parseFloat(euroDualMatch[2]);
-    result.euroOdds.earlyLoss = parseFloat(euroDualMatch[3]);
-    result.euroOdds.lateWin = parseFloat(euroDualMatch[4]);
-    result.euroOdds.lateDraw = parseFloat(euroDualMatch[5]);
-    result.euroOdds.lateLoss = parseFloat(euroDualMatch[6]);
-  } else if (euroGroups.length >= 2 && result.euroOdds) {
-    result.euroOdds.earlyWin = parseFloat(euroGroups[0][1]);
-    result.euroOdds.earlyDraw = parseFloat(euroGroups[0][2]);
-    result.euroOdds.earlyLoss = parseFloat(euroGroups[0][3]);
-    result.euroOdds.lateWin = parseFloat(euroGroups[1][1]);
-    result.euroOdds.lateDraw = parseFloat(euroGroups[1][2]);
-    result.euroOdds.lateLoss = parseFloat(euroGroups[1][3]);
-  } else if (euroGroups.length === 1 && result.euroOdds) {
-    result.euroOdds.lateWin = parseFloat(euroGroups[0][1]);
-    result.euroOdds.lateDraw = parseFloat(euroGroups[0][2]);
-    result.euroOdds.lateLoss = parseFloat(euroGroups[0][3]);
+  if (euroTransitionMatch && result.euroOdds) {
+    result.euroOdds.earlyWin = parseFloat(euroTransitionMatch[1]);
+    result.euroOdds.earlyDraw = parseFloat(euroTransitionMatch[2]);
+    result.euroOdds.earlyLoss = parseFloat(euroTransitionMatch[3]);
+    result.euroOdds.lateWin = parseFloat(euroTransitionMatch[4]);
+    result.euroOdds.lateDraw = parseFloat(euroTransitionMatch[5]);
+    result.euroOdds.lateLoss = parseFloat(euroTransitionMatch[6]);
+  } else if (euroGroups.length > 0 && result.euroOdds) {
+    // Single snapshot: apply the extracted Euro odds to BOTH early and late baseline
+    const targetGroup = euroGroups[euroGroups.length - 1]; // use the most relevant/latest group
+    const w = parseFloat(targetGroup[1]);
+    const d = parseFloat(targetGroup[2]);
+    const l = parseFloat(targetGroup[3]);
+    result.euroOdds.earlyWin = w;
+    result.euroOdds.earlyDraw = d;
+    result.euroOdds.earlyLoss = l;
+    result.euroOdds.lateWin = w;
+    result.euroOdds.lateDraw = d;
+    result.euroOdds.lateLoss = l;
   }
 
   // 3. Asian Handicap extraction
-  // Check for dual match: 亚初一球/球半[0.910/0.800]即球半[1.060/0.780]
+  // Check for dual match: 亚初一球/球半[0.910/0.800]即球半[1.060/0.780] or 一球[0.85/1.05] -> 一球/球半[1.02/0.88]
   const asianDualMatch = fullText.match(
-    /亚初\s*([^\s\[\]]+)\[([\d.]+)[/ ]+([\d.]+)\]\s*即\s*([^\s\[\]]+)\[([\d.]+)[/ ]+([\d.]+)\]/
+    /(?:亚初|初盘|初指)?\s*([^\s\[\]]+)\[([\d.]+)[/ ]+([\d.]+)\]\s*(?:即|->|➔|转|至|即时|临场)\s*([^\s\[\]]+)\[([\d.]+)[/ ]+([\d.]+)\]/
   );
   if (asianDualMatch && result.asianHandicap) {
     result.asianHandicap.earlyHandicap = asianDualMatch[1];
@@ -304,7 +306,7 @@ export function parseNaturalTextOdds(text: string, currentData: FullMatchData): 
     }
   }
 
-  // When only a single snapshot is provided (not explicit dual "初...即..."),
+  // When only a single snapshot is provided (not explicit dual transition),
   // synchronize early baseline to match the parsed single snapshot so we don't
   // compare against hardcoded initial placeholders!
   if (!asianDualMatch && result.asianHandicap) {
@@ -312,7 +314,7 @@ export function parseNaturalTextOdds(text: string, currentData: FullMatchData): 
     result.asianHandicap.earlyHomeOdds = result.asianHandicap.lateHomeOdds;
     result.asianHandicap.earlyAwayOdds = result.asianHandicap.lateAwayOdds;
   }
-  if (!euroDualMatch && euroGroups.length <= 1 && result.euroOdds) {
+  if (!euroTransitionMatch && result.euroOdds) {
     result.euroOdds.earlyWin = result.euroOdds.lateWin;
     result.euroOdds.earlyDraw = result.euroOdds.lateDraw;
     result.euroOdds.earlyLoss = result.euroOdds.lateLoss;
@@ -492,6 +494,58 @@ export function parseBatchMatchesFromText(rawText: string): FullMatchData[] {
 
     if (cols.length >= 7 && !line.includes('家')) {
       // Full CSV / Markdown row with odds
+      // Distinguish Format A (Standard 9-col single snapshot: 联赛, 主队, 客队, 盘口, 主水, 客水, 胜, 平, 负)
+      // vs Format B (Explicit dual odds: 联赛, 主队, 客队, 初盘, 初水, 即盘, 即水, 胜, 平, 负)
+      const col3IsHandicap = isNaN(parseFloat(cols[3])) || cols[3].includes('球') || cols[3].includes('平');
+      const col5IsWater = !isNaN(parseFloat(cols[5])) && parseFloat(cols[5]) >= 0.5 && parseFloat(cols[5]) <= 2.5 && !cols[5].includes('球') && !cols[5].includes('平');
+
+      let earlyHandicap = cols[3] || '-0.5';
+      let lateHandicap = cols[3] || '-0.5';
+      let earlyHomeOdds = parseFloat(cols[4]) || 1.90;
+      let lateHomeOdds = parseFloat(cols[4]) || 1.90;
+      let earlyAwayOdds = 1.90;
+      let lateAwayOdds = 1.90;
+      let earlyWin = 2.10;
+      let earlyDraw = 3.30;
+      let earlyLoss = 3.40;
+      let lateWin = 2.10;
+      let lateDraw = 3.30;
+      let lateLoss = 3.40;
+
+      if (col5IsWater && cols.length >= 9) {
+        // Standard single snapshot: cols[3]=盘口, cols[4]=主水, cols[5]=客水, cols[6]=胜, cols[7]=平, cols[8]=负
+        earlyHandicap = cols[3];
+        lateHandicap = cols[3];
+        earlyHomeOdds = parseFloat(cols[4]) || 1.90;
+        lateHomeOdds = parseFloat(cols[4]) || 1.90;
+        earlyAwayOdds = parseFloat(cols[5]) || 1.90;
+        lateAwayOdds = parseFloat(cols[5]) || 1.90;
+        const w = parseFloat(cols[6]) || 2.10;
+        const d = parseFloat(cols[7]) || 3.30;
+        const l = parseFloat(cols[8]) || 3.40;
+        earlyWin = w; lateWin = w;
+        earlyDraw = d; lateDraw = d;
+        earlyLoss = l; lateLoss = l;
+      } else if (!col5IsWater && cols.length >= 9) {
+        // Dual handicap table: cols[3]=初盘, cols[4]=初水, cols[5]=即盘, cols[6]=即水, cols[7]=胜, cols[8]=平, cols[9]=负
+        earlyHandicap = cols[3] || '-0.5';
+        earlyHomeOdds = parseFloat(cols[4]) || 1.90;
+        lateHandicap = cols[5] || cols[3] || '-0.5';
+        lateHomeOdds = parseFloat(cols[6]) || 1.90;
+        const w = parseFloat(cols[7]) || 2.10;
+        const d = parseFloat(cols[8]) || 3.30;
+        const l = parseFloat(cols[9]) || 3.40;
+        earlyWin = w; lateWin = w;
+        earlyDraw = d; lateDraw = d;
+        earlyLoss = l; lateLoss = l;
+      } else {
+        // Generic fallback with consistent baseline
+        earlyHandicap = cols[3] || '平手';
+        lateHandicap = cols[3] || '平手';
+        earlyHomeOdds = parseFloat(cols[4]) || 1.90;
+        lateHomeOdds = parseFloat(cols[4]) || 1.90;
+      }
+
       const defaultMatch: FullMatchData = {
         matchInfo: {
           league: normalizeLeagueName(cols[0] || '常规联赛'),
@@ -501,20 +555,20 @@ export function parseBatchMatchesFromText(rawText: string): FullMatchData[] {
           marketStory: cols[11] || cols[10] || '',
         },
         asianHandicap: {
-          earlyHandicap: cols[3] || '-0.5',
-          earlyHomeOdds: parseFloat(cols[4]) || 1.90,
-          earlyAwayOdds: 1.90,
-          lateHandicap: cols[5] || cols[3] || '-0.5',
-          lateHomeOdds: parseFloat(cols[6]) || 1.90,
-          lateAwayOdds: 1.90,
+          earlyHandicap,
+          earlyHomeOdds,
+          earlyAwayOdds,
+          lateHandicap,
+          lateHomeOdds,
+          lateAwayOdds,
         },
         euroOdds: {
-          earlyWin: parseFloat(cols[7]) || 2.10,
-          earlyDraw: parseFloat(cols[8]) || 3.30,
-          earlyLoss: parseFloat(cols[9]) || 3.40,
-          lateWin: parseFloat(cols[7]) || 2.10,
-          lateDraw: parseFloat(cols[8]) || 3.30,
-          lateLoss: parseFloat(cols[9]) || 3.40,
+          earlyWin,
+          earlyDraw,
+          earlyLoss,
+          lateWin,
+          lateDraw,
+          lateLoss,
         },
         overUnder: {
           earlyLine: cols[10] || '2.5',

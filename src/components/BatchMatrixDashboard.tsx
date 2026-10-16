@@ -173,19 +173,37 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
       const dec = report.decision;
       const model = report.identifiedModel;
       const time = item.data.matchInfo.matchTime || '99:99';
-      const shift = item.confidenceShift || (
-        (item.data.asianHandicap?.earlyHandicap !== item.data.asianHandicap?.lateHandicap ||
-         Math.abs((item.data.asianHandicap?.earlyHomeOdds || 0) - (item.data.asianHandicap?.lateHomeOdds || 0)) > 0.01 ||
-         Math.abs((item.data.euroOdds?.earlyWin || 0) - (item.data.euroOdds?.lateWin || 0)) > 0.01 ||
-         Boolean(item.earlyDataSnapshot && item.earlyDataSnapshot !== item.data && (item.earlyDataSnapshot.asianHandicap?.lateHandicap !== item.data.asianHandicap?.lateHandicap || item.earlyDataSnapshot.euroOdds?.lateWin !== item.data.euroOdds?.lateWin)))
-          ? compareEarlyVsLateConfidence(
-              item.data,
-              item.earlyReportSnapshot,
-              report,
-              item.earlyDataSnapshot
-            )
-          : undefined
+      const hasDualOdds = Boolean(
+        (item.data.asianHandicap?.earlyHandicap &&
+         item.data.asianHandicap?.lateHandicap &&
+         item.data.asianHandicap.earlyHandicap !== item.data.asianHandicap.lateHandicap) ||
+        Math.abs((item.data.asianHandicap?.earlyHomeOdds || 0) - (item.data.asianHandicap?.lateHomeOdds || 0)) > 0.02 ||
+        Math.abs((item.data.euroOdds?.earlyWin || 0) - (item.data.euroOdds?.lateWin || 0)) > 0.02 ||
+        (item.earlyDataSnapshot && (
+          (item.earlyDataSnapshot.asianHandicap?.lateHandicap &&
+           item.data.asianHandicap?.lateHandicap &&
+           item.earlyDataSnapshot.asianHandicap.lateHandicap !== item.data.asianHandicap.lateHandicap) ||
+          Math.abs((item.earlyDataSnapshot.asianHandicap?.lateHomeOdds || 0) - (item.data.asianHandicap?.lateHomeOdds || 0)) > 0.02 ||
+          Math.abs((item.earlyDataSnapshot.euroOdds?.lateWin || 0) - (item.data.euroOdds?.lateWin || 0)) > 0.02
+        ))
       );
+
+      let shift = hasDualOdds
+        ? (item.confidenceShift || compareEarlyVsLateConfidence(
+            item.data,
+            item.earlyReportSnapshot,
+            report,
+            item.earlyDataSnapshot
+          ))
+        : undefined;
+
+      if (shift) {
+        if (shift.starChange > 0 && shift.shiftType !== 'INCREASED') {
+          shift = { ...shift, shiftType: 'INCREASED' };
+        } else if (shift.starChange < 0 && shift.shiftType !== 'DECREASED') {
+          shift = { ...shift, shiftType: 'DECREASED' };
+        }
+      }
       return {
         item,
         originalIndex,
