@@ -577,20 +577,31 @@ export default function App() {
             };
           }
         } else {
-          // Brand new match, add to queue
+          // Brand new match, add to queue (首次导入基石盘口)
           newCount++;
           const rep = generateActuarialRuleReport(m);
-          const confidenceShift = compareEarlyVsLateConfidence(m, undefined, rep);
+          
+          // 仅当文本内明确抓取到双重盘口（如“欧初...即...”或“亚初...即...”）时，才在首次建立变轨比对
+          const hasExplicitDualOdds =
+            m.asianHandicap.earlyHandicap !== m.asianHandicap.lateHandicap ||
+            Math.abs(m.asianHandicap.earlyHomeOdds - m.asianHandicap.lateHomeOdds) > 0.01 ||
+            Math.abs(m.euroOdds.earlyWin - m.euroOdds.lateWin) > 0.01;
 
-          if (confidenceShift.shiftType === 'INCREASED') incConfidenceCount++;
-          else if (confidenceShift.shiftType === 'DECREASED') decConfidenceCount++;
-          else stableConfidenceCount++;
+          const confidenceShift = hasExplicitDualOdds
+            ? compareEarlyVsLateConfidence(m, undefined, rep)
+            : undefined;
+
+          if (confidenceShift?.shiftType === 'INCREASED') incConfidenceCount++;
+          else if (confidenceShift?.shiftType === 'DECREASED') decConfidenceCount++;
+          else if (confidenceShift) stableConfidenceCount++;
 
           updatedQueue.push({
             id: `batch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             sourceName: `导入场次_${home}vs${away}`,
             data: m,
             report: rep,
+            earlyDataSnapshot: m, // 保存初盘快照，供晚盘二次导入时精准比对变轨
+            earlyReportSnapshot: rep,
             confidenceShift,
             status: 'done',
             timestamp: Date.now(),

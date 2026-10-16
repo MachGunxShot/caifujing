@@ -173,11 +173,18 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
       const dec = report.decision;
       const model = report.identifiedModel;
       const time = item.data.matchInfo.matchTime || '99:99';
-      const shift = item.confidenceShift || compareEarlyVsLateConfidence(
-        item.data,
-        item.earlyReportSnapshot,
-        report,
-        item.earlyDataSnapshot
+      const shift = item.confidenceShift || (
+        (item.data.asianHandicap?.earlyHandicap !== item.data.asianHandicap?.lateHandicap ||
+         Math.abs((item.data.asianHandicap?.earlyHomeOdds || 0) - (item.data.asianHandicap?.lateHomeOdds || 0)) > 0.01 ||
+         Math.abs((item.data.euroOdds?.earlyWin || 0) - (item.data.euroOdds?.lateWin || 0)) > 0.01 ||
+         Boolean(item.earlyDataSnapshot && item.earlyDataSnapshot !== item.data && (item.earlyDataSnapshot.asianHandicap?.lateHandicap !== item.data.asianHandicap?.lateHandicap || item.earlyDataSnapshot.euroOdds?.lateWin !== item.data.euroOdds?.lateWin)))
+          ? compareEarlyVsLateConfidence(
+              item.data,
+              item.earlyReportSnapshot,
+              report,
+              item.earlyDataSnapshot
+            )
+          : undefined
       );
       return {
         item,
@@ -199,15 +206,15 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
 
   // Confidence shift counts across all items
   const increasedConfidenceCount = useMemo(
-    () => processedItems.filter((p) => p.shift.shiftType === 'INCREASED').length,
+    () => processedItems.filter((p) => p.shift?.shiftType === 'INCREASED').length,
     [processedItems]
   );
   const decreasedConfidenceCount = useMemo(
-    () => processedItems.filter((p) => p.shift.shiftType === 'DECREASED').length,
+    () => processedItems.filter((p) => p.shift?.shiftType === 'DECREASED').length,
     [processedItems]
   );
   const stableConfidenceCount = useMemo(
-    () => processedItems.filter((p) => p.shift.shiftType === 'STABLE').length,
+    () => processedItems.filter((p) => p.shift?.shiftType === 'STABLE').length,
     [processedItems]
   );
 
@@ -218,7 +225,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
       list = list.filter((p) => p.stars === starFilter);
     }
     if (confidenceFilter !== 'ALL') {
-      list = list.filter((p) => p.shift.shiftType === confidenceFilter);
+      list = list.filter((p) => p.shift?.shiftType === confidenceFilter);
     }
     return list;
   }, [processedItems, starFilter, confidenceFilter]);
@@ -228,10 +235,10 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
     const list = [...filteredItems];
     list.sort((a, b) => {
       if (sortBy === 'confidence') {
-        const confRank = (c: ConfidenceShiftType) => (c === 'INCREASED' ? 3 : c === 'STABLE' ? 2 : 1);
+        const confRank = (c?: ConfidenceShiftType) => (c === 'INCREASED' ? 3 : c === 'STABLE' ? 2 : c === 'DECREASED' ? 1 : 0);
         const cDiff = sortOrder === 'desc'
-          ? confRank(b.shift.shiftType) - confRank(a.shift.shiftType)
-          : confRank(a.shift.shiftType) - confRank(b.shift.shiftType);
+          ? confRank(b.shift?.shiftType) - confRank(a.shift?.shiftType)
+          : confRank(a.shift?.shiftType) - confRank(b.shift?.shiftType);
         if (cDiff !== 0) return cDiff;
         return b.stars - a.stars;
       }
@@ -538,7 +545,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
             <span className={`text-[10px] font-mono ${isFiveStar ? 'text-amber-400 font-bold' : 'text-slate-400'}`}>
               {dec.starRating}星置信度
             </span>
-            {shift.starChange !== 0 ? (
+            {shift && shift.starChange !== 0 ? (
               <span className={`px-1 py-0.2 rounded text-[9px] font-extrabold font-mono border ${
                 shift.starChange > 0
                   ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
@@ -558,38 +565,54 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
           </div>
           {/* Quick Confidence Shift Pill */}
           <div className="mt-1">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setDiffModalTarget({ item, report, shift });
-              }}
-              className={`px-1.5 py-0.5 rounded text-[10px] font-bold border flex items-center gap-1 transition-all cursor-pointer ${
-                shift.shiftType === 'INCREASED'
-                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/30'
-                  : shift.shiftType === 'DECREASED'
-                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 hover:bg-rose-500/30'
-                  : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:text-slate-200'
-              }`}
-              title="点击查看早盘 vs 晚盘 信心异动轨迹与变轨对比"
-            >
-              {shift.shiftType === 'INCREASED' ? (
-                <>
-                  <TrendingUp className="w-3 h-3 text-emerald-400 shrink-0" />
-                  <span>信心增加</span>
-                </>
-              ) : shift.shiftType === 'DECREASED' ? (
-                <>
-                  <TrendingDown className="w-3 h-3 text-rose-400 shrink-0" />
-                  <span>信心减弱</span>
-                </>
-              ) : (
-                <>
-                  <Minus className="w-3 h-3 text-slate-500 shrink-0" />
-                  <span>走势平稳</span>
-                </>
-              )}
-            </button>
+            {shift ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setDiffModalTarget({ item, report, shift });
+                }}
+                className={`px-1.5 py-0.5 rounded text-[10px] font-bold border flex items-center gap-1 transition-all cursor-pointer ${
+                  shift.shiftType === 'INCREASED'
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/30'
+                    : shift.shiftType === 'DECREASED'
+                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 hover:bg-rose-500/30'
+                    : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:text-slate-200'
+                }`}
+                title="点击查看早盘 vs 晚盘 信心异动轨迹与变轨对比"
+              >
+                {shift.shiftType === 'INCREASED' ? (
+                  <>
+                    <TrendingUp className="w-3 h-3 text-emerald-400 shrink-0" />
+                    <span>信心增加</span>
+                  </>
+                ) : shift.shiftType === 'DECREASED' ? (
+                  <>
+                    <TrendingDown className="w-3 h-3 text-rose-400 shrink-0" />
+                    <span>信心减弱</span>
+                  </>
+                ) : (
+                  <>
+                    <Minus className="w-3 h-3 text-slate-500 shrink-0" />
+                    <span>走势平稳</span>
+                  </>
+                )}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const fallbackShift = compareEarlyVsLateConfidence(item.data, item.earlyReportSnapshot, report, item.earlyDataSnapshot);
+                  setDiffModalTarget({ item, report, shift: fallbackShift });
+                }}
+                className="px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-400 bg-slate-900/60 hover:bg-slate-800 border border-slate-800/80 flex items-center gap-1 transition-all cursor-pointer"
+                title="首次导入基石盘口，再次导入晚盘即可自动比对变轨轨迹（点击查看盘口详情）"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400/80"></span>
+                <span>初盘基石</span>
+              </button>
+            )}
           </div>
         </td>
 
@@ -689,7 +712,8 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                setDiffModalTarget({ item, report, shift });
+                const s = shift || compareEarlyVsLateConfidence(item.data, item.earlyReportSnapshot, report, item.earlyDataSnapshot);
+                setDiffModalTarget({ item, report, shift: s });
               }}
               className="px-2 py-1 text-[11px] font-bold rounded border bg-slate-800 text-cyan-300 hover:text-cyan-200 hover:bg-slate-750 border-slate-700 flex items-center gap-1 cursor-pointer transition-all"
               title="对比早盘意图与晚盘临场风控变轨轨迹"
@@ -811,35 +835,45 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
               <div className="ml-1">{renderStarRating(dec.starRating)}</div>
               
               {/* Confidence Shift Pill */}
-              <button
-                type="button"
-                onClick={() => setDiffModalTarget({ item, report: rep, shift })}
-                className={`px-2 py-0.5 rounded text-xs font-bold border flex items-center gap-1 cursor-pointer transition-all ${
-                  shift.shiftType === 'INCREASED'
-                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/30'
-                    : shift.shiftType === 'DECREASED'
-                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 hover:bg-rose-500/30'
-                    : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
-                }`}
-                title="查看早晚盘变轨与信心异动"
-              >
-                {shift.shiftType === 'INCREASED' ? (
-                  <>
-                    <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>晚盘信心增加 {shift.starChange > 0 ? `(+${shift.starChange}★)` : ''}</span>
-                  </>
-                ) : shift.shiftType === 'DECREASED' ? (
-                  <>
-                    <TrendingDown className="w-3.5 h-3.5 text-rose-400" />
-                    <span>晚盘信心减弱 {shift.starChange < 0 ? `(${shift.starChange}★)` : ''}</span>
-                  </>
-                ) : (
-                  <>
-                    <Minus className="w-3.5 h-3.5 text-slate-500" />
-                    <span>走势平稳</span>
-                  </>
-                )}
-              </button>
+              {shift ? (
+                <button
+                  type="button"
+                  onClick={() => setDiffModalTarget({ item, report: rep, shift })}
+                  className={`px-2 py-0.5 rounded text-xs font-bold border flex items-center gap-1 cursor-pointer transition-all ${
+                    shift.shiftType === 'INCREASED'
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/30'
+                      : shift.shiftType === 'DECREASED'
+                      ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 hover:bg-rose-500/30'
+                      : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
+                  }`}
+                  title="查看早晚盘变轨与信心异动"
+                >
+                  {shift.shiftType === 'INCREASED' ? (
+                    <>
+                      <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>晚盘信心增加 {shift.starChange > 0 ? `(+${shift.starChange}★)` : ''}</span>
+                    </>
+                  ) : shift.shiftType === 'DECREASED' ? (
+                    <>
+                      <TrendingDown className="w-3.5 h-3.5 text-rose-400" />
+                      <span>晚盘信心减弱 {shift.starChange < 0 ? `(${shift.starChange}★)` : ''}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Minus className="w-3.5 h-3.5 text-slate-500" />
+                      <span>走势平稳</span>
+                    </>
+                  )}
+                </button>
+              ) : (
+                <span
+                  className="px-2 py-0.5 rounded bg-slate-900/80 text-slate-400 border border-slate-800 text-xs font-semibold flex items-center gap-1 cursor-default"
+                  title="首次导入基石盘口，再次导入晚盘即可自动比对变轨轨迹"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400/80"></span>
+                  <span>初盘基石 (待晚盘)</span>
+                </span>
+              )}
 
               {item.isLocked && (
                 <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold flex items-center gap-1">
@@ -857,7 +891,10 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
             {/* Early vs Late Shift Button */}
             <button
               type="button"
-              onClick={() => setDiffModalTarget({ item, report: rep, shift })}
+              onClick={() => {
+                const s = shift || compareEarlyVsLateConfidence(item.data, item.earlyReportSnapshot, rep, item.earlyDataSnapshot);
+                setDiffModalTarget({ item, report: rep, shift: s });
+              }}
               className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-cyan-300 border border-slate-700 text-xs font-bold rounded-lg transition-all flex items-center gap-1 cursor-pointer"
               title="查看早晚盘变轨与信心异动"
             >
@@ -930,7 +967,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
             <div className="mt-1">{renderStarRating(dec.starRating)}</div>
             <div className="text-[10px] text-amber-400 font-mono mt-0.5 flex items-center gap-1">
               <span>{dec.starRating} 星置信度</span>
-              {shift.starChange !== 0 && (
+              {shift && shift.starChange !== 0 && (
                 <span className={`px-1 rounded text-[9px] font-bold ${shift.starChange > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                   ({shift.earlyStars}★➔{shift.lateStars}★)
                 </span>

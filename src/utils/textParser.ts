@@ -193,6 +193,9 @@ export function parseNaturalTextOdds(text: string, currentData: FullMatchData): 
   const euroDualMatch = fullText.match(
     /欧初\s*(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})\s*即\s*(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})/
   );
+  const euroGroups = [
+    ...fullText.matchAll(/(\d+\.\d{1,3})[\s/]+(\d+\.\d{1,3})[\s/]+(\d+\.\d{1,3})/g),
+  ];
   if (euroDualMatch && result.euroOdds) {
     result.euroOdds.earlyWin = parseFloat(euroDualMatch[1]);
     result.euroOdds.earlyDraw = parseFloat(euroDualMatch[2]);
@@ -200,22 +203,17 @@ export function parseNaturalTextOdds(text: string, currentData: FullMatchData): 
     result.euroOdds.lateWin = parseFloat(euroDualMatch[4]);
     result.euroOdds.lateDraw = parseFloat(euroDualMatch[5]);
     result.euroOdds.lateLoss = parseFloat(euroDualMatch[6]);
-  } else {
-    const euroGroups = [
-      ...fullText.matchAll(/(\d+\.\d{1,3})[\s/]+(\d+\.\d{1,3})[\s/]+(\d+\.\d{1,3})/g),
-    ];
-    if (euroGroups.length >= 2 && result.euroOdds) {
-      result.euroOdds.earlyWin = parseFloat(euroGroups[0][1]);
-      result.euroOdds.earlyDraw = parseFloat(euroGroups[0][2]);
-      result.euroOdds.earlyLoss = parseFloat(euroGroups[0][3]);
-      result.euroOdds.lateWin = parseFloat(euroGroups[1][1]);
-      result.euroOdds.lateDraw = parseFloat(euroGroups[1][2]);
-      result.euroOdds.lateLoss = parseFloat(euroGroups[1][3]);
-    } else if (euroGroups.length === 1 && result.euroOdds) {
-      result.euroOdds.lateWin = parseFloat(euroGroups[0][1]);
-      result.euroOdds.lateDraw = parseFloat(euroGroups[0][2]);
-      result.euroOdds.lateLoss = parseFloat(euroGroups[0][3]);
-    }
+  } else if (euroGroups.length >= 2 && result.euroOdds) {
+    result.euroOdds.earlyWin = parseFloat(euroGroups[0][1]);
+    result.euroOdds.earlyDraw = parseFloat(euroGroups[0][2]);
+    result.euroOdds.earlyLoss = parseFloat(euroGroups[0][3]);
+    result.euroOdds.lateWin = parseFloat(euroGroups[1][1]);
+    result.euroOdds.lateDraw = parseFloat(euroGroups[1][2]);
+    result.euroOdds.lateLoss = parseFloat(euroGroups[1][3]);
+  } else if (euroGroups.length === 1 && result.euroOdds) {
+    result.euroOdds.lateWin = parseFloat(euroGroups[0][1]);
+    result.euroOdds.lateDraw = parseFloat(euroGroups[0][2]);
+    result.euroOdds.lateLoss = parseFloat(euroGroups[0][3]);
   }
 
   // 3. Asian Handicap extraction
@@ -304,6 +302,25 @@ export function parseNaturalTextOdds(text: string, currentData: FullMatchData): 
     if (smallWaterMatch && result.overUnder) {
       result.overUnder.lateUnderOdds = normalizeWaterOdds(parseFloat(smallWaterMatch[1]));
     }
+  }
+
+  // When only a single snapshot is provided (not explicit dual "初...即..."),
+  // synchronize early baseline to match the parsed single snapshot so we don't
+  // compare against hardcoded initial placeholders!
+  if (!asianDualMatch && result.asianHandicap) {
+    result.asianHandicap.earlyHandicap = result.asianHandicap.lateHandicap;
+    result.asianHandicap.earlyHomeOdds = result.asianHandicap.lateHomeOdds;
+    result.asianHandicap.earlyAwayOdds = result.asianHandicap.lateAwayOdds;
+  }
+  if (!euroDualMatch && euroGroups.length <= 1 && result.euroOdds) {
+    result.euroOdds.earlyWin = result.euroOdds.lateWin;
+    result.euroOdds.earlyDraw = result.euroOdds.lateDraw;
+    result.euroOdds.earlyLoss = result.euroOdds.lateLoss;
+  }
+  if (!ouDualMatch && result.overUnder) {
+    result.overUnder.earlyLine = result.overUnder.lateLine;
+    result.overUnder.earlyOverOdds = result.overUnder.lateOverOdds;
+    result.overUnder.earlyUnderOdds = result.overUnder.lateUnderOdds;
   }
 
   return result;

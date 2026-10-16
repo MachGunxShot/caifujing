@@ -972,80 +972,86 @@ export function compareEarlyVsLateConfidence(
     loss: Number(((lateReport.metrics?.lateAwayProb || 0) - (earlyReport.metrics?.lateAwayProb || 0)).toFixed(1)),
   };
 
-  // Determine shiftType:
+  // Determine shiftType with strict hierarchical consistency:
+  // Level 1: If stars jumped (starChange > 0), confidence is fundamentally INCREASED.
+  // Level 2: If stars dropped (starChange < 0), confidence is DECREASED (unless confirmed as positive up-line fortification).
+  // Level 3: If stars unchanged (starChange === 0), evaluate micro odds/water/model transitions.
   let shiftType: ConfidenceShiftType = 'STABLE';
   const keyReasons: string[] = [];
 
-  // 1. Star Rating changes
+  const isConfirmedUpLineFortification = lineStepDiff > 0 && lateGivingOdds <= 1.98 && givingEuroDiff <= 0.02;
+  const isUpLineTrap = lineStepDiff > 0 && lateGivingOdds >= 2.04 && givingEuroDiff >= 0.05;
+
   if (starChange > 0) {
     shiftType = 'INCREASED';
     keyReasons.push(`推荐星级跳升：由早盘 ${earlyStars}星 ⭐ 跃升至晚盘 ${lateStars}星 ⭐ (+${starChange}★)，置信度与风控等级大幅强化。`);
-  } else if (starChange < 0) {
-    if (lineStepDiff > 0 && lateGivingOdds <= 1.98 && givingEuroDiff <= 0.02) {
-      shiftType = 'INCREASED';
+    if (isConfirmedUpLineFortification) {
       keyReasons.push(`升盘门槛加固：盘口由早盘 ${earlyHandicap} 连升 ${lineStepDiff} 档至晚盘 ${data.asianHandicap.lateHandicap}，门槛大幅拔高阻上，水位稳健承接在 ${lateGivingOdds.toFixed(2)} 健康中水区间，排除虚热。`);
-    } else {
-      shiftType = 'DECREASED';
-      keyReasons.push(`推荐星级下调：由早盘 ${earlyStars}星 ⭐ 下调至晚盘 ${lateStars}星 ⭐ (${starChange}★)，盘面出现诱导或风控松动，建议谨慎设防。`);
+    } else if (givingEuroDiff <= -0.05) {
+      keyReasons.push(`欧赔胜指持续下调：${givingTeam} 胜赔由早盘 ${earlyGivingEuro.toFixed(2)} 压低至晚盘 ${lateGivingEuro.toFixed(2)} (${givingEuroDiff.toFixed(2)})，欧亚同向避险。`);
     }
-  }
-
-  // 2. Cross-Handicap & Asian Handicap water & line shift
-  if (lineStepDiff > 0) {
-    if (lateGivingOdds <= 1.98 && givingEuroDiff <= 0.02) {
-      if (shiftType === 'STABLE') shiftType = 'INCREASED';
+  } else if (starChange < 0) {
+    shiftType = 'DECREASED';
+    keyReasons.push(`推荐星级下调：由早盘 ${earlyStars}星 ⭐ 下调至晚盘 ${lateStars}星 ⭐ (${starChange}★)，盘面出现诱导或风控松动，建议谨慎设防。`);
+    if (isUpLineTrap) {
+      keyReasons.push(`升盘高息诱上：${givingTeam} 虽升盘至 ${data.asianHandicap.lateHandicap}，但水位死卡 ${lateGivingOdds.toFixed(2)} 毒药高水且欧赔反弹 +${givingEuroDiff.toFixed(2)}，警惕借题材虚晃升盘诱上。`);
+    } else if (rawGivingWaterDiff >= 0.08 || lateGivingOdds >= 2.04) {
+      keyReasons.push(`让步方异常升水：${givingTeam} 亚盘水位由早盘 ${earlyGivingOdds.toFixed(2)} 飙升至晚盘 ${lateGivingOdds.toFixed(2)} (+${rawGivingWaterDiff.toFixed(2)})，高息满水暗藏“大热必死”诱上风险。`);
+    }
+    if (givingEuroDiff >= 0.08) {
+      keyReasons.push(`欧赔胜指反常抬高：${givingTeam} 胜赔由早盘 ${earlyGivingEuro.toFixed(2)} 抬高至晚盘 ${lateGivingEuro.toFixed(2)} (+${givingEuroDiff.toFixed(2)})，机构对正路打出存在顾虑。`);
+    }
+  } else {
+    // starChange === 0: evaluate micro odds / water / model changes
+    if (isConfirmedUpLineFortification) {
+      shiftType = 'INCREASED';
       keyReasons.push(`升盘阻上控赔：${givingTeam} 亚指连跨 ${lineStepDiff} 档深升至 ${data.asianHandicap.lateHandicap}，换水补偿折算后有效水位实际下压 ${Math.abs(effectiveGivingWaterDiff).toFixed(2)}，机构提高赢盘门槛过滤跟风筹码，正路穿盘阻力夯实。`);
-    } else if (lateGivingOdds >= 2.04 && givingEuroDiff >= 0.05) {
+      if (givingEuroDiff < 0) {
+        keyReasons.push(`欧赔胜指同步下调：${givingTeam} 胜赔由早盘 ${earlyGivingEuro.toFixed(2)} 压低至晚盘 ${lateGivingEuro.toFixed(2)} (${givingEuroDiff.toFixed(2)})，欧亚同向避险。`);
+      }
+    } else if (isUpLineTrap) {
       shiftType = 'DECREASED';
       keyReasons.push(`升盘高息诱上：${givingTeam} 虽升盘至 ${data.asianHandicap.lateHandicap}，但水位死卡 ${lateGivingOdds.toFixed(2)} 毒药高水且欧赔反弹 +${givingEuroDiff.toFixed(2)}，警惕借题材虚晃升盘诱上。`);
-    } else {
-      keyReasons.push(`盘口深度跨档升至 ${data.asianHandicap.lateHandicap}，赢盘要求提升，即时水位 ${lateGivingOdds.toFixed(2)}。`);
+    } else if (effectiveGivingWaterDiff <= -0.05 || givingEuroDiff <= -0.05) {
+      shiftType = 'INCREASED';
+      if (effectiveGivingWaterDiff <= -0.05) {
+        keyReasons.push(`让步方极限压水：${givingTeam} 亚盘水位由早盘 ${earlyGivingOdds.toFixed(2)} 降至晚盘 ${lateGivingOdds.toFixed(2)} (${rawGivingWaterDiff > 0 ? '+' : ''}${rawGivingWaterDiff.toFixed(2)})，机构强行压降赔付空间。`);
+      }
+      if (givingEuroDiff <= -0.05) {
+        keyReasons.push(`欧赔胜指持续下调：${givingTeam} 胜赔由早盘 ${earlyGivingEuro.toFixed(2)} 压低至晚盘 ${lateGivingEuro.toFixed(2)} (${givingEuroDiff.toFixed(2)})，欧亚同向避险。`);
+      }
+    } else if (rawGivingWaterDiff >= 0.08 || lateGivingOdds >= 2.04 || givingEuroDiff >= 0.08) {
+      shiftType = 'DECREASED';
+      if (rawGivingWaterDiff >= 0.08 || lateGivingOdds >= 2.04) {
+        keyReasons.push(`让步方异常升水：${givingTeam} 亚盘水位由早盘 ${earlyGivingOdds.toFixed(2)} 飙升至晚盘 ${lateGivingOdds.toFixed(2)} (+${rawGivingWaterDiff.toFixed(2)})，高息满水暗藏“大热必死”诱上风险。`);
+      }
+      if (givingEuroDiff >= 0.08) {
+        keyReasons.push(`欧赔胜指反常抬高：${givingTeam} 胜赔由早盘 ${earlyGivingEuro.toFixed(2)} 抬高至晚盘 ${lateGivingEuro.toFixed(2)} (+${givingEuroDiff.toFixed(2)})，机构对正路打出存在顾虑。`);
+      }
+    } else if (earlyReport.identifiedModel !== lateReport.identifiedModel) {
+      const lateM = lateReport.identifiedModel;
+      if (lateM === 'POSITIVE_CONTROL') {
+        shiftType = 'INCREASED';
+        keyReasons.push(`操盘模型确立：晚盘正式确立为【极限榨水 / 正向控赔】操盘模型，大庄坚决以低赔超低水避险打出。`);
+      } else if (lateM === 'HIGH_INTEREST_TRAP') {
+        shiftType = 'DECREASED';
+        keyReasons.push(`警惕操盘陷阱：晚盘变轨触发【高息吸筹 / 名气诱导】模型，机构以高回报诱导大众投注让步方。`);
+      } else if (lateM === 'AVALANCHE_RETREAT') {
+        shiftType = 'DECREASED';
+        keyReasons.push(`盘口退热示弱：晚盘变轨触发【雪崩退盘 / 退热示弱】模型，让步力度不足，首选防冷下盘。`);
+      } else if (lateM === 'LOW_DRAW_DEFENSE') {
+        shiftType = 'INCREASED';
+        keyReasons.push(`平局防线加固：晚盘平赔压低触发【平赔低洼 / 胆平设防】模型，胜负两端分流，首选重点设防平局。`);
+      }
     }
-  } else if (effectiveGivingWaterDiff <= -0.05) {
-    if (shiftType === 'STABLE') shiftType = 'INCREASED';
-    keyReasons.push(`让步方极限压水：${givingTeam} 亚盘水位由早盘 ${earlyGivingOdds.toFixed(2)} 降至晚盘 ${lateGivingOdds.toFixed(2)} (${rawGivingWaterDiff > 0 ? '+' : ''}${rawGivingWaterDiff.toFixed(2)})，机构强行压降赔付空间。`);
-  } else if (rawGivingWaterDiff >= 0.08 || lateGivingOdds >= 2.04) {
-    // 只有在盘口未升盘且水位涨幅>=0.08或晚盘处于>=2.04真正满水时才报异常升水！
-    shiftType = 'DECREASED';
-    keyReasons.push(`让步方异常升水：${givingTeam} 亚盘水位由早盘 ${earlyGivingOdds.toFixed(2)} 飙升至晚盘 ${lateGivingOdds.toFixed(2)} (+${rawGivingWaterDiff.toFixed(2)})，高息满水暗藏“大热必死”诱上风险。`);
   }
 
-  // 3. Euro Odds shift
-  if (givingEuroDiff <= -0.05) {
-    if (shiftType === 'STABLE') shiftType = 'INCREASED';
-    keyReasons.push(`欧赔胜指持续下调：${givingTeam} 胜赔由早盘 ${earlyGivingEuro.toFixed(2)} 压低至晚盘 ${lateGivingEuro.toFixed(2)} (${givingEuroDiff.toFixed(2)})，欧亚同向避险。`);
-  } else if (givingEuroDiff >= 0.08) {
-    if (shiftType === 'STABLE') shiftType = 'DECREASED';
-    keyReasons.push(`欧赔胜指反常抬高：${givingTeam} 胜赔由早盘 ${earlyGivingEuro.toFixed(2)} 抬高至晚盘 ${lateGivingEuro.toFixed(2)} (+${givingEuroDiff.toFixed(2)})，机构对正路打出存在顾虑。`);
-  }
-
-  // 4. Over/Under & Goal Line synergy
+  // Over/Under synergy
   const lateOUNum = parseOverUnderValue(data.overUnder?.lateLine || '2.5');
   const earlyOUNum = parseOverUnderValue(data.overUnder?.earlyLine || '2.5');
   const ouDiff = Number((lateOUNum - earlyOUNum).toFixed(2));
-  if (ouDiff > 0 && lateOUNum >= 3.25) {
-    if (shiftType === 'STABLE') shiftType = 'INCREASED';
+  if (ouDiff > 0 && lateOUNum >= 3.25 && shiftType !== 'DECREASED') {
     keyReasons.push(`大小球跨档大开：大小球由 ${data.overUnder?.earlyLine} 升至 ${data.overUnder?.lateLine} (${lateOUNum}球深盘)，机构预期进球数爆发，与让步方深盘大胜形成四维联动。`);
-  }
-
-  // 5. Model transition
-  if (earlyReport.identifiedModel !== lateReport.identifiedModel) {
-    const earlyM = earlyReport.identifiedModel;
-    const lateM = lateReport.identifiedModel;
-
-    if (lateM === 'POSITIVE_CONTROL' && earlyM !== 'POSITIVE_CONTROL') {
-      shiftType = 'INCREASED';
-      keyReasons.push(`操盘模型确立：晚盘正式确立为【极限榨水 / 正向控赔】操盘模型，大庄坚决以低赔超低水避险打出。`);
-    } else if (lateM === 'HIGH_INTEREST_TRAP') {
-      shiftType = 'DECREASED';
-      keyReasons.push(`警惕操盘陷阱：晚盘变轨触发【高息吸筹 / 名气诱导】模型，机构以高回报诱导大众投注让步方。`);
-    } else if (lateM === 'AVALANCHE_RETREAT') {
-      shiftType = 'DECREASED';
-      keyReasons.push(`盘口退热示弱：晚盘变轨触发【雪崩退盘 / 退热示弱】模型，让步力度不足，首选防冷下盘。`);
-    } else if (lateM === 'LOW_DRAW_DEFENSE') {
-      if (shiftType === 'STABLE') shiftType = 'INCREASED';
-      keyReasons.push(`平局防线加固：晚盘平赔压低触发【平赔低洼 / 胆平设防】模型，胜负两端分流，首选重点设防平局。`);
-    }
   }
 
   // If still no key reasons, add stability note
@@ -1057,7 +1063,7 @@ export function compareEarlyVsLateConfidence(
   let summaryTitle = '';
   if (shiftType === 'INCREASED') {
     summaryTitle = lineStepDiff > 0
-      ? `晚盘信心大幅强化 (+${starChange >= 0 ? starChange : 0}星 · 升盘阻上穿盘稳胆)`
+      ? `晚盘信心大幅强化 (${starChange > 0 ? `+${starChange}星` : '维持' + lateStars + '星'} · 升盘阻上穿盘稳胆)`
       : starChange > 0
       ? `晚盘信心大幅增加 (+${starChange}星 · 机构控赔加固)`
       : `晚盘信心增强 (水位持续压低 · 避险打出)`;
