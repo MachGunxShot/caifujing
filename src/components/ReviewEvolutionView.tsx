@@ -2371,21 +2371,45 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                 </div>
 
                 {/* 2. Handicap */}
-                <div className={`p-3 rounded-lg border flex items-center justify-between ${
-                  latestReviewResult.outcomeEvaluation.handicapHit
-                    ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300'
-                    : 'bg-rose-950/30 border-rose-500/40 text-rose-300'
-                }`}>
-                  <div>
-                    <div className="text-[10px] text-slate-400">让球盘预判</div>
-                    <div className="font-bold text-xs mt-0.5">
-                      {latestReviewResult.priorReport.decision.handicapPick}
+                {(() => {
+                  const detail = latestReviewResult.outcomeEvaluation?.handicapDetail;
+                  const isHit = latestReviewResult.outcomeEvaluation?.handicapHit;
+                  const styleClass =
+                    detail === 'WIN_HALF'
+                      ? 'bg-teal-950/30 border-teal-500/40 text-teal-300'
+                      : detail === 'PUSH'
+                      ? 'bg-cyan-950/30 border-cyan-500/40 text-cyan-300'
+                      : detail === 'LOSE_HALF'
+                      ? 'bg-amber-950/30 border-amber-500/40 text-amber-300'
+                      : isHit
+                      ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300'
+                      : 'bg-rose-950/30 border-rose-500/40 text-rose-300';
+
+                  const badgeText =
+                    detail === 'WIN_HALF'
+                      ? '【赢半】'
+                      : detail === 'PUSH'
+                      ? '【走盘】'
+                      : detail === 'LOSE_HALF'
+                      ? '【输半】'
+                      : isHit
+                      ? '【赢盘】'
+                      : '【输盘】';
+
+                  return (
+                    <div className={`p-3 rounded-lg border flex items-center justify-between ${styleClass}`}>
+                      <div>
+                        <div className="text-[10px] text-slate-400">让球盘预判</div>
+                        <div className="font-bold text-xs mt-0.5">
+                          {latestReviewResult.priorReport.decision.handicapPick}
+                        </div>
+                      </div>
+                      <div className="text-lg font-black font-mono">
+                        {badgeText}
+                      </div>
                     </div>
-                  </div>
-                  <div className="text-lg font-black font-mono">
-                    {latestReviewResult.outcomeEvaluation.handicapHit ? '【红】' : '【黑】'}
-                  </div>
-                </div>
+                  );
+                })()}
 
                 {/* 3. Over/Under */}
                 <div className={`p-3 rounded-lg border flex items-center justify-between ${
@@ -3911,15 +3935,41 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                                       >
                                         胜平负: {rev.outcomeEvaluation.euroHit ? '命中' : '失准'}
                                       </span>
-                                      <span
-                                        className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                          rev.outcomeEvaluation.handicapHit
-                                            ? 'bg-emerald-500/20 text-emerald-300'
-                                            : 'bg-rose-500/20 text-rose-300'
-                                        }`}
-                                      >
-                                        让球: {rev.outcomeEvaluation.handicapHit ? '赢盘' : '输盘'}
-                                      </span>
+                                      {(() => {
+                                        const detail = rev.outcomeEvaluation?.handicapDetail;
+                                        if (detail === 'WIN_HALF') {
+                                          return (
+                                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                                              让球: 赢半
+                                            </span>
+                                          );
+                                        }
+                                        if (detail === 'PUSH') {
+                                          return (
+                                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                                              让球: 走盘
+                                            </span>
+                                          );
+                                        }
+                                        if (detail === 'LOSE_HALF') {
+                                          return (
+                                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                              让球: 输半
+                                            </span>
+                                          );
+                                        }
+                                        return (
+                                          <span
+                                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                              rev.outcomeEvaluation?.handicapHit
+                                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                                : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                            }`}
+                                          >
+                                            让球: {rev.outcomeEvaluation?.handicapHit ? '赢盘' : '输盘'}
+                                          </span>
+                                        );
+                                      })()}
                                       <span
                                         className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                                           rev.outcomeEvaluation.overUnderHit

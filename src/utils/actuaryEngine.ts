@@ -512,9 +512,9 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 3. 大小球与北单去水联动维度：${metrics.overUnderVerdict}。若配合让负去水或受让赔率持续走低，下盘 ${receivingTeam} 爆冷不败甚至客胜独赢形态已彻底确立。`;
 
       // 梯次星级精算：
-      // 只有真实的欧赔断崖跳涨 (favEuroJump >= 0.16) 配套亚指高水毒药 (givingOdds >= 2.04)，
-      // 或欧赔胜赔飙涨至 >= 2.05 (初盘 <= 1.76) 才是真正的5星顶级杀猪盘！
-      // 剔除多模型冲突杂音。
+      // 梯次星级精算：
+      // 杀猪盘属于【高赔逆向防冷】，客观打出率为博冷区间，绝不可滥发“5星稳胆”！
+      // 极端高赔杀猪盘（欧指断崖跳涨且高水实锤）定为“4星重点防冷”；常规杀猪盘定为“3星博冷”。
       const earlyEuroFav = isHomeGiving ? data.euroOdds.earlyWin : data.euroOdds.earlyLoss;
       const favEuroJump = givingEuroLate - earlyEuroFav;
       const isExtremeTrap =
@@ -524,20 +524,20 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
         (givingEuroLate >= 2.05 && earlyEuroFav <= 1.76);
 
       if (isExtremeTrap) {
-        starRating = 5;
-        confidenceReason = `让步方（${givingTeam}）欧赔断崖暴涨、亚指死卡满水出货，大热必死，反选5星顶级杀猪盘。`;
-      } else {
         starRating = 4;
-        confidenceReason = `让步方（${givingTeam}）高水利诱筹码，存在明显诱上出货痕迹，反选下盘4星重点防冷。`;
+        confidenceReason = `让步方（${givingTeam}）欧赔断崖暴涨、亚指死卡满水出货，大热必死，反选4星重点防冷杀猪盘。`;
+      } else {
+        starRating = 3;
+        confidenceReason = `让步方（${givingTeam}）高水利诱筹码，存在明显诱上出货痕迹，反选下盘3星博弈防冷。`;
       }
 
       if (isHomeGiving) {
-        euroPick = '让球负 (客胜/平 双重保险)';
+        euroPick = '平 / 负 (客胜/平 双重保险)';
         handicapPick = `下盘 ${awayTeam} (+${handicapGoals}受让)`;
         finalDirection = `【推荐方向】：客队（下盘 ${awayTeam} +${handicapGoals}受让）坚决反选`;
         finalDirectionDetail = `竞彩/盘口：让球客胜（客队受让赢盘） / 重点防平局客胜爆大冷（0-1、1-2、1-1）；坚决不碰主队上盘毒药满水。`;
       } else if (isAwayGiving) {
-        euroPick = '让球胜 (主胜/平 双重保险)';
+        euroPick = '胜 / 平 (主胜/平 双重保险)';
         handicapPick = `下盘 ${homeTeam} (+${handicapGoals}受让)`;
         finalDirection = `【推荐方向】：主队（下盘 ${homeTeam} +${handicapGoals}受让）坚决反选`;
         finalDirectionDetail = `竞彩/盘口：让球主胜（主队受让赢盘） / 重点防主队爆冷不败（1-0、2-1、1-1）；坚决不碰客队上盘毒药满水。`;
@@ -566,7 +566,7 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 2. 欧赔走势维度：让步方欧指大幅抬高，平赔低压或受让方胜赔暴跌，欧赔异动彻底证伪了早盘对让步方的信心。
 3. 大小球联动维度：${metrics.overUnderVerdict}。进球数防线伴随胜负盘同步收缩，反映出让球方在进攻端存在难以弥补的硬伤。`;
 
-      // 梯次星级精算：深度雪崩（跨两档 >=0.5）或欧赔让步方飙涨 >=0.25 为5星顶级防冷；常规退盘为4星防冷档
+      // 梯次星级精算：深度雪崩属于防冷保护，定为4星重点防冷；常规退盘定为3星常规博冷
       const earlyHandicapVal = parseHandicapValue(data.asianHandicap.earlyHandicap);
       const favEuroJump = isHomeGiving
         ? data.euroOdds.lateWin - data.euroOdds.earlyWin
@@ -574,11 +574,11 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
       const isDeepAvalanche = Math.abs(lateHandicapNum - earlyHandicapVal) >= 0.5 || favEuroJump >= 0.25;
 
       if (isDeepAvalanche) {
-        starRating = 5;
-        confidenceReason = `临场让球方防线深度崩溃退盘，机构彻底弃守，反选下盘5星顶级防冷。`;
-      } else {
         starRating = 4;
-        confidenceReason = `临场让球方退盘升水，核心利空坐实，跟退盘4星重点防冷。`;
+        confidenceReason = `临场让球方防线深度崩溃退盘，机构彻底弃守，反选下盘4星重点防冷。`;
+      } else {
+        starRating = 3;
+        confidenceReason = `临场让球方退盘升水，核心利空坐实，跟退盘3星常规博冷。`;
       }
 
       if (isHomeGiving) {
@@ -605,21 +605,22 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 2. 欧赔走势维度：平赔 ${lateDraw.toFixed(2)} 异常低企，凯利指数在平局上形成牢不可破的安全垫，主胜与客胜均缺乏绝对防范价值。
 3. 大小球联动维度：${metrics.overUnderVerdict}。与平局模型最契合的比分多为小球对峙。`;
 
-      // 梯次星级精算：平赔 <= 2.88 且 亚盘为平手/平半 为5星绝对胆平防御；2.89~3.10 为4星防冷防平档
+      // 梯次星级精算：平局属于高赔博弈，单挑平局绝不可打为5星稳胆！
+      // 平赔 <= 2.88 定为4星双选防冷；2.89~3.10 为3星博弈平局
       if (lateDraw <= 2.88 && Math.abs(lateHandicapNum) <= 0.25) {
-        starRating = 5;
-        confidenceReason = `主流欧指平赔死压至 ${lateDraw.toFixed(2)} 极度防御区，两端分流打掩护，5星绝对胆平防御。`;
-      } else {
         starRating = 4;
-        confidenceReason = `平赔压制在 ${lateDraw.toFixed(2)} 低位防御带，两端胶着严防平局，4星防冷防平。`;
+        confidenceReason = `主流欧指平赔死压至 ${lateDraw.toFixed(2)} 极度防御区，两端分流打掩护，4星双选防冷胆平。`;
+      } else {
+        starRating = 3;
+        confidenceReason = `平赔压制在 ${lateDraw.toFixed(2)} 低位防御带，两端胶着严防平局，3星博弈平局。`;
       }
 
       if (isHomeGiving) {
-        euroPick = starRating === 5 ? '平局 / 让球负 (首选胆平，客队受让不败)' : '平局 / 让球负';
+        euroPick = '主胜 / 平 (防冷首选平，主队保平争胜)';
       } else if (isAwayGiving) {
-        euroPick = starRating === 5 ? '平局 / 让球胜 (首选胆平，主队受让不败)' : '平局 / 让球胜';
+        euroPick = '平 / 客胜 (防冷首选平，客队保平争胜)';
       } else {
-        euroPick = '平局 / 独赢双选 (首选胆平 1-1/0-0)';
+        euroPick = '平局 / 让球双选 (首选胆平 1-1/0-0)';
       }
       handicapPick = `下盘 ${receivingTeam} (+${handicapGoals || 0.25}/平手)`;
       finalDirection = `【推荐方向】：首选平局（胆平 / 下盘受让平局），次选小球`;
@@ -636,13 +637,13 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 2. 欧赔走势维度：让步方欧赔居高不下，与两队真实战力严重脱节，受让方不败概率被严重低估。
 3. 大小球联动维度：${metrics.overUnderVerdict}。`;
 
-      // 梯次星级精算：浅盘满水天然为“4星重点防冷档”；当水位达到 >=2.08 且欧指让步方无力 (givingEuroLate >= 2.05) 时晋级为5星顶级冷门
+      // 梯次星级精算：浅盘满水为博冷策略，高危盘定为4星重点防冷，常规为3星博冷
       if (givingOdds >= 2.08 && givingEuroLate >= 2.05) {
-        starRating = 5;
-        confidenceReason = `强队（${givingTeam}）浅盘死卡 ${givingOdds.toFixed(2)} 毒药超高水，欧指毫无支撑，5星必杀冷门下盘。`;
-      } else {
         starRating = 4;
-        confidenceReason = `强队（${givingTeam}）浅盘挂 ${givingOdds.toFixed(2)} 满水，阻力不足买得舒服必有诈，4星重点防冷坚决走下盘。`;
+        confidenceReason = `强队（${givingTeam}）浅盘死卡 ${givingOdds.toFixed(2)} 毒药超高水，欧指毫无支撑，4星必杀冷门下盘。`;
+      } else {
+        starRating = 3;
+        confidenceReason = `强队（${givingTeam}）浅盘挂 ${givingOdds.toFixed(2)} 满水，阻力不足买得舒服必有诈，3星重点防冷走下盘。`;
       }
 
       if (isHomeGiving) {
@@ -682,6 +683,7 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
 
       if (lateHandicapNum === 0) {
         // 平手均势盘
+        starRating = 3;
         if (lateWin <= lateLoss) {
           euroPick = '主胜 / 平';
           handicapPick = `平手盘 ${homeTeam} (0 / 保平争胜)`;
@@ -693,25 +695,29 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
           finalDirection = `【推荐方向】：客队（平手盘 ${awayTeam} 0）及客队不败`;
           finalDirectionDetail = `竞彩/盘口：均势平手盘，欧赔客队稍占上风，首选客队保平争胜。`;
         }
-        confidenceReason = '平手均势盘型，结合欧指倾向首选低赔保平争胜。';
+        confidenceReason = '平手均势盘型，结合欧指倾向首选低赔保平争胜，3星常规博弈。';
       } else if (lateHandicapNum < 0) {
         // 主队让球 (Home gives handicap)
         const goalCount = Math.abs(lateHandicapNum);
 
         if (goalCount <= 0.75) {
-          // 浅盘区间 (0.25, 0.5, 0.75): 胜负与让球方向必须绝对一致，杜绝“主胜+受让下盘”荒谬倒挂
+          // 浅盘区间 (0.25, 0.5, 0.75)
           if (lateWin <= lateLoss && lateHomeOdds <= 1.95) {
+            starRating = lateWin <= 1.85 && lateHomeOdds <= 1.90 ? 4 : 3;
             euroPick = '主胜 / 平';
             handicapPick = `上盘 ${homeTeam} (-${goalCount}让球)`;
             finalDirection = `【推荐方向】：主队（上盘 ${homeTeam} -${goalCount}）及主胜保平争胜`;
             finalDirectionDetail = `浅让区间（-${goalCount}），主队胜面占优且让步门槛合理，首选主队上盘顺势打出。`;
-            confidenceReason = `主让浅盘（-${goalCount}），欧亚顺路支持主队，首选上盘。`;
+            confidenceReason = starRating === 4
+              ? `主让浅盘（-${goalCount}）欧亚顺向支撑，双选主胜保平争胜胜率稳固，4星稳健档。`
+              : `主让浅盘（-${goalCount}），欧亚顺路支持主队，首选上盘。`;
           } else {
+            starRating = 3;
             euroPick = '平 / 负 (客队受让不败)';
             handicapPick = `下盘 ${awayTeam} (+${goalCount}受让)`;
             finalDirection = `【推荐方向】：客队（下盘 ${awayTeam} +${goalCount}受让）`;
             finalDirectionDetail = `主让浅盘（-${goalCount}）水位阻力偏高或欧赔离散，防范冷平或客胜爆冷，首选客队下盘受让不败。`;
-            confidenceReason = `主让浅盘水位承压，受让方 (+${goalCount}) 具备安全垫。`;
+            confidenceReason = `主让浅盘水位承压，受让方 (+${goalCount}) 具备安全垫，3星博弈防冷。`;
           }
         } else {
           // 深盘区间 (>= 1.0): 存在净胜1球但输盘/走盘的可能，支持合理对冲精算
@@ -721,14 +727,29 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
           const isStrongEuroBlowout = lateWin <= 1.35 && lateHomeOdds <= 1.98;
 
           if (lateHomeOdds <= 1.85 || isStrongEuroBlowout || (isHomeUpLine && lateHomeOdds <= 1.98) || (isHighGoalDeep && lateWin <= 1.45 && lateHomeOdds <= 1.96)) {
+            starRating = lateWin <= 1.35 ? 5 : 4;
             euroPick = '主胜 (稳选)';
             handicapPick = `上盘 ${homeTeam} (-${goalCount}让球)`;
             finalDirection = `【推荐方向】：主队（上盘 ${homeTeam} -${goalCount}让球）`;
             finalDirectionDetail = (isHomeUpLine || isStrongEuroBlowout)
               ? `主让深盘（-${goalCount}）机构通过升盘提高门槛阻上，欧指持续低压砸盘，首选上盘穿盘大胜。`
               : `主让深盘（-${goalCount}）配以低水控赔，主队实力占优，首选上盘穿盘大胜。`;
-            confidenceReason = `深盘低水/欧指深度支撑机构有效控水，看好主队穿盘。`;
+            confidenceReason = starRating === 5
+              ? `豪门深让（欧指${lateWin.toFixed(2)}）穿盘实力突出，正路高胜率穿盘稳胆，5星顶级稳胆。`
+              : `深盘低水/欧指深度支撑机构有效控水，看好主队穿盘，4星优质胆。`;
           } else {
+            // 深让步对冲模式（主胜独赢 + 亚指下盘受让防 1 球小胜）
+            if (lateWin <= 1.30) {
+              starRating = 5;
+              confidenceReason = `豪门极深让步（欧指${lateWin.toFixed(2)}），独赢胜率极高，结合亚指受让防1球小胜双重保险，5星顶级对冲稳胆。`;
+            } else if (lateWin <= 1.48) {
+              starRating = 4;
+              confidenceReason = `深盘让步主队实力稳健，独赢主胜结合受让下盘防小胜对冲，4星核心对冲稳胆。`;
+            } else {
+              starRating = 3;
+              confidenceReason = `深让步存在小胜赢球输盘风险，采用主胜独赢+受让下盘对冲精算，3星博弈对冲。`;
+            }
+
             euroPick = '主胜独赢 (防1球小胜)';
             handicapPick = `下盘 ${awayTeam} (+${goalCount}受让)`;
             finalDirection = `【推荐方向】：双向对冲（竞彩主胜独赢 + 亚指下盘 ${awayTeam} +${goalCount}受让）`;
@@ -739,7 +760,6 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
             } else {
               finalDirectionDetail = `【操盘精算对冲】：胜平负维度主队实力更强（首选主胜独赢）；但亚盘主让${goalCount}球门槛过深（净胜1球上盘全输）。实战严防主队控场经济型小胜，因此让球端首选下盘受让方 (+${goalCount}) 赢盘对冲！`;
             }
-            confidenceReason = `深让步存在小胜赢球输盘风险，采用主胜独赢+受让下盘对冲精算。`;
           }
         }
       } else {
@@ -749,17 +769,21 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
         if (goalCount <= 0.75) {
           // 客让浅盘区间 (0.25, 0.5, 0.75)
           if (lateLoss <= lateWin && lateAwayOdds <= 1.95) {
+            starRating = lateLoss <= 1.85 && lateAwayOdds <= 1.90 ? 4 : 3;
             euroPick = '客胜 / 平 (客队不败)';
             handicapPick = `上盘 ${awayTeam} (-${goalCount}客让)`;
             finalDirection = `【推荐方向】：客队（上盘 ${awayTeam} -${goalCount}客让）`;
             finalDirectionDetail = `客让浅盘（-${goalCount}）门槛合理，客队战力占优，首选客队上盘打出。`;
-            confidenceReason = `客让浅盘欧亚顺向支持客队，首选客让上盘。`;
+            confidenceReason = starRating === 4
+              ? `客让浅盘欧亚同向支撑，双选客胜保平争胜胜率稳固，4星稳健档。`
+              : `客让浅盘欧亚顺向支持客队，首选客让上盘。`;
           } else {
+            starRating = 3;
             euroPick = '胜 / 平 (主队不败)';
             handicapPick = `下盘 ${homeTeam} (+${goalCount}受让)`;
             finalDirection = `【推荐方向】：主队（下盘 ${homeTeam} +${goalCount}受让）`;
             finalDirectionDetail = `客队浅让阻力不足且水位承压，主场优势凸显，首选主队受让不败。`;
-            confidenceReason = `客让浅盘水位不稳，主队受让具备不败安全垫。`;
+            confidenceReason = `客让浅盘水位不稳，主队受让具备不败安全垫，3星博弈防冷。`;
           }
         } else {
           // 客让深盘区间 (>= 1.0)
@@ -769,14 +793,29 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
           const isStrongEuroBlowout = lateLoss <= 1.35 && lateAwayOdds <= 1.98;
 
           if (lateAwayOdds <= 1.85 || isStrongEuroBlowout || (isAwayUpLine && lateAwayOdds <= 1.98) || (isHighGoalDeep && lateLoss <= 1.45 && lateAwayOdds <= 1.96)) {
+            starRating = lateLoss <= 1.35 ? 5 : 4;
             euroPick = '客胜 (稳选)';
             handicapPick = `上盘 ${awayTeam} (-${goalCount}客让)`;
             finalDirection = `【推荐方向】：客队（上盘 ${awayTeam} -${goalCount}客让）`;
             finalDirectionDetail = (isAwayUpLine || isStrongEuroBlowout)
               ? `客让深盘（-${goalCount}）机构通过升盘提高门槛阻上，欧指持续低压砸盘，首选客让上盘穿盘大胜。`
               : `客让深盘（-${goalCount}）低水控赔，客队战力碾压，首选客队穿盘大胜。`;
-            confidenceReason = `客让深盘低水/欧指深度支撑机构有效控水，看好客队穿盘。`;
+            confidenceReason = starRating === 5
+              ? `客让深盘欧指极低（${lateLoss.toFixed(2)}），正路穿盘稳胆，5星顶级稳胆。`
+              : `客让深盘低水/欧指深度支撑机构有效控水，看好客队穿盘，4星优质胆。`;
           } else {
+            // 客让深盘对冲
+            if (lateLoss <= 1.30) {
+              starRating = 5;
+              confidenceReason = `客让极深让步（欧指${lateLoss.toFixed(2)}），客胜独赢稳胆结合主队受让防小胜对冲，5星顶级对冲稳胆。`;
+            } else if (lateLoss <= 1.48) {
+              starRating = 4;
+              confidenceReason = `客让深盘客队实力明显占优，客胜独赢结合主队受让防小胜对冲，4星核心对冲稳胆。`;
+            } else {
+              starRating = 3;
+              confidenceReason = `客让深盘存在小胜赢球输盘风险，采用客胜独赢+主队受让下盘对冲精算，3星博弈对冲。`;
+            }
+
             euroPick = '客胜独赢 (防1球小胜)';
             handicapPick = `下盘 ${homeTeam} (+${goalCount}受让)`;
             finalDirection = `【推荐方向】：双向对冲（竞彩客胜独赢 + 亚指下盘 ${homeTeam} +${goalCount}受让）`;
@@ -787,7 +826,6 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
             } else {
               finalDirectionDetail = `【操盘精算对冲】：胜平负维度客队赢面大（首选客胜独赢）；但客让${goalCount}球门槛过深（净胜1球客让全输）。实战严防客队控场1球小胜赢球输盘，让球端首选主队受让 (+${goalCount})！`;
             }
-            confidenceReason = `客让深盘存在小胜赢球输盘风险，采用客胜独赢+主队受让下盘对冲精算。`;
           }
         }
       }

@@ -198,11 +198,13 @@ export interface PostMatchReview {
   // Evaluation results
   outcomeEvaluation: {
     euroHit: boolean;            // 胜平负命中
-    handicapHit: boolean;        // 让球赢盘
+    handicapHit: boolean;        // 让球赢盘 (包含赢全、赢半、走盘保本)
     overUnderHit: boolean;       // 大小球命中
     scoreHit: boolean;           // 比分命中
     modelVerified: boolean;      // 操盘手意图是否得到印证
     summaryNote: string;
+    handicapDetail?: 'WIN' | 'WIN_HALF' | 'PUSH' | 'LOSE_HALF' | 'LOSE'; // 赢全 / 赢半 / 走盘 / 输半 / 输盘
+    handicapDetailLabel?: string; // e.g. "赢盘" | "赢半" | "走盘" | "输半" | "输盘"
   };
 
   // Actuarial Dissection & Core Lesson

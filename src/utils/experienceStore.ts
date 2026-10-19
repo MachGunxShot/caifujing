@@ -1486,24 +1486,40 @@ export function getPostMatchReviews(): PostMatchReview[] {
           const goalDiff = hScore - aScore;
           const actualEuroOutcome = goalDiff > 0 ? 'WIN' : goalDiff === 0 ? 'DRAW' : 'LOSS';
 
-          cal.outcomeEvaluation.euroHit = evaluateEuroHit(
+          const newEuroHit = evaluateEuroHit(
             cal.priorReport.decision?.euroPick || '',
             actualEuroOutcome
           );
-          cal.outcomeEvaluation.handicapHit = evaluateHandicapHit(
+          const hdcRes = evaluateHandicapDetailedOutcome(
             cal.matchData,
             cal.priorReport,
             hScore,
             aScore
           );
-          cal.outcomeEvaluation.overUnderHit = evaluateOverUnderHit(
+          const newOverUnderHit = evaluateOverUnderHit(
             cal.matchData.overUnder.lateLine,
             cal.priorReport.decision?.overUnderPick || '',
             hScore,
             aScore
           );
-          cal.outcomeEvaluation.modelVerified =
-            cal.outcomeEvaluation.euroHit && cal.outcomeEvaluation.handicapHit;
+          const newModelVerified = newEuroHit && hdcRes.hit;
+
+          if (
+            cal.outcomeEvaluation.euroHit !== newEuroHit ||
+            cal.outcomeEvaluation.handicapHit !== hdcRes.hit ||
+            cal.outcomeEvaluation.handicapDetail !== hdcRes.detail ||
+            cal.outcomeEvaluation.overUnderHit !== newOverUnderHit ||
+            cal.outcomeEvaluation.modelVerified !== newModelVerified
+          ) {
+            hasCalibrationChange = true;
+          }
+
+          cal.outcomeEvaluation.euroHit = newEuroHit;
+          cal.outcomeEvaluation.handicapHit = hdcRes.hit;
+          cal.outcomeEvaluation.handicapDetail = hdcRes.detail;
+          cal.outcomeEvaluation.handicapDetailLabel = hdcRes.detailLabel;
+          cal.outcomeEvaluation.overUnderHit = newOverUnderHit;
+          cal.outcomeEvaluation.modelVerified = newModelVerified;
         }
 
         // Deduplicate key: home vs away + salesDate + actual score
@@ -1709,10 +1725,124 @@ export function evaluateOverUnderHit(
   return false;
 }
 
+export interface HandicapOutcomeDetail {
+  hit: boolean;
+  detail: 'WIN' | 'WIN_HALF' | 'PUSH' | 'LOSE_HALF' | 'LOSE';
+  detailLabel: '赢盘' | '赢半' | '走盘' | '输半' | '输盘';
+  effectiveDiff: number;
+  pickedSide: 'HOME' | 'AWAY';
+  handicapLineApplied: number;
+}
+
 /**
- * Rigorously evaluates whether the Asian Handicap prediction hit (won/covered the spread).
- * Handles all cases: Home giving, Away giving (客让), and Flat (平手盘).
- * Correctly treats handicap pushes (走盘/走水保本) as capital preservation.
+ * Rigorously evaluates Asian Handicap outcomes, accurately distinguishing:
+ * - 赢全 (WIN): effDiff > 0.25 (e.g. +0.5, +0.75, +1.0...) -> hit = true
+ * - 赢半 (WIN_HALF): effDiff === +0.25 -> hit = true (赢得一半水位分红，实战红单盈利)
+ * - 走盘 (PUSH): effDiff === 0 -> hit = true (走水退本保本)
+ * - 输半 (LOSE_HALF): effDiff === -0.25 -> hit = false (输掉一半本金)
+ * - 输全 (LOSE): effDiff < -0.25 (e.g. -0.5, -0.75, -1.0...) -> hit = false
+ */
+export function evaluateHandicapDetailedOutcome(
+  matchData: FullMatchData,
+  priorReport: AnalysisReportResult,
+  actualHomeScore: number,
+  actualAwayScore: number
+): HandicapOutcomeDetail {
+  const homeTeam = matchData.matchInfo?.homeTeam || '';
+  const awayTeam = matchData.matchInfo?.awayTeam || '';
+  const predictedHandicap = (priorReport.decision?.handicapPick || '').trim();
+
+  const normHome = homeTeam.replace(/\s+/g, '').toLowerCase();
+  const normAway = awayTeam.replace(/\s+/g, '').toLowerCase();
+  const normPred = predictedHandicap.replace(/\s+/g, '').toLowerCase();
+
+  const lateHandicapStr = (matchData.asianHandicap?.lateHandicap || '').trim();
+  const parsedHandicapVal = parseHandicapValue(lateHandicapStr);
+
+  // 1. Determine which team the prediction picked
+  // Team name matches take absolute top priority!
+  let pickedSide: 'HOME' | 'AWAY' = 'HOME';
+  const mentionsHome = Boolean(normHome && normPred.includes(normHome));
+  const mentionsAway = Boolean(normAway && normPred.includes(normAway));
+
+  if (mentionsHome && !mentionsAway) {
+    pickedSide = 'HOME';
+  } else if (mentionsAway && !mentionsHome) {
+    pickedSide = 'AWAY';
+  } else if (normPred.includes('客队') || normPred.includes('客让')) {
+    pickedSide = 'AWAY';
+  } else if (normPred.includes('主队') || normPred.includes('主让')) {
+    pickedSide = 'HOME';
+  } else {
+    // If neither or both team names are mentioned, look at 上盘 (favorite) vs 下盘 (underdog)
+    const isAwayGiving =
+      parsedHandicapVal > 0 ||
+      lateHandicapStr.includes('客让') ||
+      lateHandicapStr.includes('受让') ||
+      lateHandicapStr.includes('受');
+    const isHomeGiving = parsedHandicapVal < 0 || lateHandicapStr.includes('主让');
+    const homeIsFav = isHomeGiving || (!isAwayGiving && (matchData.euroOdds?.lateWin || 2.5) <= (matchData.euroOdds?.lateLoss || 2.5));
+
+    if (normPred.includes('上盘')) {
+      pickedSide = homeIsFav ? 'HOME' : 'AWAY';
+    } else if (normPred.includes('下盘')) {
+      pickedSide = homeIsFav ? 'AWAY' : 'HOME';
+    } else if (normPred.includes('客')) {
+      pickedSide = 'AWAY';
+    } else {
+      pickedSide = 'HOME';
+    }
+  }
+
+  // 2. Determine Handicap H applied to the pickedSide
+  let H = 0;
+  // Check if prediction text explicitly specifies a signed handicap (e.g. (+0.25/平手), (+1.25受让), (-1.75让球))
+  const explicitSigned = predictedHandicap.match(/\(\s*([+-]\d+(?:\.\d+)?)/);
+  if (explicitSigned) {
+    H = parseFloat(explicitSigned[1]) || 0;
+  } else {
+    // Fallback: derive handicap from lateHandicapStr
+    // Convention in parseHandicapValue: negative (<0) means Home gives, positive (>0) means Home receives
+    const homeH = parsedHandicapVal;
+    H = pickedSide === 'HOME' ? homeH : -homeH;
+  }
+
+  const goalsPicked = pickedSide === 'HOME' ? actualHomeScore : actualAwayScore;
+  const goalsOpponent = pickedSide === 'HOME' ? actualAwayScore : actualHomeScore;
+  const netGoals = goalsPicked - goalsOpponent;
+  const effDiff = netGoals + H;
+
+  let detail: 'WIN' | 'WIN_HALF' | 'PUSH' | 'LOSE_HALF' | 'LOSE' = 'LOSE';
+  let detailLabel: '赢盘' | '赢半' | '走盘' | '输半' | '输盘' = '输盘';
+  let hit = false;
+
+  if (effDiff > 0.25 + 0.001) {
+    detail = 'WIN';
+    detailLabel = '赢盘';
+    hit = true;
+  } else if (Math.abs(effDiff - 0.25) < 0.001) {
+    detail = 'WIN_HALF';
+    detailLabel = '赢半';
+    hit = true;
+  } else if (Math.abs(effDiff) < 0.001) {
+    detail = 'PUSH';
+    detailLabel = '走盘';
+    hit = true;
+  } else if (Math.abs(effDiff - (-0.25)) < 0.001) {
+    detail = 'LOSE_HALF';
+    detailLabel = '输半';
+    hit = false;
+  } else {
+    detail = 'LOSE';
+    detailLabel = '输盘';
+    hit = false;
+  }
+
+  return { hit, detail, detailLabel, effectiveDiff: effDiff, pickedSide, handicapLineApplied: H };
+}
+
+/**
+ * Rigorously evaluates whether the Asian Handicap prediction hit (won/covered the spread, including win half & push).
  */
 export function evaluateHandicapHit(
   matchData: FullMatchData,
@@ -1720,97 +1850,7 @@ export function evaluateHandicapHit(
   actualHomeScore: number,
   actualAwayScore: number
 ): boolean {
-  const homeTeam = matchData.matchInfo?.homeTeam || '';
-  const awayTeam = matchData.matchInfo?.awayTeam || '';
-  const predictedHandicap = (priorReport.decision?.handicapPick || '').trim();
-
-  const normHome = homeTeam.trim().toLowerCase();
-  const normAway = awayTeam.trim().toLowerCase();
-  const normPred = predictedHandicap.toLowerCase();
-
-  const lateHandicapStr = (matchData.asianHandicap?.lateHandicap || '').trim();
-  const parsedHandicapVal = parseHandicapValue(lateHandicapStr);
-
-  // Who is giving handicap?
-  let isAwayGiving =
-    parsedHandicapVal > 0 ||
-    lateHandicapStr.includes('客让') ||
-    lateHandicapStr.includes('受让') ||
-    lateHandicapStr.includes('受') ||
-    normPred.includes('客让');
-
-  let isHomeGiving =
-    parsedHandicapVal < 0 ||
-    lateHandicapStr.includes('主让') ||
-    normPred.includes('主让');
-
-  if (normPred.includes('客让')) {
-    isAwayGiving = true;
-    isHomeGiving = false;
-  } else if (normPred.includes('主让')) {
-    isHomeGiving = true;
-    isAwayGiving = false;
-  }
-
-  // Extract numerical handicap goals magnitude H (>= 0)
-  let handicapGoals = Math.abs(parsedHandicapVal);
-  if (handicapGoals === 0) {
-    const matchLine = normPred.match(/[-+]?(\d+(?:\.\d+)?)/);
-    if (matchLine) {
-      handicapGoals = parseFloat(matchLine[1]) || 0;
-    }
-  }
-
-  // Determine which side the prediction picked:
-  // High-conviction keywords '上盘' (favorite) and '下盘' (underdog) take first priority
-  let pickedSide: 'HOME' | 'AWAY' = 'HOME';
-  if (normPred.includes('上盘')) {
-    pickedSide = isAwayGiving ? 'AWAY' : 'HOME';
-  } else if (normPred.includes('下盘')) {
-    pickedSide = isAwayGiving ? 'HOME' : 'AWAY';
-  } else if (normAway && normPred.includes(normAway)) {
-    pickedSide = 'AWAY';
-  } else if (normHome && normPred.includes(normHome)) {
-    pickedSide = 'HOME';
-  } else if (normPred.includes('客')) {
-    pickedSide = 'AWAY';
-  } else if (normPred.includes('主')) {
-    pickedSide = 'HOME';
-  }
-
-  // Evaluate outcome based on actual score and handicap line
-  if (isAwayGiving) {
-    // Away gives handicapGoals to Home
-    const awayLead = actualAwayScore - actualHomeScore;
-    const diff = awayLead - handicapGoals;
-    // Push (走盘): net lead exactly equals handicap -> capital preserved
-    if (Math.abs(diff) < 0.001) return true;
-
-    if (pickedSide === 'AWAY') {
-      return diff > 0; // Away beat the spread (穿盘 / 赢盘)
-    } else {
-      return diff < 0; // Home covered with +handicap
-    }
-  } else if (isHomeGiving) {
-    // Home gives handicapGoals to Away
-    const homeLead = actualHomeScore - actualAwayScore;
-    const diff = homeLead - handicapGoals;
-    // Push (走盘): net lead exactly equals handicap -> capital preserved
-    if (Math.abs(diff) < 0.001) return true;
-
-    if (pickedSide === 'HOME') {
-      return diff > 0; // Home beat the spread (穿盘 / 赢盘)
-    } else {
-      return diff < 0; // Away covered with +handicap
-    }
-  } else {
-    // Flat / Pick'em (平手 0)
-    if (actualHomeScore === actualAwayScore) {
-      // In flat handicap, draw returns stake (走盘退本)
-      return true;
-    }
-    return pickedSide === 'HOME' ? actualHomeScore > actualAwayScore : actualAwayScore > actualHomeScore;
-  }
+  return evaluateHandicapDetailedOutcome(matchData, priorReport, actualHomeScore, actualAwayScore).hit;
 }
 
 /**
@@ -1836,13 +1876,14 @@ export function evaluateMatchOutcomeAndExtractLesson(
   const predictedEuro = priorReport.decision.euroPick || '';
   const euroHit = evaluateEuroHit(predictedEuro, actualEuroOutcome);
 
-  // 2. Handicap Evaluation (亚指让球赢盘 / 走盘对冲保本)
-  const handicapHit = evaluateHandicapHit(
+  // 2. Handicap Evaluation (亚指让球赢盘 / 赢半 / 走盘对冲保本)
+  const handicapOutcome = evaluateHandicapDetailedOutcome(
     matchData,
     priorReport,
     actualHomeScore,
     actualAwayScore
   );
+  const handicapHit = handicapOutcome.hit;
 
   // 3. Over/Under Evaluation (大小球测谎联动)
   const overUnderHit = evaluateOverUnderHit(
@@ -1919,8 +1960,11 @@ export function evaluateMatchOutcomeAndExtractLesson(
       evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】平赔低洼/冷平防守验证`;
       evolvedRuleContent = `在 ${league} 类似对阵中（盘口 ${matchData.asianHandicap.lateHandicap}），机构平赔防守有效兑现，两头对冲下平局（完场 ${actualScoreStr}）具备极高防御价值。`;
     } else {
-      evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】强队赢球输盘/小胜卡盘修正法`;
-      evolvedRuleContent = `针对 ${league} 让步 ${matchData.asianHandicap.lateHandicap} 深盘，强队仅取得 1 球微弱优势（完场 ${actualScoreStr}），未能完成深盘穿盘，受让方【${underdogTeam}】赢盘守住底线。`;
+      const isShallow = Math.abs(lateHandicapNum) <= 0.5;
+      evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】${isShallow ? '常规博弈平局/受让守盘修正法' : '强队赢球输盘/小胜卡盘修正法'}`;
+      evolvedRuleContent = isShallow
+        ? `针对 ${league} 双方实力接近之胶着盘型（${matchData.asianHandicap.lateHandicap}），实战打出 ${actualScoreStr}，受让下盘【${underdogTeam}】守住盘面底线。`
+        : `针对 ${league} 让步 ${matchData.asianHandicap.lateHandicap} 深盘，强队仅取得 1 球微弱优势（完场 ${actualScoreStr}），未能完成深盘穿盘，受让方【${underdogTeam}】赢盘守住底线。`;
     }
   }
 
@@ -1952,6 +1996,8 @@ export function evaluateMatchOutcomeAndExtractLesson(
       scoreHit,
       modelVerified,
       summaryNote,
+      handicapDetail: handicapOutcome.detail,
+      handicapDetailLabel: handicapOutcome.detailLabel,
     },
     dissectionText,
     evolvedRuleTitle,
