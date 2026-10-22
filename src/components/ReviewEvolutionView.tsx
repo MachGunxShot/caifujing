@@ -45,6 +45,8 @@ import {
   AnalysisReportResult,
   PostMatchReview,
   EvolvedExperienceRule,
+  ParlayReviewRecord,
+  ParlayMatchSnapshot,
 } from '../types/fortuneActuary';
 import {
   getExperienceRules,
@@ -69,6 +71,12 @@ import {
   pruneZeroHitRules,
   repairInconsistentLanguageRules,
   syncAndPromoteReviewsToCoreRules,
+  getParlayReviews,
+  saveParlayReview,
+  deleteParlayReview,
+  clearAllParlayReviews,
+  autoExtractDailyParlayReviews,
+  evaluateParlaySettlement,
 } from '../utils/experienceStore';
 import { generateActuarialRuleReport } from '../utils/actuaryEngine';
 import { ParsedScoreItem, parseBatchMatchScoresFromText } from '../utils/textParser';
@@ -115,9 +123,16 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
   onUpdateQueue,
   onSelectMatch,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'review' | 'rules' | 'history'>('review');
-  const [rules, setRules] = useState<EvolvedExperienceRule[]>([]);
-  const [reviews, setReviews] = useState<PostMatchReview[]>([]);
+  const [activeSubTab, setActiveSubTab] = useState<'review' | 'rules' | 'history' | 'parlays'>('review');
+  const [rules, setRules] = useState<EvolvedExperienceRule[]>(() => getExperienceRules());
+  const [reviews, setReviews] = useState<PostMatchReview[]>(() => getPostMatchReviews());
+  const [parlayReviews, setParlayReviews] = useState<ParlayReviewRecord[]>(() => {
+    const revs = getPostMatchReviews();
+    return getParlayReviews().map((p) => evaluateParlaySettlement(p, revs));
+  });
+  const [parlayFilterStatus, setParlayFilterStatus] = useState<string>('ALL');
+  const [isExtractingParlays, setIsExtractingParlays] = useState(false);
+  const [parlayActionToast, setParlayActionToast] = useState<string | null>(null);
 
   // Review Form States (Single vs Batch)
   const [reviewEntryMode, setReviewEntryMode] = useState<'batch' | 'single'>('batch');
@@ -271,6 +286,97 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
       tier3: calcTier(3),
     };
   }, [reviews]);
+
+  // KPI statistics for 2-in-1 parlay historical battle reports
+  const parlayStats = useMemo(() => {
+    const total = parlayReviews.length;
+    if (total === 0) {
+      return {
+        total: 0,
+        settledCount: 0,
+        euroParlayHits: 0,
+        euroHitRate: 0,
+        handicapParlayHits: 0,
+        handicapHitRate: 0,
+        grandSlamCount: 0,
+        hedgeOrWinCount: 0,
+        hedgeOrWinRate: 0,
+        brokenCount: 0,
+      };
+    }
+    const settled = parlayReviews.filter((p) => p.settlementStatus !== 'PENDING');
+    const settledCount = settled.length;
+    const euroParlayHits = settled.filter((p) => p.euroParlayHit).length;
+    const handicapParlayHits = settled.filter((p) => p.handicapParlayHit).length;
+    const grandSlamCount = settled.filter((p) => p.isGrandSlam || p.settlementStatus === 'SETTLED_ALL_HIT').length;
+    const hedgeOrWinCount = settled.filter((p) =>
+      p.settlementStatus === 'SETTLED_ALL_HIT' ||
+      p.settlementStatus === 'SETTLED_PARLAY_HIT' ||
+      p.settlementStatus === 'SETTLED_HANDICAP_HIT' ||
+      p.settlementStatus === 'SETTLED_HEDGE_PUSH'
+    ).length;
+    const brokenCount = settled.filter((p) => p.settlementStatus === 'SETTLED_BROKEN').length;
+
+    return {
+      total,
+      settledCount,
+      euroParlayHits,
+      euroHitRate: settledCount > 0 ? Math.round((euroParlayHits / settledCount) * 100) : 0,
+      handicapParlayHits,
+      handicapHitRate: settledCount > 0 ? Math.round((handicapParlayHits / settledCount) * 100) : 0,
+      grandSlamCount,
+      hedgeOrWinCount,
+      hedgeOrWinRate: settledCount > 0 ? Math.round((hedgeOrWinCount / settledCount) * 100) : 0,
+      brokenCount,
+    };
+  }, [parlayReviews]);
+
+  // Auto-extract 2-in-1 parlays from single match reviews
+  const handleAutoExtractParlays = () => {
+    setIsExtractingParlays(true);
+    try {
+      const extracted = autoExtractDailyParlayReviews(reviews);
+      const evaluated = extracted.map((p) => evaluateParlaySettlement(p, reviews));
+      evaluated.forEach((p) => saveParlayReview(p));
+      const allParlays = getParlayReviews().map((p) => evaluateParlaySettlement(p, reviews));
+      setParlayReviews(allParlays);
+      setParlayActionToast(`⚡ 智能萃取完成：已根据历史销售日稳胆阵容萃取并生成 ${extracted.length} 期 2串1 战报！`);
+      setTimeout(() => setParlayActionToast(null), 6000);
+    } finally {
+      setIsExtractingParlays(false);
+    }
+  };
+
+  // Re-evaluate all parlays
+  const handleRefreshParlaySettlements = () => {
+    const currentRevs = getPostMatchReviews();
+    const currentParlays = getParlayReviews();
+    const updated = currentParlays.map((p) => evaluateParlaySettlement(p, currentRevs));
+    updated.forEach((p) => saveParlayReview(p));
+    setParlayReviews(updated);
+    setParlayActionToast('🔄 全量 2串1 方案赛果精算已刷新！');
+    setTimeout(() => setParlayActionToast(null), 4000);
+  };
+
+  // Delete single parlay
+  const handleDeleteParlay = (id: string) => {
+    if (window.confirm('确定要删除这期 2串1 战报吗？')) {
+      deleteParlayReview(id);
+      const currentRevs = getPostMatchReviews();
+      const updated = getParlayReviews().map((p) => evaluateParlaySettlement(p, currentRevs));
+      setParlayReviews(updated);
+    }
+  };
+
+  // Clear all parlays
+  const handleClearAllParlays = () => {
+    if (window.confirm('确定要清空全部 2串1 稳胆历史战报吗？（单场复盘与法则库不受影响）')) {
+      clearAllParlayReviews();
+      setParlayReviews([]);
+      setParlayActionToast('已清空全部 2串1 稳胆战报！');
+      setTimeout(() => setParlayActionToast(null), 4000);
+    }
+  };
 
   // Date formatting helper for YYYY-MM-DD grouping
   const formatDateInfo = (timestamp?: number) => {
@@ -1552,9 +1658,39 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           }`}
         >
           <RotateCcw className="w-3.5 h-3.5" />
-          <span>📊 历史复盘战报 ({reviews.length})</span>
+          <span>📊 单场历史战报 ({reviews.length})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('parlays')}
+          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            activeSubTab === 'parlays'
+              ? 'bg-amber-500 text-slate-950 shadow-md font-black'
+              : 'text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/30'
+          }`}
+        >
+          <Award className="w-3.5 h-3.5" />
+          <span>🎯 2串1 稳胆历史战报 ({parlayReviews.length})</span>
         </button>
       </div>
+
+      {/* Parlay Action Notification Banner */}
+      {parlayActionToast && (
+        <div className="p-3.5 bg-amber-500/15 border border-amber-500/40 rounded-xl text-xs text-amber-300 font-semibold flex items-center justify-between gap-3 shadow-lg animate-in fade-in">
+          <div className="flex items-center gap-2.5">
+            <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>{parlayActionToast}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setParlayActionToast(null)}
+            className="text-amber-400 hover:text-white text-xs px-2 py-0.5 cursor-pointer"
+          >
+            关闭
+          </button>
+        </div>
+      )}
 
       {/* Global Health Notification / Feedback Banner across all tabs */}
       {healthNotification && (
@@ -3138,6 +3274,34 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
             </div>
           ) : (
             <div className="space-y-4">
+              {/* Quick Sub-view Toggle between Single Reviews and 2-in-1 Parlay Reviews */}
+              <div className="flex items-center justify-between bg-slate-900 border border-slate-800 p-2.5 rounded-xl text-xs shadow-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400 text-[11px] font-bold">战报维度切换：</span>
+                  <button
+                    type="button"
+                    className="px-3 py-1 rounded-lg bg-emerald-500 text-slate-950 font-black text-xs shadow-sm flex items-center gap-1.5"
+                  >
+                    <span>📊 单场详细战报 ({reviews.length})</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveSubTab('parlays')}
+                    className="px-3 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 text-amber-400 hover:text-amber-300 border border-amber-500/30 font-bold text-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Award className="w-3.5 h-3.5 text-amber-400" />
+                    <span>🎯 2串1 稳胆历史战报 ({parlayReviews.length})</span>
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveSubTab('parlays')}
+                  className="text-amber-400 hover:text-amber-300 text-xs font-bold hidden sm:inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <span>查看 2串1 串关胜率与双胆大满贯 ➔</span>
+                </button>
+              </div>
+
               {/* Top Management Bar */}
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-md">
                 <div className="flex items-center gap-2.5">
@@ -4114,6 +4278,414 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                     );
                   })}
               </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ===================== SUBTAB 4: 2串1 稳胆复盘历史战报 ===================== */}
+      {activeSubTab === 'parlays' && (
+        <div className="space-y-4">
+          {/* Top Management Bar for 2串1 */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-md">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold">
+                <Award className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-extrabold text-white">
+                    《财富经》核心稳胆 · 2串1 复盘历史战报
+                  </h3>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-950 text-amber-400 border border-slate-800">
+                    累计归档 {parlayReviews.length} 期方案
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  严谨追踪每日星级最高、正向控赔稳胆实战配对 · 真实检验胜平负全红、让球赢盘及断单归因
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap">
+              <button
+                type="button"
+                disabled={isExtractingParlays || reviews.length < 2}
+                onClick={handleAutoExtractParlays}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 text-xs font-black transition-all shadow-sm cursor-pointer disabled:opacity-50"
+                title="依据历史单场复盘记录，按销售日自动提取星级最高、机构正向控赔的 2 场稳胆生成 2串1 战报"
+              >
+                {isExtractingParlays ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                    <span>萃取中...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5 text-slate-950" />
+                    <span>⚡ 从单场战报智能萃取 2串1</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleRefreshParlaySettlements}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-cyan-300 border border-cyan-500/30 text-xs font-bold transition-all cursor-pointer"
+                title="根据最新单场复盘赛果重新结算全量 2串1 方案"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
+                <span>刷新赛果结算</span>
+              </button>
+
+              {parlayReviews.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearAllParlays}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-bold transition-colors cursor-pointer"
+                  title="清空全部 2串1 历史战报"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                  <span>清空战报</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* KPI Statistics Dashboard for 2串1 */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            {/* Total */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 shadow-md">
+              <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                累计 2串1 方案数
+              </div>
+              <div className="text-xl font-black text-white mt-1 font-mono">
+                {parlayStats.total} <span className="text-xs text-slate-400 font-normal">期</span>
+              </div>
+              <div className="text-[10px] text-slate-400 mt-1">
+                已完赛结算: <span className="text-cyan-400 font-mono font-bold">{parlayStats.settledCount}</span> 期
+              </div>
+            </div>
+
+            {/* Euro Parlay Hit Rate */}
+            <div className="bg-slate-900 border border-emerald-500/30 rounded-xl p-3.5 shadow-md">
+              <div className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">
+                胜平负 2串1 全红率
+              </div>
+              <div className="text-xl font-black text-emerald-400 mt-1 font-mono">
+                {parlayStats.euroHitRate}%
+              </div>
+              <div className="text-[10px] text-slate-400 mt-1 font-mono">
+                红单: {parlayStats.euroParlayHits} / {parlayStats.settledCount || 0} 期
+              </div>
+            </div>
+
+            {/* Asian Handicap Hit Rate */}
+            <div className="bg-slate-900 border border-cyan-500/30 rounded-xl p-3.5 shadow-md">
+              <div className="text-[10px] text-cyan-400 font-bold uppercase tracking-wider">
+                让球 2串1 赢盘率
+              </div>
+              <div className="text-xl font-black text-cyan-400 mt-1 font-mono">
+                {parlayStats.handicapHitRate}%
+              </div>
+              <div className="text-[10px] text-slate-400 mt-1 font-mono">
+                赢盘: {parlayStats.handicapParlayHits} / {parlayStats.settledCount || 0} 期
+              </div>
+            </div>
+
+            {/* Grand Slam Count */}
+            <div className="bg-slate-900 border border-amber-500/30 rounded-xl p-3.5 shadow-md">
+              <div className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">
+                双胆大满贯全红期数
+              </div>
+              <div className="text-xl font-black text-amber-300 mt-1 font-mono">
+                {parlayStats.grandSlamCount} <span className="text-xs text-slate-400 font-normal">期</span>
+              </div>
+              <div className="text-[10px] text-amber-400/80 mt-1">
+                胜平负+让球均全红
+              </div>
+            </div>
+
+            {/* Hedge or Breakeven Rate */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 shadow-md col-span-2 sm:col-span-1">
+              <div className="text-[10px] text-slate-300 font-bold uppercase tracking-wider">
+                稳胆对冲保本率
+              </div>
+              <div className="text-xl font-black text-white mt-1 font-mono">
+                {parlayStats.hedgeOrWinRate}%
+              </div>
+              <div className="text-[10px] text-slate-400 mt-1 font-mono">
+                保本/赢盘: {parlayStats.hedgeOrWinCount} 期 (断单: {parlayStats.brokenCount})
+              </div>
+            </div>
+          </div>
+
+          {/* Filter Status Pills */}
+          <div className="flex items-center gap-1.5 flex-wrap bg-slate-900/80 p-2.5 rounded-xl border border-slate-800 text-xs">
+            <span className="text-slate-400 text-[11px] mr-1">结算过滤:</span>
+            {[
+              { id: 'ALL', label: `全部方案 (${parlayReviews.length})` },
+              { id: 'GRAND_SLAM', label: `双胆大满贯 (${parlayReviews.filter((p) => p.isGrandSlam).length})` },
+              { id: 'EURO_HIT', label: `胜平负全红 (${parlayReviews.filter((p) => p.euroParlayHit).length})` },
+              { id: 'HANDICAP_HIT', label: `让球赢盘 (${parlayReviews.filter((p) => p.handicapParlayHit).length})` },
+              { id: 'BROKEN', label: `断单归因 (${parlayReviews.filter((p) => p.settlementStatus === 'SETTLED_BROKEN').length})` },
+              { id: 'PENDING', label: `未完赛待办 (${parlayReviews.filter((p) => p.settlementStatus === 'PENDING').length})` },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setParlayFilterStatus(tab.id)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                  parlayFilterStatus === tab.id
+                    ? 'bg-amber-500 text-slate-950 shadow'
+                    : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Parlay Cards List */}
+          {parlayReviews.length === 0 ? (
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-12 text-center space-y-4">
+              <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mx-auto text-2xl font-black">
+                🎯
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-base font-bold text-white">暂未归档 2串1 稳胆实战方案</h4>
+                <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+                  您可以点击上方【⚡ 从单场战报智能萃取 2串1】一键按历史销售日提取方案，或在【批量决策大盘】顶部点击【💾 固化归档至 2串1 战报】！
+                </p>
+              </div>
+              {reviews.length >= 2 && (
+                <button
+                  type="button"
+                  onClick={handleAutoExtractParlays}
+                  className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/20 inline-flex items-center gap-2 cursor-pointer transition-all"
+                >
+                  <Sparkles className="w-4 h-4 text-slate-950" />
+                  <span>立即从现存 {reviews.length} 场单场复盘中智能萃取 2串1 战报</span>
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3.5">
+              {parlayReviews
+                .filter((p) => {
+                  if (parlayFilterStatus === 'GRAND_SLAM') return p.isGrandSlam;
+                  if (parlayFilterStatus === 'EURO_HIT') return p.euroParlayHit;
+                  if (parlayFilterStatus === 'HANDICAP_HIT') return p.handicapParlayHit;
+                  if (parlayFilterStatus === 'BROKEN') return p.settlementStatus === 'SETTLED_BROKEN';
+                  if (parlayFilterStatus === 'PENDING') return p.settlementStatus === 'PENDING';
+                  return true;
+                })
+                .map((parlay) => {
+                  const m1 = parlay.match1;
+                  const m2 = parlay.match2;
+
+                  return (
+                    <div
+                      key={parlay.id}
+                      className="bg-slate-900 border border-slate-800 hover:border-slate-750 rounded-xl p-4 shadow-lg space-y-3 transition-all"
+                    >
+                      {/* Card Header */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-950 text-cyan-400 border border-cyan-800/40">
+                            📅 销售日：{parlay.salesDate}
+                          </span>
+                          <h4 className="text-sm font-black text-white">
+                            {parlay.title}
+                          </h4>
+                          <span
+                            className={`px-2 py-0.5 rounded text-xs font-bold border ${
+                              parlay.settlementStatus === 'SETTLED_ALL_HIT'
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                                : parlay.settlementStatus === 'SETTLED_PARLAY_HIT'
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                                : parlay.settlementStatus === 'SETTLED_HANDICAP_HIT'
+                                ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50'
+                                : parlay.settlementStatus === 'SETTLED_HEDGE_PUSH'
+                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                                : parlay.settlementStatus === 'SETTLED_BROKEN'
+                                ? 'bg-rose-500/20 text-rose-300 border-rose-500/50'
+                                : 'bg-slate-800 text-slate-400 border-slate-700'
+                            }`}
+                          >
+                            {parlay.settlementBadge || '【⏳ 待结算】'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            {new Date(parlay.createdAt).toLocaleDateString('zh-CN')}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteParlay(parlay.id)}
+                            className="text-slate-500 hover:text-rose-400 p-1 cursor-pointer transition-colors"
+                            title="删除该期 2串1 战报"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Dual Matches Showcase */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {/* Match 1 */}
+                        <div
+                          className={`p-3 rounded-lg border space-y-2 ${
+                            m1.euroHit && m1.handicapHit
+                              ? 'bg-emerald-950/20 border-emerald-500/40'
+                              : m1.euroHit || m1.handicapHit
+                              ? 'bg-slate-950/90 border-cyan-500/30'
+                              : m1.finalScore
+                              ? 'bg-rose-950/20 border-rose-500/30'
+                              : 'bg-slate-950 border-slate-800'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              稳胆 1 ({m1.stars}★ {m1.modelTitle || m1.identifiedModel})
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              {m1.matchTime || '开赛时间'}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between">
+                            <span className="font-extrabold text-sm text-white">
+                              {m1.homeTeam} VS {m1.awayTeam}
+                            </span>
+                            <span className="font-mono font-black text-amber-400 text-sm">
+                              {m1.finalScore ? `完场 ${m1.finalScore}` : '⏳ 待开赛'}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-800/80">
+                            <div className="bg-slate-900/90 p-2 rounded flex items-center justify-between">
+                              <div>
+                                <span className="text-[10px] text-slate-400 block">胜平负推荐</span>
+                                <span className="font-bold text-white">{m1.euroPick}</span>
+                              </div>
+                              {m1.finalScore && (
+                                <span
+                                  className={`font-mono font-black text-xs ${
+                                    m1.euroHit ? 'text-emerald-400' : 'text-rose-400'
+                                  }`}
+                                >
+                                  {m1.euroHit ? '【红】' : '【黑】'}
+                                </span>
+                              )}
+                            </div>
+                            <div className="bg-slate-900/90 p-2 rounded flex items-center justify-between">
+                              <div>
+                                <span className="text-[10px] text-slate-400 block">
+                                  让球 ({m1.handicapLine})
+                                </span>
+                                <span className="font-bold text-cyan-300 truncate block max-w-[100px]">
+                                  {m1.handicapPick}
+                                </span>
+                              </div>
+                              {m1.finalScore && (
+                                <span
+                                  className={`font-mono font-black text-xs ${
+                                    m1.handicapHit ? 'text-cyan-400' : 'text-rose-400'
+                                  }`}
+                                >
+                                  【{m1.handicapDetailLabel || (m1.handicapHit ? '赢盘' : '输盘')}】
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Match 2 */}
+                        <div
+                          className={`p-3 rounded-lg border space-y-2 ${
+                            m2.euroHit && m2.handicapHit
+                              ? 'bg-emerald-950/20 border-emerald-500/40'
+                              : m2.euroHit || m2.handicapHit
+                              ? 'bg-slate-950/90 border-cyan-500/30'
+                              : m2.finalScore
+                              ? 'bg-rose-950/20 border-rose-500/30'
+                              : 'bg-slate-950 border-slate-800'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                              稳胆 2 ({m2.stars}★ {m2.modelTitle || m2.identifiedModel})
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              {m2.matchTime || '开赛时间'}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between">
+                            <span className="font-extrabold text-sm text-white">
+                              {m2.homeTeam} VS {m2.awayTeam}
+                            </span>
+                            <span className="font-mono font-black text-cyan-300 text-sm">
+                              {m2.finalScore ? `完场 ${m2.finalScore}` : '⏳ 待开赛'}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-800/80">
+                            <div className="bg-slate-900/90 p-2 rounded flex items-center justify-between">
+                              <div>
+                                <span className="text-[10px] text-slate-400 block">胜平负推荐</span>
+                                <span className="font-bold text-white">{m2.euroPick}</span>
+                              </div>
+                              {m2.finalScore && (
+                                <span
+                                  className={`font-mono font-black text-xs ${
+                                    m2.euroHit ? 'text-emerald-400' : 'text-rose-400'
+                                  }`}
+                                >
+                                  {m2.euroHit ? '【红】' : '【黑】'}
+                                </span>
+                              )}
+                            </div>
+                            <div className="bg-slate-900/90 p-2 rounded flex items-center justify-between">
+                              <div>
+                                <span className="text-[10px] text-slate-400 block">
+                                  让球 ({m2.handicapLine})
+                                </span>
+                                <span className="font-bold text-cyan-300 truncate block max-w-[100px]">
+                                  {m2.handicapPick}
+                                </span>
+                              </div>
+                              {m2.finalScore && (
+                                <span
+                                  className={`font-mono font-black text-xs ${
+                                    m2.handicapHit ? 'text-cyan-400' : 'text-rose-400'
+                                  }`}
+                                >
+                                  【{m2.handicapDetailLabel || (m2.handicapHit ? '赢盘' : '输盘')}】
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Rationale & Settlement Dissection Note */}
+                      <div className="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                        <div className="text-slate-300 text-[11px] leading-relaxed">
+                          <strong className="text-amber-400">💡 实战风控：</strong>
+                          {parlay.settlementDescription || parlay.rationale || '正向控赔机构避险，规避诱盘风险'}
+                        </div>
+                        {parlay.brokenSide && parlay.brokenSide !== 'NONE' && (
+                          <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                            断单归因：{parlay.brokenSide === 'MATCH1' ? '稳胆1未打出' : parlay.brokenSide === 'MATCH2' ? '稳胆2未打出' : '双胆均未打出'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
             </div>
           )}
         </div>

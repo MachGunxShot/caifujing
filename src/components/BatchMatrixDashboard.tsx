@@ -42,6 +42,8 @@ import {
   TrendingUp,
   TrendingDown,
   Minus,
+  Save,
+  BookmarkCheck,
 } from 'lucide-react';
 import {
   BatchMatchItem,
@@ -49,9 +51,13 @@ import {
   AnalysisReportResult,
   ConfidenceComparisonResult,
   ConfidenceShiftType,
+  ParlayMatchSnapshot,
+  ParlayReviewRecord,
 } from '../types/fortuneActuary';
 import { generateActuarialRuleReport, compareEarlyVsLateConfidence } from '../utils/actuaryEngine';
 import { PRESET_CASES } from '../utils/presetCases';
+import { saveParlayReview, evaluateParlaySettlement, getPostMatchReviews } from '../utils/experienceStore';
+import { calculateSalesDate } from '../utils/salesDayUtils';
 import { MarkdownView } from './MarkdownView';
 import { HandicapOddsDistributionChart } from './HandicapOddsDistributionChart';
 
@@ -306,13 +312,34 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
   const tier4Items = useMemo(() => sortedItems.filter((p) => p.stars === 4), [sortedItems]);
   const tier3Items = useMemo(() => sortedItems.filter((p) => p.stars <= 3), [sortedItems]);
 
-  // Recommended Parlay Combo (2-in-1 / 3-in-1) based on high-star actuary selections
-  const parlayRecommendation = useMemo(() => {
-    const candidates = sortedItems.filter((p) => p.stars >= 4);
-    if (candidates.length < 2) return null;
+  // Recommended Parlay Combo (2-in-1 / 3-in-1) based on highest-star actuary selections
+  const [archivedParlayToast, setArchivedParlayToast] = useState<string | null>(null);
 
-    const p1 = candidates[0];
-    const p2 = candidates[1];
+  const parlayRecommendation = useMemo(() => {
+    // Select candidates from all processedItems (independent of table filter chips)
+    // sorted by stars desc, model certainty rank, then kickoff time
+    const allCandidates = [...processedItems].filter((p) => p.stars >= 4);
+    allCandidates.sort((a, b) => {
+      const sDiff = b.stars - a.stars;
+      if (sDiff !== 0) return sDiff;
+
+      const modelRank = (m: string) => {
+        if (m === 'POSITIVE_CONTROL') return 4;
+        if (m === 'LOW_DRAW_DEFENSE') return 3;
+        if (m === 'HIGH_INTEREST_TRAP') return 2;
+        if (m === 'SHALLOW_FULL_WATER') return 1;
+        return 0;
+      };
+      const mDiff = modelRank(b.model) - modelRank(a.model);
+      if (mDiff !== 0) return mDiff;
+
+      return a.time.localeCompare(b.time);
+    });
+
+    if (allCandidates.length < 2) return null;
+
+    const p1 = allCandidates[0];
+    const p2 = allCandidates[1];
 
     return {
       match1: p1,
@@ -321,7 +348,58 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
       description: '基于【星级最高 + 机构正向控赔避险 + 胆平/受让稳盘】精选的双胆组合，兼顾高胜率与风控防守',
       comboText: `【2串1实战方案】${p1.item.data.matchInfo.homeTeam} (${p1.dec.handicapPick} / ${p1.dec.euroPick}) × ${p2.item.data.matchInfo.homeTeam} (${p2.dec.handicapPick} / ${p2.dec.euroPick})`,
     };
-  }, [sortedItems]);
+  }, [processedItems]);
+
+  const handleArchiveParlay = () => {
+    if (!parlayRecommendation) return;
+    const { match1, match2, title, description } = parlayRecommendation;
+    const salesDate = calculateSalesDate(match1.item.data.matchInfo.matchTime, match1.item.timestamp).salesDate;
+
+    const snap1: ParlayMatchSnapshot = {
+      matchId: match1.item.id,
+      homeTeam: match1.item.data.matchInfo.homeTeam,
+      awayTeam: match1.item.data.matchInfo.awayTeam,
+      matchTime: match1.item.data.matchInfo.matchTime,
+      stars: match1.stars,
+      identifiedModel: match1.report.identifiedModel,
+      modelTitle: match1.report.modelTitle,
+      euroPick: match1.dec.euroPick,
+      handicapPick: match1.dec.handicapPick,
+      handicapLine: match1.item.data.asianHandicap.lateHandicap || match1.item.data.asianHandicap.earlyHandicap || '平手',
+      predictedScores: match1.dec.predictedScores,
+      finalScore: match1.item.finalScore,
+    };
+    const snap2: ParlayMatchSnapshot = {
+      matchId: match2.item.id,
+      homeTeam: match2.item.data.matchInfo.homeTeam,
+      awayTeam: match2.item.data.matchInfo.awayTeam,
+      matchTime: match2.item.data.matchInfo.matchTime,
+      stars: match2.stars,
+      identifiedModel: match2.report.identifiedModel,
+      modelTitle: match2.report.modelTitle,
+      euroPick: match2.dec.euroPick,
+      handicapPick: match2.dec.handicapPick,
+      handicapLine: match2.item.data.asianHandicap.lateHandicap || match2.item.data.asianHandicap.earlyHandicap || '平手',
+      predictedScores: match2.dec.predictedScores,
+      finalScore: match2.item.finalScore,
+    };
+
+    const newRecord: ParlayReviewRecord = {
+      id: `parlay-${salesDate}-${Date.now()}`,
+      salesDate,
+      createdAt: Date.now(),
+      title,
+      rationale: description,
+      match1: snap1,
+      match2: snap2,
+      settlementStatus: 'PENDING',
+    };
+
+    const evaluated = evaluateParlaySettlement(newRecord, getPostMatchReviews());
+    saveParlayReview(evaluated);
+    setArchivedParlayToast(`已成功固化归档至【2串1 稳胆复盘历史战报】（销售日：${salesDate}）！`);
+    setTimeout(() => setArchivedParlayToast(null), 3500);
+  };
 
   const toggleSort = (field: 'stars' | 'time' | 'confidence' | 'default') => {
     if (sortBy === field) {
@@ -1432,8 +1510,24 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
         </div>
       </div>
 
-      {/* 3. Recommended Parlay Combo Card (Addressing Point 4 directly) */}
-      {parlayRecommendation && sortBy === 'stars' && (
+      {/* 3. Recommended Parlay Combo Card */}
+      {archivedParlayToast && (
+        <div className="bg-amber-950/60 border border-amber-500/50 rounded-xl p-3 flex items-center justify-between text-xs text-amber-300 shadow-lg animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <BookmarkCheck className="w-4 h-4 text-amber-400" />
+            <span className="font-bold">{archivedParlayToast}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setArchivedParlayToast(null)}
+            className="text-amber-400 hover:text-white text-xs px-2 py-0.5 cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {parlayRecommendation && (
         <div className="bg-gradient-to-r from-amber-500/[0.12] via-slate-900 to-cyan-500/[0.10] border border-amber-500/40 rounded-xl p-4 shadow-xl space-y-2">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-500/20 pb-2.5">
             <div className="flex items-center gap-2">
@@ -1447,23 +1541,34 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
                 高置信稳胆配对
               </span>
             </div>
-            <button
-              type="button"
-              onClick={handleCopyCombo}
-              className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold rounded-lg shadow transition-all flex items-center gap-1 cursor-pointer self-start sm:self-auto"
-            >
-              {copiedCombo ? (
-                <>
-                  <Check className="w-3.5 h-3.5" />
-                  <span>已复制方案</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>复制实战 2串1 方案</span>
-                </>
-              )}
-            </button>
+            <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={handleArchiveParlay}
+                className="px-3 py-1 bg-slate-800 hover:bg-slate-750 text-amber-300 hover:text-amber-200 border border-amber-500/40 text-xs font-bold rounded-lg shadow transition-all flex items-center gap-1.5 cursor-pointer"
+                title="将今日精选的 2串1 实战方案固化沉淀到【复盘演化 ➔ 2串1 稳胆历史战报】"
+              >
+                <Save className="w-3.5 h-3.5 text-amber-400" />
+                <span>💾 固化归档至 2串1 战报</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleCopyCombo}
+                className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold rounded-lg shadow transition-all flex items-center gap-1 cursor-pointer"
+              >
+                {copiedCombo ? (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    <span>已复制方案</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>复制实战 2串1 方案</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">

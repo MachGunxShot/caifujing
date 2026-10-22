@@ -541,90 +541,107 @@ export default function App() {
 
         if (existingIndex >= 0) {
           const existing = updatedQueue[existingIndex];
-          if (existing.isLocked || existing.isReviewed || existing.review) {
-            // 🔒 LOCKED or REVIEWED! Strictly preserve the frozen pre-match snapshot & predictions!
-            protectedCount++;
-            continue;
-          } else {
-            // Update unlocked match with newer snapshot data: Smart Early-vs-Late Merge!
-            updatedCount++;
+          // Smart Early-vs-Late Merge: Even if the match was previously analyzed or reviewed in the morning,
+          // late market data must update the actuarial report so the 2串1 parlay recommendation reflects late market shifts!
+          updatedCount++;
 
-            const prevData = existing.data;
-            const prevReport = existing.report || generateActuarialRuleReport(prevData);
-            const earlyDataToCompare = existing.earlyDataSnapshot || prevData;
-            const earlyReportToCompare = existing.earlyReportSnapshot || prevReport;
+          const prevData = existing.data;
+          const prevReport = existing.report || generateActuarialRuleReport(prevData);
+          const earlyDataToCompare = existing.earlyDataSnapshot || prevData;
+          const earlyReportToCompare = existing.earlyReportSnapshot || prevReport;
 
-            const mergedMatchData: FullMatchData = {
-              ...m,
-              matchInfo: {
-                ...m.matchInfo,
-                matchTime: m.matchInfo.matchTime || prevData.matchInfo.matchTime,
-                marketStory: m.matchInfo.marketStory || prevData.matchInfo.marketStory,
-              },
-              euroOdds: {
-                // If previous match data already captured earlyWin, and the new upload only has late odds (or earlyWin wasn't updated)
-                earlyWin: (prevData.euroOdds.earlyWin > 0 && (!m.euroOdds.earlyWin || m.euroOdds.earlyWin === m.euroOdds.lateWin))
-                  ? prevData.euroOdds.earlyWin
-                  : (m.euroOdds.earlyWin || prevData.euroOdds.earlyWin),
-                earlyDraw: (prevData.euroOdds.earlyDraw > 0 && (!m.euroOdds.earlyDraw || m.euroOdds.earlyDraw === m.euroOdds.lateDraw))
-                  ? prevData.euroOdds.earlyDraw
-                  : (m.euroOdds.earlyDraw || prevData.euroOdds.earlyDraw),
-                earlyLoss: (prevData.euroOdds.earlyLoss > 0 && (!m.euroOdds.earlyLoss || m.euroOdds.earlyLoss === m.euroOdds.lateLoss))
-                  ? prevData.euroOdds.earlyLoss
-                  : (m.euroOdds.earlyLoss || prevData.euroOdds.earlyLoss),
-                lateWin: m.euroOdds.lateWin || prevData.euroOdds.lateWin,
-                lateDraw: m.euroOdds.lateDraw || prevData.euroOdds.lateDraw,
-                lateLoss: m.euroOdds.lateLoss || prevData.euroOdds.lateLoss,
-              },
-              asianHandicap: {
-                earlyHandicap: prevData.asianHandicap.earlyHandicap || m.asianHandicap.earlyHandicap,
-                earlyHomeOdds: (prevData.asianHandicap.earlyHomeOdds > 0 && (!m.asianHandicap.earlyHomeOdds || m.asianHandicap.earlyHomeOdds === m.asianHandicap.lateHomeOdds))
-                  ? prevData.asianHandicap.earlyHomeOdds
-                  : (m.asianHandicap.earlyHomeOdds || prevData.asianHandicap.earlyHomeOdds),
-                earlyAwayOdds: (prevData.asianHandicap.earlyAwayOdds > 0 && (!m.asianHandicap.earlyAwayOdds || m.asianHandicap.earlyAwayOdds === m.asianHandicap.lateAwayOdds))
-                  ? prevData.asianHandicap.earlyAwayOdds
-                  : (m.asianHandicap.earlyAwayOdds || prevData.asianHandicap.earlyAwayOdds),
-                lateHandicap: m.asianHandicap.lateHandicap || prevData.asianHandicap.lateHandicap,
-                lateHomeOdds: m.asianHandicap.lateHomeOdds || prevData.asianHandicap.lateHomeOdds,
-                lateAwayOdds: m.asianHandicap.lateAwayOdds || prevData.asianHandicap.lateAwayOdds,
-              },
-              overUnder: {
-                earlyLine: prevData.overUnder.earlyLine || m.overUnder.earlyLine,
-                earlyOverOdds: prevData.overUnder.earlyOverOdds || m.overUnder.earlyOverOdds,
-                earlyUnderOdds: prevData.overUnder.earlyUnderOdds || m.overUnder.earlyUnderOdds,
-                lateLine: m.overUnder.lateLine || prevData.overUnder.lateLine,
-                lateOverOdds: m.overUnder.lateOverOdds || prevData.overUnder.lateOverOdds,
-                lateUnderOdds: m.overUnder.lateUnderOdds || prevData.overUnder.lateUnderOdds,
-              },
-            };
+          const mergedMatchData: FullMatchData = {
+            ...m,
+            matchInfo: {
+              ...m.matchInfo,
+              matchTime: m.matchInfo.matchTime || prevData.matchInfo.matchTime,
+              marketStory: m.matchInfo.marketStory || prevData.matchInfo.marketStory,
+            },
+            euroOdds: {
+              // If previous match data already captured earlyWin, and the new upload only has late odds
+              earlyWin: (prevData.euroOdds.earlyWin > 0 && (!m.euroOdds.earlyWin || m.euroOdds.earlyWin === m.euroOdds.lateWin))
+                ? prevData.euroOdds.earlyWin
+                : (m.euroOdds.earlyWin || prevData.euroOdds.earlyWin),
+              earlyDraw: (prevData.euroOdds.earlyDraw > 0 && (!m.euroOdds.earlyDraw || m.euroOdds.earlyDraw === m.euroOdds.lateDraw))
+                ? prevData.euroOdds.earlyDraw
+                : (m.euroOdds.earlyDraw || prevData.euroOdds.earlyDraw),
+              earlyLoss: (prevData.euroOdds.earlyLoss > 0 && (!m.euroOdds.earlyLoss || m.euroOdds.earlyLoss === m.euroOdds.lateLoss))
+                ? prevData.euroOdds.earlyLoss
+                : (m.euroOdds.earlyLoss || prevData.euroOdds.earlyLoss),
+              lateWin: m.euroOdds.lateWin || prevData.euroOdds.lateWin,
+              lateDraw: m.euroOdds.lateDraw || prevData.euroOdds.lateDraw,
+              lateLoss: m.euroOdds.lateLoss || prevData.euroOdds.lateLoss,
+            },
+            asianHandicap: {
+              earlyHandicap: prevData.asianHandicap.earlyHandicap || m.asianHandicap.earlyHandicap,
+              earlyHomeOdds: (prevData.asianHandicap.earlyHomeOdds > 0 && (!m.asianHandicap.earlyHomeOdds || m.asianHandicap.earlyHomeOdds === m.asianHandicap.lateHomeOdds))
+                ? prevData.asianHandicap.earlyHomeOdds
+                : (m.asianHandicap.earlyHomeOdds || prevData.asianHandicap.earlyHomeOdds),
+              earlyAwayOdds: (prevData.asianHandicap.earlyAwayOdds > 0 && (!m.asianHandicap.earlyAwayOdds || m.asianHandicap.earlyAwayOdds === m.asianHandicap.lateAwayOdds))
+                ? prevData.asianHandicap.earlyAwayOdds
+                : (m.asianHandicap.earlyAwayOdds || prevData.asianHandicap.earlyAwayOdds),
+              lateHandicap: m.asianHandicap.lateHandicap || prevData.asianHandicap.lateHandicap,
+              lateHomeOdds: m.asianHandicap.lateHomeOdds || prevData.asianHandicap.lateHomeOdds,
+              lateAwayOdds: m.asianHandicap.lateAwayOdds || prevData.asianHandicap.lateAwayOdds,
+            },
+            overUnder: {
+              earlyLine: prevData.overUnder.earlyLine || m.overUnder.earlyLine,
+              earlyOverOdds: prevData.overUnder.earlyOverOdds || m.overUnder.earlyOverOdds,
+              earlyUnderOdds: prevData.overUnder.earlyUnderOdds || m.overUnder.earlyUnderOdds,
+              lateLine: m.overUnder.lateLine || prevData.overUnder.lateLine,
+              lateOverOdds: m.overUnder.lateOverOdds || prevData.overUnder.lateOverOdds,
+              lateUnderOdds: m.overUnder.lateUnderOdds || prevData.overUnder.lateUnderOdds,
+            },
+          };
 
-            const updatedReport = generateActuarialRuleReport(mergedMatchData);
-            const confidenceShift = compareEarlyVsLateConfidence(
-              mergedMatchData,
-              earlyReportToCompare,
-              updatedReport,
-              earlyDataToCompare
-            );
+          const updatedReport = generateActuarialRuleReport(mergedMatchData);
+          const confidenceShift = compareEarlyVsLateConfidence(
+            mergedMatchData,
+            earlyReportToCompare,
+            updatedReport,
+            earlyDataToCompare
+          );
 
-            if (confidenceShift.shiftType === 'INCREASED') incConfidenceCount++;
-            else if (confidenceShift.shiftType === 'DECREASED') decConfidenceCount++;
-            else stableConfidenceCount++;
+          if (confidenceShift.shiftType === 'INCREASED') incConfidenceCount++;
+          else if (confidenceShift.shiftType === 'DECREASED') decConfidenceCount++;
+          else stableConfidenceCount++;
 
-            updatedQueue[existingIndex] = {
-              ...existing,
-              data: mergedMatchData,
-              report: updatedReport,
-              earlyDataSnapshot: earlyDataToCompare,
-              earlyReportSnapshot: earlyReportToCompare,
-              confidenceShift,
-              status: 'done',
-              timestamp: Date.now(),
-              isReviewed: existing.isReviewed,
-              finalScore: existing.finalScore,
-              isLocked: existing.isLocked,
-              review: existing.review,
-            };
+          // If match was already scored, re-evaluate review outcome against the updated late market report
+          let updatedReview = existing.review;
+          if (existing.finalScore) {
+            const parts = existing.finalScore.split(/[-:：]/);
+            const hScore = parseInt(parts[0], 10);
+            const aScore = parseInt(parts[1], 10);
+            if (!isNaN(hScore) && !isNaN(aScore)) {
+              updatedReview = evaluateMatchOutcomeAndExtractLesson(
+                mergedMatchData,
+                updatedReport,
+                hScore,
+                aScore,
+                existing.review?.matchIncidents || '',
+                false,
+                existing.review?.salesDateOverride || existing.review?.salesDate,
+                existing.timestamp,
+                existing.review
+              );
+              savePostMatchReview(updatedReview);
+            }
           }
+
+          updatedQueue[existingIndex] = {
+            ...existing,
+            data: mergedMatchData,
+            report: updatedReport,
+            earlyDataSnapshot: earlyDataToCompare,
+            earlyReportSnapshot: earlyReportToCompare,
+            confidenceShift,
+            status: 'done',
+            timestamp: Date.now(),
+            isReviewed: existing.isReviewed,
+            finalScore: existing.finalScore,
+            isLocked: existing.isLocked,
+            review: updatedReview || existing.review,
+          };
         } else {
           // Brand new match, add to queue (首次导入基石盘口)
           newCount++;

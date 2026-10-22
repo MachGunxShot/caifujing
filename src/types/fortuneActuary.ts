@@ -226,3 +226,56 @@ export interface EvolvedExperienceRule {
   hitCount?: number;             // 经验被印证次数
 }
 
+export interface ParlayMatchSnapshot {
+  matchId?: string;
+  homeTeam: string;
+  awayTeam: string;
+  league?: string;
+  matchTime?: string;
+  modelTitle?: string;
+  identifiedModel?: string;
+  starRating?: number;
+  stars?: number;
+  euroPick: string;
+  handicapPick: string;
+  handicapLine?: string;
+  predictedScores?: string[];
+  actualScore?: string;
+  finalScore?: string;
+  actualHomeScore?: number;
+  actualAwayScore?: number;
+  isFinished?: boolean;
+  euroHit?: boolean;
+  handicapHit?: boolean;
+  handicapDetail?: 'WIN' | 'WIN_HALF' | 'PUSH' | 'LOSE_HALF' | 'LOSE';
+  handicapDetailLabel?: string;
+}
+
+export interface ParlayReviewRecord {
+  id: string;
+  salesDate: string;
+  salesDateLabel?: string;
+  title: string;
+  comboText?: string;
+  rationale?: string;
+  createdAt: number;
+  match1: ParlayMatchSnapshot;
+  match2: ParlayMatchSnapshot;
+  isSettled?: boolean;
+  parlayEuroHit?: boolean;
+  euroParlayHit?: boolean;
+  parlayHandicapHit?: boolean;
+  handicapParlayHit?: boolean;
+  parlayGrandSlam?: boolean;
+  isGrandSlam?: boolean;
+  parlayStatus?: 'FULL_HIT' | 'EURO_HIT' | 'HANDICAP_HIT' | 'PUSH_COVER' | 'BROKEN' | 'PENDING';
+  settlementStatus?: 'PENDING' | 'SETTLED_ALL_HIT' | 'SETTLED_PARLAY_HIT' | 'SETTLED_HANDICAP_HIT' | 'SETTLED_HEDGE_PUSH' | 'SETTLED_BROKEN';
+  settlementBadge?: string;
+  settlementDescription?: string;
+  statusLabel?: string;
+  summaryNote?: string;
+  lessonText?: string;
+  brokenSide?: 'MATCH1' | 'MATCH2' | 'BOTH' | 'NONE';
+}
+
+

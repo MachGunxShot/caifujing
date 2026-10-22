@@ -3,13 +3,16 @@ import {
   AnalysisReportResult,
   PostMatchReview,
   EvolvedExperienceRule,
+  ParlayReviewRecord,
+  ParlayMatchSnapshot,
 } from '../types/fortuneActuary';
 import { parseHandicapValue, parseOverUnderValue } from './actuaryEngine';
-import { calculateSalesDate, calibrateReviewSalesDate } from './salesDayUtils';
+import { calculateSalesDate, calibrateReviewSalesDate, getReviewSalesInfo } from './salesDayUtils';
 
 const RULES_STORAGE_KEY = 'fortune_actuary_evolved_rules_v1';
 const REVIEWS_STORAGE_KEY = 'fortune_actuary_reviews_v1';
 const SALES_DAY_BACKUP_KEY = 'fortune_reviews_sales_day_backup_v1';
+const PARLAY_REVIEWS_STORAGE_KEY = 'fortune_actuary_parlay_reviews_v1';
 
 // Seed Initial Battle-tested Core Rules (5 Core Models + 3 Lie Detector Matrix + Workflow + Staking + Philosophy)
 export const SEED_RULES: EvolvedExperienceRule[] = [
@@ -1654,6 +1657,336 @@ export function replacePostMatchReviews(reviews: PostMatchReview[]): boolean {
 }
 
 /**
+ * Rigorously evaluates 2-Pick Parlay (2串1) settlement against individual match reviews
+ */
+export function evaluateParlaySettlement(
+  parlay: ParlayReviewRecord,
+  allReviews: PostMatchReview[]
+): ParlayReviewRecord {
+  const findReviewForMatch = (m: ParlayMatchSnapshot) => {
+    const mHome = (m.homeTeam || '').replace(/\s+/g, '').toLowerCase();
+    const mAway = (m.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+    return allReviews.find((r) => {
+      const rHome = (r.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
+      const rAway = (r.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+      return (
+        mHome && mAway && rHome && rAway &&
+        (mHome.includes(rHome) || rHome.includes(mHome)) &&
+        (mAway.includes(rAway) || rAway.includes(mAway))
+      );
+    });
+  };
+
+  const rev1 = findReviewForMatch(parlay.match1);
+  const rev2 = findReviewForMatch(parlay.match2);
+
+  const m1: ParlayMatchSnapshot = {
+    ...parlay.match1,
+    actualScore: rev1?.actualScore || parlay.match1.actualScore,
+    finalScore: rev1?.actualScore || parlay.match1.actualScore || parlay.match1.finalScore,
+    actualHomeScore: rev1?.actualHomeScore ?? parlay.match1.actualHomeScore,
+    actualAwayScore: rev1?.actualAwayScore ?? parlay.match1.actualAwayScore,
+    stars: parlay.match1.stars || parlay.match1.starRating || 4,
+    starRating: parlay.match1.starRating || parlay.match1.stars || 4,
+    identifiedModel: parlay.match1.identifiedModel || rev1?.ruleCategory || '',
+    modelTitle: parlay.match1.modelTitle || rev1?.priorReport?.modelTitle || '稳胆',
+    handicapLine: parlay.match1.handicapLine || rev1?.matchData?.asianHandicap?.lateHandicap || '平手',
+    isFinished: Boolean(rev1?.actualScore || parlay.match1.actualScore || parlay.match1.finalScore),
+    euroHit: rev1?.outcomeEvaluation?.euroHit !== undefined ? rev1.outcomeEvaluation.euroHit : parlay.match1.euroHit,
+    handicapHit: rev1?.outcomeEvaluation?.handicapHit !== undefined ? rev1.outcomeEvaluation.handicapHit : parlay.match1.handicapHit,
+    handicapDetail: rev1?.outcomeEvaluation?.handicapDetail || parlay.match1.handicapDetail,
+    handicapDetailLabel: rev1?.outcomeEvaluation?.handicapDetailLabel || parlay.match1.handicapDetailLabel,
+  };
+
+  const m2: ParlayMatchSnapshot = {
+    ...parlay.match2,
+    actualScore: rev2?.actualScore || parlay.match2.actualScore,
+    finalScore: rev2?.actualScore || parlay.match2.actualScore || parlay.match2.finalScore,
+    actualHomeScore: rev2?.actualHomeScore ?? parlay.match2.actualHomeScore,
+    actualAwayScore: rev2?.actualAwayScore ?? parlay.match2.actualAwayScore,
+    stars: parlay.match2.stars || parlay.match2.starRating || 4,
+    starRating: parlay.match2.starRating || parlay.match2.stars || 4,
+    identifiedModel: parlay.match2.identifiedModel || rev2?.ruleCategory || '',
+    modelTitle: parlay.match2.modelTitle || rev2?.priorReport?.modelTitle || '稳胆',
+    handicapLine: parlay.match2.handicapLine || rev2?.matchData?.asianHandicap?.lateHandicap || '平手',
+    isFinished: Boolean(rev2?.actualScore || parlay.match2.actualScore || parlay.match2.finalScore),
+    euroHit: rev2?.outcomeEvaluation?.euroHit !== undefined ? rev2.outcomeEvaluation.euroHit : parlay.match2.euroHit,
+    handicapHit: rev2?.outcomeEvaluation?.handicapHit !== undefined ? rev2.outcomeEvaluation.handicapHit : parlay.match2.handicapHit,
+    handicapDetail: rev2?.outcomeEvaluation?.handicapDetail || parlay.match2.handicapDetail,
+    handicapDetailLabel: rev2?.outcomeEvaluation?.handicapDetailLabel || parlay.match2.handicapDetailLabel,
+  };
+
+  const isSettled = Boolean(m1.isFinished && m2.isFinished);
+  const parlayEuroHit = Boolean(m1.euroHit && m2.euroHit);
+  const parlayHandicapHit = Boolean(m1.handicapHit && m2.handicapHit);
+  const parlayGrandSlam = Boolean(parlayEuroHit && parlayHandicapHit);
+
+  let parlayStatus: ParlayReviewRecord['parlayStatus'] = 'PENDING';
+  let settlementStatus: NonNullable<ParlayReviewRecord['settlementStatus']> = 'PENDING';
+  let statusLabel = '【⏳ 待完赛】';
+  let brokenSide: NonNullable<ParlayReviewRecord['brokenSide']> = 'NONE';
+
+  if (isSettled) {
+    if (parlayGrandSlam) {
+      parlayStatus = 'FULL_HIT';
+      settlementStatus = 'SETTLED_ALL_HIT';
+      statusLabel = '【👑 双胆大满贯全红】';
+    } else if (parlayEuroHit) {
+      parlayStatus = 'EURO_HIT';
+      settlementStatus = 'SETTLED_PARLAY_HIT';
+      statusLabel = '【🎉 胜平负 2串1 全红收米】';
+    } else if (parlayHandicapHit) {
+      parlayStatus = 'HANDICAP_HIT';
+      settlementStatus = 'SETTLED_HANDICAP_HIT';
+      statusLabel = '【🎉 让球 2串1 红单赢盘】';
+    } else if (
+      (m1.handicapDetail === 'PUSH' || m2.handicapDetail === 'PUSH') &&
+      (m1.handicapHit || m2.handicapHit)
+    ) {
+      parlayStatus = 'PUSH_COVER';
+      settlementStatus = 'SETTLED_HEDGE_PUSH';
+      statusLabel = '【🛡️ 对冲保本】';
+    } else {
+      parlayStatus = 'BROKEN';
+      settlementStatus = 'SETTLED_BROKEN';
+      const m1Failed = !m1.euroHit && !m1.handicapHit;
+      const m2Failed = !m2.euroHit && !m2.handicapHit;
+      if (m1Failed && m2Failed) {
+        brokenSide = 'BOTH';
+        statusLabel = '【❌ 双胆皆黑断单】';
+      } else if (m1Failed) {
+        brokenSide = 'MATCH1';
+        statusLabel = `【⚠️ 1红1黑断单 · 稳胆1(${m1.homeTeam})爆冷】`;
+      } else {
+        brokenSide = 'MATCH2';
+        statusLabel = `【⚠️ 1红1黑断单 · 稳胆2(${m2.homeTeam})爆冷】`;
+      }
+    }
+  }
+
+  let summaryNote = parlay.summaryNote || '';
+  if (isSettled) {
+    if (parlayGrandSlam) {
+      summaryNote = `两场核心稳胆双维度 100% 穿透打出！胜平负与亚指让球双双收米，顶级大满贯红单！`;
+    } else if (parlayEuroHit) {
+      summaryNote = `胜平负双选/独赢稳健打出，成功收下 2串1 奖金！亚指端存在部分卡盘或赢半。`;
+    } else if (parlayHandicapHit) {
+      summaryNote = `亚指让球双胆全赢盘打出！让球门槛与受让安全垫完全发挥作用。`;
+    } else if (parlayStatus === 'PUSH_COVER') {
+      summaryNote = `出现走盘对冲，成功保住实战本金。`;
+    } else {
+      summaryNote = `其中一场遭遇冷门打破平衡，已自动提取对应抗冷教训沉淀至经验法则库。`;
+    }
+  }
+
+  return {
+    ...parlay,
+    match1: m1,
+    match2: m2,
+    isSettled,
+    parlayEuroHit,
+    euroParlayHit: parlayEuroHit,
+    parlayHandicapHit,
+    handicapParlayHit: parlayHandicapHit,
+    parlayGrandSlam,
+    isGrandSlam: parlayGrandSlam,
+    parlayStatus,
+    settlementStatus,
+    statusLabel,
+    settlementBadge: statusLabel,
+    summaryNote,
+    settlementDescription: summaryNote,
+    brokenSide,
+  };
+}
+
+/**
+ * Retrieve saved 2-Pick Parlay review records, synchronized with latest individual match scores
+ */
+export function getParlayReviews(): ParlayReviewRecord[] {
+  try {
+    if (typeof localStorage === 'undefined') return [];
+    const raw = localStorage.getItem(PARLAY_REVIEWS_STORAGE_KEY);
+    const stored: ParlayReviewRecord[] = raw ? JSON.parse(raw) : [];
+    const allMatchReviews = getPostMatchReviews();
+
+    const settledList = stored.map((p) => evaluateParlaySettlement(p, allMatchReviews));
+    return settledList;
+  } catch (e) {
+    console.error('Error loading parlay reviews:', e);
+    return [];
+  }
+}
+
+/**
+ * Save a 2-Pick Parlay review record (Idempotent: updates existing with same ID or salesDate)
+ */
+export function saveParlayReview(record: ParlayReviewRecord): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const allMatchReviews = getPostMatchReviews();
+    const evaluated = evaluateParlaySettlement(record, allMatchReviews);
+    const existingList = getParlayReviews();
+
+    const idx = existingList.findIndex(
+      (p) => p.id === evaluated.id || (p.salesDate && p.salesDate === evaluated.salesDate)
+    );
+
+    if (idx >= 0) {
+      existingList[idx] = evaluated;
+    } else {
+      existingList.unshift(evaluated);
+    }
+
+    localStorage.setItem(PARLAY_REVIEWS_STORAGE_KEY, JSON.stringify(existingList));
+  } catch (e) {
+    console.error('Error saving parlay review:', e);
+  }
+}
+
+/**
+ * Delete a single parlay review by ID
+ */
+export function deleteParlayReview(id: string): ParlayReviewRecord[] {
+  try {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return [];
+    const updated = getParlayReviews().filter((p) => p.id !== id);
+    localStorage.setItem(PARLAY_REVIEWS_STORAGE_KEY, JSON.stringify(updated));
+    return updated;
+  } catch (e) {
+    console.error('Error deleting parlay review:', e);
+    return [];
+  }
+}
+
+/**
+ * Clear all parlay review battle reports
+ */
+export function clearAllParlayReviews(): void {
+  try {
+    if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      localStorage.removeItem(PARLAY_REVIEWS_STORAGE_KEY);
+    }
+  } catch (e) {
+    console.error('Error clearing parlay reviews:', e);
+  }
+}
+
+/**
+ * Automatically synthesizes daily 2-in-1 parlay reviews from historical match reviews
+ */
+export function autoExtractDailyParlayReviews(matchReviews: PostMatchReview[]): ParlayReviewRecord[] {
+  if (!matchReviews || matchReviews.length < 2) return [];
+
+  // Group match reviews by sales date
+  const groups = new Map<string, PostMatchReview[]>();
+  for (const rev of matchReviews) {
+    const sDate = rev.salesDate || '常规归档';
+    if (!groups.has(sDate)) {
+      groups.set(sDate, []);
+    }
+    groups.get(sDate)!.push(rev);
+  }
+
+  const generatedParlays: ParlayReviewRecord[] = [];
+
+  for (const [dateKey, list] of groups.entries()) {
+    if (list.length < 2) continue;
+
+    // Rank candidates by stars, model certainty, and model verified
+    const sorted = [...list].sort((a, b) => {
+      const starA = a.priorReport?.decision?.starRating || 3;
+      const starB = b.priorReport?.decision?.starRating || 3;
+      if (starB !== starA) return starB - starA;
+
+      const modelRank = (m?: string) => {
+        if (m === 'POSITIVE_CONTROL') return 4;
+        if (m === 'LOW_DRAW_DEFENSE') return 3;
+        if (m === 'HIGH_INTEREST_TRAP') return 2;
+        if (m === 'SHALLOW_FULL_WATER') return 1;
+        return 0;
+      };
+
+      const mDiff = modelRank(b.priorReport?.identifiedModel) - modelRank(a.priorReport?.identifiedModel);
+      if (mDiff !== 0) return mDiff;
+
+      return (a.kickoffTime || '').localeCompare(b.kickoffTime || '');
+    });
+
+    const m1 = sorted[0];
+    const m2 = sorted[1];
+
+    const snap1: ParlayMatchSnapshot = {
+      homeTeam: m1.matchData.matchInfo.homeTeam,
+      awayTeam: m1.matchData.matchInfo.awayTeam,
+      league: m1.matchData.matchInfo.league,
+      matchTime: m1.kickoffTime || m1.matchData.matchInfo.matchTime || '',
+      modelTitle: m1.priorReport.modelTitle,
+      identifiedModel: m1.priorReport.identifiedModel,
+      starRating: m1.priorReport.decision.starRating,
+      stars: m1.priorReport.decision.starRating,
+      euroPick: m1.priorReport.decision.euroPick,
+      handicapPick: m1.priorReport.decision.handicapPick,
+      handicapLine: m1.matchData.asianHandicap.lateHandicap || m1.matchData.asianHandicap.earlyHandicap || '平手',
+      actualScore: m1.actualScore,
+      finalScore: m1.actualScore,
+      actualHomeScore: m1.actualHomeScore,
+      actualAwayScore: m1.actualAwayScore,
+      isFinished: Boolean(m1.actualScore),
+      euroHit: m1.outcomeEvaluation.euroHit,
+      handicapHit: m1.outcomeEvaluation.handicapHit,
+      handicapDetail: m1.outcomeEvaluation.handicapDetail,
+      handicapDetailLabel: m1.outcomeEvaluation.handicapDetailLabel,
+    };
+
+    const snap2: ParlayMatchSnapshot = {
+      homeTeam: m2.matchData.matchInfo.homeTeam,
+      awayTeam: m2.matchData.matchInfo.awayTeam,
+      league: m2.matchData.matchInfo.league,
+      matchTime: m2.kickoffTime || m2.matchData.matchInfo.matchTime || '',
+      modelTitle: m2.priorReport.modelTitle,
+      identifiedModel: m2.priorReport.identifiedModel,
+      starRating: m2.priorReport.decision.starRating,
+      stars: m2.priorReport.decision.starRating,
+      euroPick: m2.priorReport.decision.euroPick,
+      handicapPick: m2.priorReport.decision.handicapPick,
+      handicapLine: m2.matchData.asianHandicap.lateHandicap || m2.matchData.asianHandicap.earlyHandicap || '平手',
+      actualScore: m2.actualScore,
+      finalScore: m2.actualScore,
+      actualHomeScore: m2.actualHomeScore,
+      actualAwayScore: m2.actualAwayScore,
+      isFinished: Boolean(m2.actualScore),
+      euroHit: m2.outcomeEvaluation.euroHit,
+      handicapHit: m2.outcomeEvaluation.handicapHit,
+      handicapDetail: m2.outcomeEvaluation.handicapDetail,
+      handicapDetailLabel: m2.outcomeEvaluation.handicapDetailLabel,
+    };
+
+    const parlayRecord: ParlayReviewRecord = {
+      id: `parlay-${dateKey}`,
+      salesDate: dateKey,
+      salesDateLabel: m1.salesDateLabel || `${dateKey} 销售日`,
+      title: '《财富经》核心稳胆 · 2串1 实战方案',
+      comboText: `【2串1实战方案】${snap1.homeTeam} (${snap1.handicapPick} / ${snap1.euroPick}) × ${snap2.homeTeam} (${snap2.handicapPick} / ${snap2.euroPick})`,
+      createdAt: m1.reviewTimestamp || Date.now(),
+      match1: snap1,
+      match2: snap2,
+      isSettled: Boolean(snap1.actualScore && snap2.actualScore),
+      parlayEuroHit: Boolean(snap1.euroHit && snap2.euroHit),
+      parlayHandicapHit: Boolean(snap1.handicapHit && snap2.handicapHit),
+      parlayGrandSlam: Boolean(snap1.euroHit && snap2.euroHit && snap1.handicapHit && snap2.handicapHit),
+      parlayStatus: 'PENDING',
+      statusLabel: '',
+      summaryNote: '',
+    };
+
+    generatedParlays.push(evaluateParlaySettlement(parlayRecord, matchReviews));
+  }
+
+  return generatedParlays;
+}
+
+/**
  * Rigorously evaluates whether the Euro outcome (胜平负) was correctly predicted
  * Supports all single and dual-protection expressions (e.g. 稳胆, 让胜/让负受让不败, 胆平, 双平设防, 主客不败)
  */
@@ -2026,3 +2359,4 @@ export function evaluateMatchOutcomeAndExtractLesson(
 
   return review;
 }
+
