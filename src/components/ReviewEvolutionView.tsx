@@ -77,6 +77,7 @@ import {
   clearAllParlayReviews,
   autoExtractDailyParlayReviews,
   evaluateParlaySettlement,
+  evaluateSingleHandicapOutcome,
 } from '../utils/experienceStore';
 import { generateActuarialRuleReport } from '../utils/actuaryEngine';
 import { ParsedScoreItem, parseBatchMatchScoresFromText } from '../utils/textParser';
@@ -4493,21 +4494,51 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                   const m2 = parlay.match2;
 
                   const renderHandicapBadge = (m: ParlayMatchSnapshot) => {
-                    const label =
-                      m.handicapDetailLabel ||
-                      (m.handicapDetail === 'WIN_HALF'
-                        ? '赢半'
-                        : m.handicapDetail === 'PUSH'
-                        ? '走盘'
-                        : m.handicapDetail === 'LOSE_HALF'
-                        ? '输半'
-                        : m.handicapDetail === 'WIN'
-                        ? '赢盘'
-                        : m.handicapDetail === 'LOSE'
-                        ? '输盘'
-                        : m.handicapHit
-                        ? '赢盘'
-                        : '输盘');
+                    let label = m.handicapDetailLabel;
+                    const scoreStr = m.finalScore || m.actualScore;
+                    let home = m.actualHomeScore;
+                    let away = m.actualAwayScore;
+
+                    if ((home === undefined || away === undefined) && scoreStr) {
+                      const parts = scoreStr.split('-');
+                      if (parts.length === 2) {
+                        const h = parseInt(parts[0], 10);
+                        const a = parseInt(parts[1], 10);
+                        if (!isNaN(h) && !isNaN(a)) {
+                          home = h;
+                          away = a;
+                        }
+                      }
+                    }
+
+                    if (home !== undefined && away !== undefined) {
+                      const fresh = evaluateSingleHandicapOutcome(
+                        m.handicapLine || '平手',
+                        m.handicapPick,
+                        m.homeTeam,
+                        m.awayTeam,
+                        home,
+                        away
+                      );
+                      label = fresh.detailLabel;
+                    }
+
+                    if (!label) {
+                      label =
+                        m.handicapDetail === 'WIN_HALF'
+                          ? '赢半'
+                          : m.handicapDetail === 'PUSH'
+                          ? '走盘'
+                          : m.handicapDetail === 'LOSE_HALF'
+                          ? '输半'
+                          : m.handicapDetail === 'WIN'
+                          ? '赢盘'
+                          : m.handicapDetail === 'LOSE'
+                          ? '输盘'
+                          : m.handicapHit
+                          ? '赢盘'
+                          : '输盘';
+                    }
 
                     const colorClass =
                       label === '输半'

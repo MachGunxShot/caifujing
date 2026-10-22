@@ -2217,13 +2217,19 @@ export function evaluateSingleHandicapOutcome(
   }
 
   let H = 0;
-  const explicitSigned = (predictedHandicapStr || '').match(/\(\s*([+-]\d+(?:\.\d+)?)/);
-  if (explicitSigned) {
-    H = parseFloat(explicitSigned[1]) || 0;
-  } else {
-    // Convention in parseHandicapValue: negative (<0) means Home gives, positive (>0) means Home receives
+  // If the match's official handicap line is parsed (e.g. '受球半/两球' -> +1.75, '平手/半球' -> -0.25),
+  // use this official market line to prevent any rounded prediction text from altering the true line.
+  if (parsedHandicapVal !== 0) {
     const homeH = parsedHandicapVal;
     H = pickedSide === 'HOME' ? homeH : -homeH;
+  } else {
+    // If line is scratch/even or unparsed, check explicit signed handicap from prediction text
+    const explicitSigned = (predictedHandicapStr || '').match(/\(\s*([+-]\d+(?:\.\d+)?)/);
+    if (explicitSigned) {
+      H = parseFloat(explicitSigned[1]) || 0;
+    } else {
+      H = 0;
+    }
   }
 
   const goalsPicked = pickedSide === 'HOME' ? actualHomeScore : actualAwayScore;

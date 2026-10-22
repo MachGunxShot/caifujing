@@ -20,25 +20,29 @@ export function parseHandicapValue(line: string): number {
 
   // Common Chinese football handicap mappings
   const isSuffer = cleaned.includes('受') || cleaned.includes('受让') || cleaned.includes('客让');
-  let base = 0;
+    let base = 0;
 
-  if (cleaned.includes('三球半/四球') || cleaned.includes('3.5/4') || cleaned.includes('3.75')) base = 3.75;
-  else if (cleaned.includes('三球/三球半') || cleaned.includes('3/3.5') || cleaned.includes('3.25')) base = 3.25;
-  else if (cleaned.includes('三球半') || cleaned.includes('3.5')) base = 3.5;
-  else if (cleaned.includes('三球') || cleaned.includes('3.0')) base = 3.0;
-  else if (cleaned.includes('两球半/三球') || cleaned.includes('2.5/3') || cleaned.includes('2.75')) base = 2.75;
-  else if (cleaned.includes('两球/两球半') || cleaned.includes('2/2.5') || cleaned.includes('2.25')) base = 2.25;
-  else if (cleaned.includes('两球半') || cleaned.includes('2.5')) base = 2.5;
-  else if (cleaned.includes('两球') || cleaned.includes('2.0')) base = 2.0;
-  else if (cleaned.includes('球半/两球') || cleaned.includes('1.5/2') || cleaned.includes('1.75')) base = 1.75;
-  else if (cleaned.includes('球半') || cleaned.includes('1.5')) base = 1.5;
-  else if (cleaned.includes('一球/球半') || cleaned.includes('1/1.5') || cleaned.includes('1.25')) base = 1.25;
-  else if (cleaned.includes('一球') || cleaned.includes('1.0')) base = 1.0;
-  else if (cleaned.includes('半球/一球') || cleaned.includes('半一') || cleaned.includes('0.5/1') || cleaned.includes('0.75')) base = 0.75;
-  else if (cleaned.includes('半球') || cleaned.includes('0.5')) base = 0.5;
-  else if (cleaned.includes('平手/半球') || cleaned.includes('平半') || cleaned.includes('0/0.5') || cleaned.includes('0.25')) base = 0.25;
-  else if (cleaned.includes('平手') || cleaned === '0' || cleaned === '-0' || cleaned === '+0') base = 0;
-  else {
+    // 1. All compound/split slash lines MUST be checked first before substrings
+    // (e.g. '球半/两球' must precede '两球', '一球/球半' must precede '球半', '半球/一球' must precede '一球', '平手/半球' must precede '半球')
+    if (cleaned.includes('三球半/四球') || cleaned.includes('3.5/4') || cleaned.includes('3.75')) base = 3.75;
+    else if (cleaned.includes('三球/三球半') || cleaned.includes('3/3.5') || cleaned.includes('3.25')) base = 3.25;
+    else if (cleaned.includes('两球半/三球') || cleaned.includes('2.5/3') || cleaned.includes('2.75')) base = 2.75;
+    else if (cleaned.includes('两球/两球半') || cleaned.includes('2/2.5') || cleaned.includes('2.25')) base = 2.25;
+    else if (cleaned.includes('球半/两球') || cleaned.includes('1.5/2') || cleaned.includes('1.75')) base = 1.75;
+    else if (cleaned.includes('一球/球半') || cleaned.includes('1/1.5') || cleaned.includes('1.25')) base = 1.25;
+    else if (cleaned.includes('半球/一球') || cleaned.includes('半一') || cleaned.includes('0.5/1') || cleaned.includes('0.75')) base = 0.75;
+    else if (cleaned.includes('平手/半球') || cleaned.includes('平半') || cleaned.includes('0/0.5') || cleaned.includes('0.25')) base = 0.25;
+
+    // 2. Pure single whole/half lines (now completely safe from substring collision)
+    else if (cleaned.includes('三球半') || cleaned.includes('3.5')) base = 3.5;
+    else if (cleaned.includes('三球') || cleaned.includes('3.0')) base = 3.0;
+    else if (cleaned.includes('两球半') || cleaned.includes('2.5')) base = 2.5;
+    else if (cleaned.includes('两球') || cleaned.includes('2.0')) base = 2.0;
+    else if (cleaned.includes('球半') || cleaned.includes('1.5')) base = 1.5;
+    else if (cleaned.includes('一球') || cleaned.includes('1.0')) base = 1.0;
+    else if (cleaned.includes('半球') || cleaned.includes('0.5')) base = 0.5;
+    else if (cleaned.includes('平手') || cleaned === '0' || cleaned === '-0' || cleaned === '+0') base = 0;
+    else {
     const parsedNum = parseFloat(cleaned);
     if (!isNaN(parsedNum)) {
       base = Math.abs(parsedNum);
