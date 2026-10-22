@@ -249,6 +249,32 @@ export interface ParlayMatchSnapshot {
   handicapHit?: boolean;
   handicapDetail?: 'WIN' | 'WIN_HALF' | 'PUSH' | 'LOSE_HALF' | 'LOSE';
   handicapDetailLabel?: string;
+
+  // 当时历史盘口与赔率快照 (欧赔、亚指让球、大小球)
+  euroOddsSnapshot?: {
+    earlyWin?: number;
+    earlyDraw?: number;
+    earlyLoss?: number;
+    lateWin?: number;
+    lateDraw?: number;
+    lateLoss?: number;
+  };
+  asianHandicapSnapshot?: {
+    earlyHandicap?: string;
+    earlyHomeOdds?: number;
+    earlyAwayOdds?: number;
+    lateHandicap?: string;
+    lateHomeOdds?: number;
+    lateAwayOdds?: number;
+  };
+  overUnderSnapshot?: {
+    earlyLine?: string;
+    earlyOverOdds?: number;
+    earlyUnderOdds?: number;
+    lateLine?: string;
+    lateOverOdds?: number;
+    lateUnderOdds?: number;
+  };
 }
 
 export interface ParlayReviewRecord {

@@ -1680,40 +1680,102 @@ export function evaluateParlaySettlement(
   const rev1 = findReviewForMatch(parlay.match1);
   const rev2 = findReviewForMatch(parlay.match2);
 
+  const parseScoreNums = (scoreStr?: string) => {
+    if (!scoreStr) return { home: undefined, away: undefined };
+    const parts = scoreStr.split('-');
+    if (parts.length === 2) {
+      const h = parseInt(parts[0], 10);
+      const a = parseInt(parts[1], 10);
+      if (!isNaN(h) && !isNaN(a)) return { home: h, away: a };
+    }
+    return { home: undefined, away: undefined };
+  };
+
+  const finalScore1 = rev1?.actualScore || parlay.match1.actualScore || parlay.match1.finalScore;
+  let home1 = rev1?.actualHomeScore ?? parlay.match1.actualHomeScore;
+  let away1 = rev1?.actualAwayScore ?? parlay.match1.actualAwayScore;
+  if (home1 === undefined && finalScore1) {
+    const p = parseScoreNums(finalScore1);
+    home1 = p.home;
+    away1 = p.away;
+  }
+
+  const finalScore2 = rev2?.actualScore || parlay.match2.actualScore || parlay.match2.finalScore;
+  let home2 = rev2?.actualHomeScore ?? parlay.match2.actualHomeScore;
+  let away2 = rev2?.actualAwayScore ?? parlay.match2.actualAwayScore;
+  if (home2 === undefined && finalScore2) {
+    const p = parseScoreNums(finalScore2);
+    home2 = p.home;
+    away2 = p.away;
+  }
+
+  const line1 = parlay.match1.handicapLine || rev1?.matchData?.asianHandicap?.lateHandicap || '平手';
+  const line2 = parlay.match2.handicapLine || rev2?.matchData?.asianHandicap?.lateHandicap || '平手';
+
+  const hc1 = (home1 !== undefined && away1 !== undefined)
+    ? evaluateSingleHandicapOutcome(line1, parlay.match1.handicapPick, parlay.match1.homeTeam, parlay.match1.awayTeam, home1, away1)
+    : undefined;
+
+  const hc2 = (home2 !== undefined && away2 !== undefined)
+    ? evaluateSingleHandicapOutcome(line2, parlay.match2.handicapPick, parlay.match2.homeTeam, parlay.match2.awayTeam, home2, away2)
+    : undefined;
+
+  const diff1 = (home1 !== undefined && away1 !== undefined) ? home1 - away1 : 0;
+  const actualEuroOutcome1 = diff1 > 0 ? 'WIN' : diff1 === 0 ? 'DRAW' : 'LOSS';
+  const euroHit1 = rev1?.outcomeEvaluation?.euroHit !== undefined
+    ? rev1.outcomeEvaluation.euroHit
+    : (parlay.match1.euroHit !== undefined
+      ? parlay.match1.euroHit
+      : (home1 !== undefined ? evaluateEuroHit(parlay.match1.euroPick, actualEuroOutcome1) : undefined));
+
+  const diff2 = (home2 !== undefined && away2 !== undefined) ? home2 - away2 : 0;
+  const actualEuroOutcome2 = diff2 > 0 ? 'WIN' : diff2 === 0 ? 'DRAW' : 'LOSS';
+  const euroHit2 = rev2?.outcomeEvaluation?.euroHit !== undefined
+    ? rev2.outcomeEvaluation.euroHit
+    : (parlay.match2.euroHit !== undefined
+      ? parlay.match2.euroHit
+      : (home2 !== undefined ? evaluateEuroHit(parlay.match2.euroPick, actualEuroOutcome2) : undefined));
+
   const m1: ParlayMatchSnapshot = {
     ...parlay.match1,
-    actualScore: rev1?.actualScore || parlay.match1.actualScore,
-    finalScore: rev1?.actualScore || parlay.match1.actualScore || parlay.match1.finalScore,
-    actualHomeScore: rev1?.actualHomeScore ?? parlay.match1.actualHomeScore,
-    actualAwayScore: rev1?.actualAwayScore ?? parlay.match1.actualAwayScore,
+    actualScore: finalScore1,
+    finalScore: finalScore1,
+    actualHomeScore: home1,
+    actualAwayScore: away1,
     stars: parlay.match1.stars || parlay.match1.starRating || 4,
     starRating: parlay.match1.starRating || parlay.match1.stars || 4,
     identifiedModel: parlay.match1.identifiedModel || rev1?.ruleCategory || '',
     modelTitle: parlay.match1.modelTitle || rev1?.priorReport?.modelTitle || '稳胆',
-    handicapLine: parlay.match1.handicapLine || rev1?.matchData?.asianHandicap?.lateHandicap || '平手',
-    isFinished: Boolean(rev1?.actualScore || parlay.match1.actualScore || parlay.match1.finalScore),
-    euroHit: rev1?.outcomeEvaluation?.euroHit !== undefined ? rev1.outcomeEvaluation.euroHit : parlay.match1.euroHit,
-    handicapHit: rev1?.outcomeEvaluation?.handicapHit !== undefined ? rev1.outcomeEvaluation.handicapHit : parlay.match1.handicapHit,
-    handicapDetail: rev1?.outcomeEvaluation?.handicapDetail || parlay.match1.handicapDetail,
-    handicapDetailLabel: rev1?.outcomeEvaluation?.handicapDetailLabel || parlay.match1.handicapDetailLabel,
+    handicapLine: line1,
+    isFinished: Boolean(finalScore1),
+    euroHit: euroHit1,
+    handicapHit: hc1 ? hc1.hit : (rev1?.outcomeEvaluation?.handicapHit !== undefined ? rev1.outcomeEvaluation.handicapHit : parlay.match1.handicapHit),
+    handicapDetail: hc1 ? hc1.detail : (rev1?.outcomeEvaluation?.handicapDetail || parlay.match1.handicapDetail),
+    handicapDetailLabel: hc1 ? hc1.detailLabel : (rev1?.outcomeEvaluation?.handicapDetailLabel || parlay.match1.handicapDetailLabel),
+    euroOddsSnapshot: parlay.match1.euroOddsSnapshot || (rev1?.matchData?.euroOdds ? { ...rev1.matchData.euroOdds } : undefined),
+    asianHandicapSnapshot: parlay.match1.asianHandicapSnapshot || (rev1?.matchData?.asianHandicap ? { ...rev1.matchData.asianHandicap } : undefined),
+    overUnderSnapshot: parlay.match1.overUnderSnapshot || (rev1?.matchData?.overUnder ? { ...rev1.matchData.overUnder } : undefined),
   };
 
   const m2: ParlayMatchSnapshot = {
     ...parlay.match2,
-    actualScore: rev2?.actualScore || parlay.match2.actualScore,
-    finalScore: rev2?.actualScore || parlay.match2.actualScore || parlay.match2.finalScore,
-    actualHomeScore: rev2?.actualHomeScore ?? parlay.match2.actualHomeScore,
-    actualAwayScore: rev2?.actualAwayScore ?? parlay.match2.actualAwayScore,
+    actualScore: finalScore2,
+    finalScore: finalScore2,
+    actualHomeScore: home2,
+    actualAwayScore: away2,
     stars: parlay.match2.stars || parlay.match2.starRating || 4,
     starRating: parlay.match2.starRating || parlay.match2.stars || 4,
     identifiedModel: parlay.match2.identifiedModel || rev2?.ruleCategory || '',
     modelTitle: parlay.match2.modelTitle || rev2?.priorReport?.modelTitle || '稳胆',
-    handicapLine: parlay.match2.handicapLine || rev2?.matchData?.asianHandicap?.lateHandicap || '平手',
-    isFinished: Boolean(rev2?.actualScore || parlay.match2.actualScore || parlay.match2.finalScore),
-    euroHit: rev2?.outcomeEvaluation?.euroHit !== undefined ? rev2.outcomeEvaluation.euroHit : parlay.match2.euroHit,
-    handicapHit: rev2?.outcomeEvaluation?.handicapHit !== undefined ? rev2.outcomeEvaluation.handicapHit : parlay.match2.handicapHit,
-    handicapDetail: rev2?.outcomeEvaluation?.handicapDetail || parlay.match2.handicapDetail,
-    handicapDetailLabel: rev2?.outcomeEvaluation?.handicapDetailLabel || parlay.match2.handicapDetailLabel,
+    handicapLine: line2,
+    isFinished: Boolean(finalScore2),
+    euroHit: euroHit2,
+    handicapHit: hc2 ? hc2.hit : (rev2?.outcomeEvaluation?.handicapHit !== undefined ? rev2.outcomeEvaluation.handicapHit : parlay.match2.handicapHit),
+    handicapDetail: hc2 ? hc2.detail : (rev2?.outcomeEvaluation?.handicapDetail || parlay.match2.handicapDetail),
+    handicapDetailLabel: hc2 ? hc2.detailLabel : (rev2?.outcomeEvaluation?.handicapDetailLabel || parlay.match2.handicapDetailLabel),
+    euroOddsSnapshot: parlay.match2.euroOddsSnapshot || (rev2?.matchData?.euroOdds ? { ...rev2.matchData.euroOdds } : undefined),
+    asianHandicapSnapshot: parlay.match2.asianHandicapSnapshot || (rev2?.matchData?.asianHandicap ? { ...rev2.matchData.asianHandicap } : undefined),
+    overUnderSnapshot: parlay.match2.overUnderSnapshot || (rev2?.matchData?.overUnder ? { ...rev2.matchData.overUnder } : undefined),
   };
 
   const isSettled = Boolean(m1.isFinished && m2.isFinished);
@@ -1777,6 +1839,13 @@ export function evaluateParlaySettlement(
     } else {
       summaryNote = `其中一场遭遇冷门打破平衡，已自动提取对应抗冷教训沉淀至经验法则库。`;
     }
+
+    if (m1.handicapDetail === 'LOSE_HALF') {
+      summaryNote += ` (注：稳胆1【${m1.homeTeam}】战平卡在平半盘口，判定为【输半】)`;
+    }
+    if (m2.handicapDetail === 'LOSE_HALF') {
+      summaryNote += ` (注：稳胆2【${m2.homeTeam}】战平卡在平半盘口，判定为【输半】)`;
+    }
   }
 
   return {
@@ -1802,6 +1871,7 @@ export function evaluateParlaySettlement(
 
 /**
  * Retrieve saved 2-Pick Parlay review records, synchronized with latest individual match scores
+ * Sorted descending by salesDate and createdAt (最新日期在前)
  */
 export function getParlayReviews(): ParlayReviewRecord[] {
   try {
@@ -1811,6 +1881,14 @@ export function getParlayReviews(): ParlayReviewRecord[] {
     const allMatchReviews = getPostMatchReviews();
 
     const settledList = stored.map((p) => evaluateParlaySettlement(p, allMatchReviews));
+    // 严格按销售日倒序与创建时间倒序排序 (最新在前)
+    settledList.sort((a, b) => {
+      const dateA = a.salesDate || '';
+      const dateB = b.salesDate || '';
+      const dateCmp = dateB.localeCompare(dateA);
+      if (dateCmp !== 0) return dateCmp;
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
     return settledList;
   } catch (e) {
     console.error('Error loading parlay reviews:', e);
@@ -1874,6 +1952,7 @@ export function clearAllParlayReviews(): void {
 
 /**
  * Automatically synthesizes daily 2-in-1 parlay reviews from historical match reviews
+ * Captures historical market odds snapshots and sorts descending by salesDate & createdAt
  */
 export function autoExtractDailyParlayReviews(matchReviews: PostMatchReview[]): ParlayReviewRecord[] {
   if (!matchReviews || matchReviews.length < 2) return [];
@@ -1937,6 +2016,9 @@ export function autoExtractDailyParlayReviews(matchReviews: PostMatchReview[]): 
       handicapHit: m1.outcomeEvaluation.handicapHit,
       handicapDetail: m1.outcomeEvaluation.handicapDetail,
       handicapDetailLabel: m1.outcomeEvaluation.handicapDetailLabel,
+      euroOddsSnapshot: m1.matchData.euroOdds ? { ...m1.matchData.euroOdds } : undefined,
+      asianHandicapSnapshot: m1.matchData.asianHandicap ? { ...m1.matchData.asianHandicap } : undefined,
+      overUnderSnapshot: m1.matchData.overUnder ? { ...m1.matchData.overUnder } : undefined,
     };
 
     const snap2: ParlayMatchSnapshot = {
@@ -1960,6 +2042,9 @@ export function autoExtractDailyParlayReviews(matchReviews: PostMatchReview[]): 
       handicapHit: m2.outcomeEvaluation.handicapHit,
       handicapDetail: m2.outcomeEvaluation.handicapDetail,
       handicapDetailLabel: m2.outcomeEvaluation.handicapDetailLabel,
+      euroOddsSnapshot: m2.matchData.euroOdds ? { ...m2.matchData.euroOdds } : undefined,
+      asianHandicapSnapshot: m2.matchData.asianHandicap ? { ...m2.matchData.asianHandicap } : undefined,
+      overUnderSnapshot: m2.matchData.overUnder ? { ...m2.matchData.overUnder } : undefined,
     };
 
     const parlayRecord: ParlayReviewRecord = {
@@ -1982,6 +2067,15 @@ export function autoExtractDailyParlayReviews(matchReviews: PostMatchReview[]): 
 
     generatedParlays.push(evaluateParlaySettlement(parlayRecord, matchReviews));
   }
+
+  // 严格倒序排序：最新销售日与最新创建时间优先
+  generatedParlays.sort((a, b) => {
+    const dateA = a.salesDate || '';
+    const dateB = b.salesDate || '';
+    const dateCmp = dateB.localeCompare(dateA);
+    if (dateCmp !== 0) return dateCmp;
+    return (b.createdAt || 0) - (a.createdAt || 0);
+  });
 
   return generatedParlays;
 }
@@ -2068,32 +2162,28 @@ export interface HandicapOutcomeDetail {
 }
 
 /**
- * Rigorously evaluates Asian Handicap outcomes, accurately distinguishing:
- * - 赢全 (WIN): effDiff > 0.25 (e.g. +0.5, +0.75, +1.0...) -> hit = true
- * - 赢半 (WIN_HALF): effDiff === +0.25 -> hit = true (赢得一半水位分红，实战红单盈利)
+ * Pure evaluation function for Asian Handicap outcome:
+ * Supports arbitrary prediction strings, team names, lines, and actual scores.
+ * Accurately distinguishes:
+ * - 赢全 (WIN): effDiff > 0.25 -> hit = true
+ * - 赢半 (WIN_HALF): effDiff === +0.25 -> hit = true (赢得一半水位分红)
  * - 走盘 (PUSH): effDiff === 0 -> hit = true (走水退本保本)
- * - 输半 (LOSE_HALF): effDiff === -0.25 -> hit = false (输掉一半本金)
- * - 输全 (LOSE): effDiff < -0.25 (e.g. -0.5, -0.75, -1.0...) -> hit = false
+ * - 输半 (LOSE_HALF): effDiff === -0.25 -> hit = false (输掉一半本金，如名古屋鲸平手/半球战平1-1，判定为输半)
+ * - 输全 (LOSE): effDiff < -0.25 -> hit = false
  */
-export function evaluateHandicapDetailedOutcome(
-  matchData: FullMatchData,
-  priorReport: AnalysisReportResult,
+export function evaluateSingleHandicapOutcome(
+  handicapLineStr: string,
+  predictedHandicapStr: string,
+  homeTeam: string,
+  awayTeam: string,
   actualHomeScore: number,
   actualAwayScore: number
 ): HandicapOutcomeDetail {
-  const homeTeam = matchData.matchInfo?.homeTeam || '';
-  const awayTeam = matchData.matchInfo?.awayTeam || '';
-  const predictedHandicap = (priorReport.decision?.handicapPick || '').trim();
+  const normHome = (homeTeam || '').replace(/\s+/g, '').toLowerCase();
+  const normAway = (awayTeam || '').replace(/\s+/g, '').toLowerCase();
+  const normPred = (predictedHandicapStr || '').replace(/\s+/g, '').toLowerCase();
+  const parsedHandicapVal = parseHandicapValue(handicapLineStr || '0');
 
-  const normHome = homeTeam.replace(/\s+/g, '').toLowerCase();
-  const normAway = awayTeam.replace(/\s+/g, '').toLowerCase();
-  const normPred = predictedHandicap.replace(/\s+/g, '').toLowerCase();
-
-  const lateHandicapStr = (matchData.asianHandicap?.lateHandicap || '').trim();
-  const parsedHandicapVal = parseHandicapValue(lateHandicapStr);
-
-  // 1. Determine which team the prediction picked
-  // Team name matches take absolute top priority!
   let pickedSide: 'HOME' | 'AWAY' = 'HOME';
   const mentionsHome = Boolean(normHome && normPred.includes(normHome));
   const mentionsAway = Boolean(normAway && normPred.includes(normAway));
@@ -2107,14 +2197,13 @@ export function evaluateHandicapDetailedOutcome(
   } else if (normPred.includes('主队') || normPred.includes('主让')) {
     pickedSide = 'HOME';
   } else {
-    // If neither or both team names are mentioned, look at 上盘 (favorite) vs 下盘 (underdog)
+    // If prediction mentions 上盘 vs 下盘
     const isAwayGiving =
       parsedHandicapVal > 0 ||
-      lateHandicapStr.includes('客让') ||
-      lateHandicapStr.includes('受让') ||
-      lateHandicapStr.includes('受');
-    const isHomeGiving = parsedHandicapVal < 0 || lateHandicapStr.includes('主让');
-    const homeIsFav = isHomeGiving || (!isAwayGiving && (matchData.euroOdds?.lateWin || 2.5) <= (matchData.euroOdds?.lateLoss || 2.5));
+      (handicapLineStr || '').includes('客让') ||
+      (handicapLineStr || '').includes('受让') ||
+      (handicapLineStr || '').includes('受');
+    const homeIsFav = !isAwayGiving;
 
     if (normPred.includes('上盘')) {
       pickedSide = homeIsFav ? 'HOME' : 'AWAY';
@@ -2127,14 +2216,11 @@ export function evaluateHandicapDetailedOutcome(
     }
   }
 
-  // 2. Determine Handicap H applied to the pickedSide
   let H = 0;
-  // Check if prediction text explicitly specifies a signed handicap (e.g. (+0.25/平手), (+1.25受让), (-1.75让球))
-  const explicitSigned = predictedHandicap.match(/\(\s*([+-]\d+(?:\.\d+)?)/);
+  const explicitSigned = (predictedHandicapStr || '').match(/\(\s*([+-]\d+(?:\.\d+)?)/);
   if (explicitSigned) {
     H = parseFloat(explicitSigned[1]) || 0;
   } else {
-    // Fallback: derive handicap from lateHandicapStr
     // Convention in parseHandicapValue: negative (<0) means Home gives, positive (>0) means Home receives
     const homeH = parsedHandicapVal;
     H = pickedSide === 'HOME' ? homeH : -homeH;
@@ -2172,6 +2258,30 @@ export function evaluateHandicapDetailedOutcome(
   }
 
   return { hit, detail, detailLabel, effectiveDiff: effDiff, pickedSide, handicapLineApplied: H };
+}
+
+/**
+ * Rigorously evaluates Asian Handicap outcomes for FullMatchData
+ */
+export function evaluateHandicapDetailedOutcome(
+  matchData: FullMatchData,
+  priorReport: AnalysisReportResult,
+  actualHomeScore: number,
+  actualAwayScore: number
+): HandicapOutcomeDetail {
+  const homeTeam = matchData.matchInfo?.homeTeam || '';
+  const awayTeam = matchData.matchInfo?.awayTeam || '';
+  const predictedHandicap = (priorReport.decision?.handicapPick || '').trim();
+  const lateHandicapStr = (matchData.asianHandicap?.lateHandicap || '').trim();
+
+  return evaluateSingleHandicapOutcome(
+    lateHandicapStr,
+    predictedHandicap,
+    homeTeam,
+    awayTeam,
+    actualHomeScore,
+    actualAwayScore
+  );
 }
 
 /**

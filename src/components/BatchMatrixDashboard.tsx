@@ -368,6 +368,9 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
       handicapLine: match1.item.data.asianHandicap.lateHandicap || match1.item.data.asianHandicap.earlyHandicap || '平手',
       predictedScores: match1.dec.predictedScores,
       finalScore: match1.item.finalScore,
+      euroOddsSnapshot: match1.item.data.euroOdds ? { ...match1.item.data.euroOdds } : undefined,
+      asianHandicapSnapshot: match1.item.data.asianHandicap ? { ...match1.item.data.asianHandicap } : undefined,
+      overUnderSnapshot: match1.item.data.overUnder ? { ...match1.item.data.overUnder } : undefined,
     };
     const snap2: ParlayMatchSnapshot = {
       matchId: match2.item.id,
@@ -382,6 +385,9 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
       handicapLine: match2.item.data.asianHandicap.lateHandicap || match2.item.data.asianHandicap.earlyHandicap || '平手',
       predictedScores: match2.dec.predictedScores,
       finalScore: match2.item.finalScore,
+      euroOddsSnapshot: match2.item.data.euroOdds ? { ...match2.item.data.euroOdds } : undefined,
+      asianHandicapSnapshot: match2.item.data.asianHandicap ? { ...match2.item.data.asianHandicap } : undefined,
+      overUnderSnapshot: match2.item.data.overUnder ? { ...match2.item.data.overUnder } : undefined,
     };
 
     const newRecord: ParlayReviewRecord = {

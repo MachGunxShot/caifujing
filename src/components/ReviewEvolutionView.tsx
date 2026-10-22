@@ -4480,9 +4480,136 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                   if (parlayFilterStatus === 'PENDING') return p.settlementStatus === 'PENDING';
                   return true;
                 })
+                .sort((a, b) => {
+                  // 严格倒序排序：最新销售日优先，相同销售日则最新创建时间优先
+                  const dateA = a.salesDate || '';
+                  const dateB = b.salesDate || '';
+                  const dateCmp = dateB.localeCompare(dateA);
+                  if (dateCmp !== 0) return dateCmp;
+                  return (b.createdAt || 0) - (a.createdAt || 0);
+                })
                 .map((parlay) => {
                   const m1 = parlay.match1;
                   const m2 = parlay.match2;
+
+                  const renderHandicapBadge = (m: ParlayMatchSnapshot) => {
+                    const label =
+                      m.handicapDetailLabel ||
+                      (m.handicapDetail === 'WIN_HALF'
+                        ? '赢半'
+                        : m.handicapDetail === 'PUSH'
+                        ? '走盘'
+                        : m.handicapDetail === 'LOSE_HALF'
+                        ? '输半'
+                        : m.handicapDetail === 'WIN'
+                        ? '赢盘'
+                        : m.handicapDetail === 'LOSE'
+                        ? '输盘'
+                        : m.handicapHit
+                        ? '赢盘'
+                        : '输盘');
+
+                    const colorClass =
+                      label === '输半'
+                        ? 'text-amber-400 bg-amber-500/15 border-amber-500/40 font-bold'
+                        : label === '赢半'
+                        ? 'text-teal-400 bg-teal-500/15 border-teal-500/40 font-bold'
+                        : label === '走盘'
+                        ? 'text-cyan-400 bg-cyan-500/15 border-cyan-500/40'
+                        : label === '赢盘'
+                        ? 'text-emerald-400 bg-emerald-500/15 border-emerald-500/40'
+                        : 'text-rose-400 bg-rose-500/15 border-rose-500/40';
+
+                    return (
+                      <span className={`font-mono text-xs px-1.5 py-0.5 rounded border ${colorClass}`}>
+                        【{label}】
+                      </span>
+                    );
+                  };
+
+                  const renderMatchOddsSnapshot = (snapshot: ParlayMatchSnapshot) => {
+                    const euro = snapshot.euroOddsSnapshot;
+                    const asian = snapshot.asianHandicapSnapshot;
+                    const ou = snapshot.overUnderSnapshot;
+
+                    if (!euro && !asian && !ou) return null;
+
+                    const hasEarlyEuro = Boolean(
+                      euro && euro.earlyWin && euro.earlyDraw && euro.earlyLoss &&
+                      (euro.earlyWin !== euro.lateWin || euro.earlyDraw !== euro.lateDraw || euro.earlyLoss !== euro.lateLoss)
+                    );
+
+                    const hasEarlyAsian = Boolean(
+                      asian && asian.earlyHandicap &&
+                      (asian.earlyHandicap !== asian.lateHandicap ||
+                       Math.abs((asian.earlyHomeOdds || 0) - (asian.lateHomeOdds || 0)) > 0.02)
+                    );
+
+                    return (
+                      <div className="bg-slate-950/80 rounded-lg p-2 border border-slate-800/90 text-[11px] space-y-1.5 mt-2">
+                        <div className="flex items-center justify-between text-slate-400 font-mono border-b border-slate-800/60 pb-1">
+                          <span className="text-[10px] text-amber-300 font-bold flex items-center gap-1">
+                            📊 当时赔率快照
+                          </span>
+                          <span className="text-[9px] text-slate-500 font-sans">
+                            {hasEarlyEuro || hasEarlyAsian ? '初盘 ➔ 终盘(变轨)' : '即时终盘快照'}
+                          </span>
+                        </div>
+
+                        {/* 欧赔 */}
+                        {euro && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400">欧指 (胜/平/负):</span>
+                            <span className="font-mono text-slate-200">
+                              {hasEarlyEuro && (
+                                <span className="text-slate-500 text-[10px] mr-1">
+                                  {euro.earlyWin?.toFixed(2)}/{euro.earlyDraw?.toFixed(2)}/{euro.earlyLoss?.toFixed(2)} ➔
+                                </span>
+                              )}
+                              <span className="font-bold text-amber-300">
+                                {euro.lateWin?.toFixed(2)} / {euro.lateDraw?.toFixed(2)} / {euro.lateLoss?.toFixed(2)}
+                              </span>
+                            </span>
+                          </div>
+                        )}
+
+                        {/* 亚盘 */}
+                        {asian && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400">亚让 (让球·水位):</span>
+                            <span className="font-mono text-slate-200">
+                              {hasEarlyAsian && asian.earlyHandicap && (
+                                <span className="text-slate-500 text-[10px] mr-1">
+                                  {asian.earlyHandicap}({asian.earlyHomeOdds?.toFixed(2)}) ➔
+                                </span>
+                              )}
+                              <span className="font-bold text-cyan-300">
+                                {asian.lateHandicap || snapshot.handicapLine}
+                                <span className="text-slate-400 text-[10px] ml-1 font-normal">
+                                  (主{asian.lateHomeOdds?.toFixed(2)} / 客{asian.lateAwayOdds?.toFixed(2)})
+                                </span>
+                              </span>
+                            </span>
+                          </div>
+                        )}
+
+                        {/* 大小球 */}
+                        {ou && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400">大小 (进球界线):</span>
+                            <span className="font-mono text-slate-200">
+                              <span className="font-bold text-emerald-300">
+                                {ou.lateLine || '2.5'}球
+                                <span className="text-slate-400 text-[10px] ml-1 font-normal">
+                                  (大{ou.lateOverOdds?.toFixed(2)} / 小{ou.lateUnderOdds?.toFixed(2)})
+                                </span>
+                              </span>
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  };
 
                   return (
                     <div
@@ -4536,7 +4663,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {/* Match 1 */}
                         <div
-                          className={`p-3 rounded-lg border space-y-2 ${
+                          className={`p-3 rounded-lg border space-y-2 flex flex-col justify-between ${
                             m1.euroHit && m1.handicapHit
                               ? 'bg-emerald-950/20 border-emerald-500/40'
                               : m1.euroHit || m1.handicapHit
@@ -4546,65 +4673,62 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                               : 'bg-slate-950 border-slate-800'
                           }`}
                         >
-                          <div className="flex items-center justify-between">
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                              稳胆 1 ({m1.stars}★ {m1.modelTitle || m1.identifiedModel})
-                            </span>
-                            <span className="text-[10px] text-slate-400 font-mono">
-                              {m1.matchTime || '开赛时间'}
-                            </span>
-                          </div>
-
-                          <div className="flex items-center justify-between">
-                            <span className="font-extrabold text-sm text-white">
-                              {m1.homeTeam} VS {m1.awayTeam}
-                            </span>
-                            <span className="font-mono font-black text-amber-400 text-sm">
-                              {m1.finalScore ? `完场 ${m1.finalScore}` : '⏳ 待开赛'}
-                            </span>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-800/80">
-                            <div className="bg-slate-900/90 p-2 rounded flex items-center justify-between">
-                              <div>
-                                <span className="text-[10px] text-slate-400 block">胜平负推荐</span>
-                                <span className="font-bold text-white">{m1.euroPick}</span>
-                              </div>
-                              {m1.finalScore && (
-                                <span
-                                  className={`font-mono font-black text-xs ${
-                                    m1.euroHit ? 'text-emerald-400' : 'text-rose-400'
-                                  }`}
-                                >
-                                  {m1.euroHit ? '【红】' : '【黑】'}
-                                </span>
-                              )}
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                稳胆 1 ({m1.stars}★ {m1.modelTitle || m1.identifiedModel})
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                {m1.matchTime || '开赛时间'}
+                              </span>
                             </div>
-                            <div className="bg-slate-900/90 p-2 rounded flex items-center justify-between">
-                              <div>
-                                <span className="text-[10px] text-slate-400 block">
-                                  让球 ({m1.handicapLine})
-                                </span>
-                                <span className="font-bold text-cyan-300 truncate block max-w-[100px]">
-                                  {m1.handicapPick}
-                                </span>
+
+                            <div className="flex items-center justify-between">
+                              <span className="font-extrabold text-sm text-white">
+                                {m1.homeTeam} VS {m1.awayTeam}
+                              </span>
+                              <span className="font-mono font-black text-amber-400 text-sm">
+                                {m1.finalScore ? `完场 ${m1.finalScore}` : '⏳ 待开赛'}
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-800/80">
+                              <div className="bg-slate-900/90 p-2 rounded flex items-center justify-between">
+                                <div>
+                                  <span className="text-[10px] text-slate-400 block">胜平负推荐</span>
+                                  <span className="font-bold text-white">{m1.euroPick}</span>
+                                </div>
+                                {m1.finalScore && (
+                                  <span
+                                    className={`font-mono font-black text-xs ${
+                                      m1.euroHit ? 'text-emerald-400' : 'text-rose-400'
+                                    }`}
+                                  >
+                                    {m1.euroHit ? '【红】' : '【黑】'}
+                                  </span>
+                                )}
                               </div>
-                              {m1.finalScore && (
-                                <span
-                                  className={`font-mono font-black text-xs ${
-                                    m1.handicapHit ? 'text-cyan-400' : 'text-rose-400'
-                                  }`}
-                                >
-                                  【{m1.handicapDetailLabel || (m1.handicapHit ? '赢盘' : '输盘')}】
-                                </span>
-                              )}
+                              <div className="bg-slate-900/90 p-2 rounded flex items-center justify-between">
+                                <div>
+                                  <span className="text-[10px] text-slate-400 block">
+                                    让球 ({m1.handicapLine})
+                                  </span>
+                                  <span className="font-bold text-cyan-300 truncate block max-w-[100px]">
+                                    {m1.handicapPick}
+                                  </span>
+                                </div>
+                                {m1.finalScore && renderHandicapBadge(m1)}
+                              </div>
                             </div>
                           </div>
+
+                          {/* Historical Market Odds Snapshot */}
+                          {renderMatchOddsSnapshot(m1)}
                         </div>
 
                         {/* Match 2 */}
                         <div
-                          className={`p-3 rounded-lg border space-y-2 ${
+                          className={`p-3 rounded-lg border space-y-2 flex flex-col justify-between ${
                             m2.euroHit && m2.handicapHit
                               ? 'bg-emerald-950/20 border-emerald-500/40'
                               : m2.euroHit || m2.handicapHit
@@ -4614,60 +4738,57 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                               : 'bg-slate-950 border-slate-800'
                           }`}
                         >
-                          <div className="flex items-center justify-between">
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                              稳胆 2 ({m2.stars}★ {m2.modelTitle || m2.identifiedModel})
-                            </span>
-                            <span className="text-[10px] text-slate-400 font-mono">
-                              {m2.matchTime || '开赛时间'}
-                            </span>
-                          </div>
-
-                          <div className="flex items-center justify-between">
-                            <span className="font-extrabold text-sm text-white">
-                              {m2.homeTeam} VS {m2.awayTeam}
-                            </span>
-                            <span className="font-mono font-black text-cyan-300 text-sm">
-                              {m2.finalScore ? `完场 ${m2.finalScore}` : '⏳ 待开赛'}
-                            </span>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-800/80">
-                            <div className="bg-slate-900/90 p-2 rounded flex items-center justify-between">
-                              <div>
-                                <span className="text-[10px] text-slate-400 block">胜平负推荐</span>
-                                <span className="font-bold text-white">{m2.euroPick}</span>
-                              </div>
-                              {m2.finalScore && (
-                                <span
-                                  className={`font-mono font-black text-xs ${
-                                    m2.euroHit ? 'text-emerald-400' : 'text-rose-400'
-                                  }`}
-                                >
-                                  {m2.euroHit ? '【红】' : '【黑】'}
-                                </span>
-                              )}
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                                稳胆 2 ({m2.stars}★ {m2.modelTitle || m2.identifiedModel})
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                {m2.matchTime || '开赛时间'}
+                              </span>
                             </div>
-                            <div className="bg-slate-900/90 p-2 rounded flex items-center justify-between">
-                              <div>
-                                <span className="text-[10px] text-slate-400 block">
-                                  让球 ({m2.handicapLine})
-                                </span>
-                                <span className="font-bold text-cyan-300 truncate block max-w-[100px]">
-                                  {m2.handicapPick}
-                                </span>
+
+                            <div className="flex items-center justify-between">
+                              <span className="font-extrabold text-sm text-white">
+                                {m2.homeTeam} VS {m2.awayTeam}
+                              </span>
+                              <span className="font-mono font-black text-cyan-300 text-sm">
+                                {m2.finalScore ? `完场 ${m2.finalScore}` : '⏳ 待开赛'}
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-800/80">
+                              <div className="bg-slate-900/90 p-2 rounded flex items-center justify-between">
+                                <div>
+                                  <span className="text-[10px] text-slate-400 block">胜平负推荐</span>
+                                  <span className="font-bold text-white">{m2.euroPick}</span>
+                                </div>
+                                {m2.finalScore && (
+                                  <span
+                                    className={`font-mono font-black text-xs ${
+                                      m2.euroHit ? 'text-emerald-400' : 'text-rose-400'
+                                    }`}
+                                  >
+                                    {m2.euroHit ? '【红】' : '【黑】'}
+                                  </span>
+                                )}
                               </div>
-                              {m2.finalScore && (
-                                <span
-                                  className={`font-mono font-black text-xs ${
-                                    m2.handicapHit ? 'text-cyan-400' : 'text-rose-400'
-                                  }`}
-                                >
-                                  【{m2.handicapDetailLabel || (m2.handicapHit ? '赢盘' : '输盘')}】
-                                </span>
-                              )}
+                              <div className="bg-slate-900/90 p-2 rounded flex items-center justify-between">
+                                <div>
+                                  <span className="text-[10px] text-slate-400 block">
+                                    让球 ({m2.handicapLine})
+                                  </span>
+                                  <span className="font-bold text-cyan-300 truncate block max-w-[100px]">
+                                    {m2.handicapPick}
+                                  </span>
+                                </div>
+                                {m2.finalScore && renderHandicapBadge(m2)}
+                              </div>
                             </div>
                           </div>
+
+                          {/* Historical Market Odds Snapshot */}
+                          {renderMatchOddsSnapshot(m2)}
                         </div>
                       </div>
 
