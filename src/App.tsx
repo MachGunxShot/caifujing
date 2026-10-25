@@ -785,6 +785,11 @@ export default function App() {
     );
   };
 
+  // Delete a single match from the batch queue
+  const handleDeleteBatchMatch = (id: string) => {
+    setBatchQueue((prev) => prev.filter((item) => item.id !== id));
+  };
+
   // Record actual match score and automatically perform post-match evaluation and knowledge archiving
   const handleRecordScoreAndReview = (
     id: string,
@@ -889,6 +894,7 @@ export default function App() {
               <BatchMatrixDashboard
                 queue={batchQueue}
                 onSelectMatch={handleSelectBatchMatch}
+                onDeleteMatch={handleDeleteBatchMatch}
                 onClearQueue={() => setBatchQueue([])}
                 onOpenUploadModal={() => setIsUploadModalOpen(true)}
                 onBatchAnalyzeAll={handleBatchAnalyzeAll}

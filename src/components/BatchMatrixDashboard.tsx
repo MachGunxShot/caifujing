@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Layers,
   ArrowRight,
@@ -37,6 +37,8 @@ import {
   Activity,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   RotateCcw,
   Upload,
   TrendingUp,
@@ -64,6 +66,7 @@ import { HandicapOddsDistributionChart } from './HandicapOddsDistributionChart';
 interface BatchMatrixDashboardProps {
   queue: BatchMatchItem[];
   onSelectMatch: (match: FullMatchData) => void;
+  onDeleteMatch?: (id: string) => void;
   onClearQueue: () => void;
   onResetToPresets?: () => void;
   onPurgePresets?: () => void;
@@ -86,9 +89,166 @@ interface BatchMatrixDashboardProps {
   onNavigateToReview?: () => void;
 }
 
+interface SyncedTableWrapperProps {
+  children: React.ReactNode;
+  headerBar?: React.ReactNode;
+  containerClassName?: string;
+}
+
+const SyncedTableWrapper: React.FC<SyncedTableWrapperProps> = ({
+  children,
+  headerBar,
+  containerClassName,
+}) => {
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const topScrollRef = useRef<HTMLDivElement>(null);
+  const [tableScrollWidth, setTableScrollWidth] = useState<number>(1200);
+  const isSyncingScroll = useRef<boolean>(false);
+
+  useEffect(() => {
+    const el = tableContainerRef.current;
+    if (!el) return;
+
+    const updateWidth = () => {
+      if (tableContainerRef.current) {
+        setTableScrollWidth(tableContainerRef.current.scrollWidth);
+      }
+    };
+
+    updateWidth();
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        updateWidth();
+      });
+      resizeObserver.observe(el);
+      const table = el.querySelector('table');
+      if (table) resizeObserver.observe(table);
+    }
+
+    window.addEventListener('resize', updateWidth);
+    return () => {
+      window.removeEventListener('resize', updateWidth);
+      if (resizeObserver) resizeObserver.disconnect();
+    };
+  }, [children]);
+
+  const handleTopScroll = () => {
+    if (isSyncingScroll.current) return;
+    if (topScrollRef.current && tableContainerRef.current) {
+      isSyncingScroll.current = true;
+      tableContainerRef.current.scrollLeft = topScrollRef.current.scrollLeft;
+      requestAnimationFrame(() => {
+        isSyncingScroll.current = false;
+      });
+    }
+  };
+
+  const handleTableScroll = () => {
+    if (isSyncingScroll.current) return;
+    if (topScrollRef.current && tableContainerRef.current) {
+      isSyncingScroll.current = true;
+      topScrollRef.current.scrollLeft = tableContainerRef.current.scrollLeft;
+      requestAnimationFrame(() => {
+        isSyncingScroll.current = false;
+      });
+    }
+  };
+
+  const scrollToX = (x: number) => {
+    if (tableContainerRef.current) {
+      tableContainerRef.current.scrollTo({ left: x, behavior: 'smooth' });
+    }
+  };
+
+  const scrollStep = (dir: 'left' | 'right') => {
+    if (!tableContainerRef.current) return;
+    const cur = tableContainerRef.current.scrollLeft;
+    const delta = 320;
+    tableContainerRef.current.scrollTo({
+      left: dir === 'left' ? Math.max(0, cur - delta) : cur + delta,
+      behavior: 'smooth',
+    });
+  };
+
+  return (
+    <div className={`bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg ${containerClassName || ''}`}>
+      {headerBar}
+
+      {/* 顶部双向同步横向滚动条 (吸顶常驻，无需滑动到50+场底部即可横向查看所有列) */}
+      <div className="sticky top-0 z-20 bg-slate-950/95 backdrop-blur border-b border-slate-800 px-3 py-1.5 flex flex-col gap-1 shadow-sm">
+        <div className="flex items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+              <span>顶部横向滚动控制栏</span>
+            </span>
+            <span className="text-[10px] text-slate-400 hidden sm:inline">
+              (双向同步 · 无需滚到表格底部即可查看全部列)
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => scrollToX(0)}
+              className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold rounded border border-slate-700 transition-colors cursor-pointer"
+              title="滑动至首列 (赛事对阵与星级)"
+            >
+              ⏮ 对阵
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollStep('left')}
+              className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[10px] font-bold rounded border border-slate-700 transition-colors flex items-center gap-0.5 cursor-pointer"
+              title="向左横移"
+            >
+              <ChevronLeft className="w-3 h-3" />
+              <span>向左</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollStep('right')}
+              className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[10px] font-bold rounded border border-slate-700 transition-colors flex items-center gap-0.5 cursor-pointer"
+              title="向右横移"
+            >
+              <span>向右</span>
+              <ChevronRight className="w-3 h-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollToX(9999)}
+              className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-emerald-300 text-[10px] font-bold rounded border border-slate-700 transition-colors cursor-pointer"
+              title="滑动至尾列 (研判与操作)"
+            >
+              研判/操作 ⏭
+            </button>
+          </div>
+        </div>
+
+        {/* 顶部原生滚动条轨道 */}
+        <div
+          ref={topScrollRef}
+          onScroll={handleTopScroll}
+          className="overflow-x-auto overflow-y-hidden h-3 bg-slate-900 rounded border border-slate-800/80 scrollbar-thin scrollbar-thumb-cyan-500/50 hover:scrollbar-thumb-cyan-400 scrollbar-track-slate-950/60 cursor-ew-resize"
+        >
+          <div style={{ width: `${Math.max(tableScrollWidth, 1020)}px`, height: '1px' }} />
+        </div>
+      </div>
+
+      {/* 表格容器 */}
+      <div ref={tableContainerRef} onScroll={handleTableScroll} className="overflow-x-auto">
+        {children}
+      </div>
+    </div>
+  );
+};
+
 export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
   queue,
   onSelectMatch,
+  onDeleteMatch,
   onClearQueue,
   onResetToPresets,
   onPurgePresets,
@@ -139,6 +299,46 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
   const [awayGoals, setAwayGoals] = useState<number>(0);
   const [incidents, setIncidents] = useState<string>('');
   const [reviewSuccessMsg, setReviewSuccessMsg] = useState<string | null>(null);
+
+  // Single Match Deletion Toast & Smart Cleaner Handlers
+  const [deleteToast, setDeleteToast] = useState<string | null>(null);
+
+  const handleDeleteSingleMatch = (id: string, name: string) => {
+    if (onDeleteMatch) {
+      onDeleteMatch(id);
+      setDeleteToast(`已从队列移除赛事：${name}`);
+      setTimeout(() => {
+        setDeleteToast(null);
+      }, 3500);
+    }
+  };
+
+  const isSuspiciousItem = (item: BatchMatchItem) => {
+    const home = item.data.matchInfo.homeTeam || '';
+    const away = item.data.matchInfo.awayTeam || '';
+    const text = `${home} ${away} ${item.data.matchInfo.league || ''}`;
+    return (
+      text.includes('MatchTime') ||
+      text.includes('探球赛事ID') ||
+      text.includes('循环索引') ||
+      text.includes('同序球') ||
+      text.includes('数据表头') ||
+      (home.length <= 1 && away.length > 5) ||
+      (!home && !away)
+    );
+  };
+
+  const suspiciousItemsCount = useMemo(() => {
+    return queue.filter(isSuspiciousItem).length;
+  }, [queue]);
+
+  const handleCleanSuspiciousItems = () => {
+    if (!onDeleteMatch) return;
+    const suspiciousIds = queue.filter(isSuspiciousItem).map((item) => item.id);
+    suspiciousIds.forEach((id) => onDeleteMatch(id));
+    setDeleteToast(`已自动批量清理 ${suspiciousIds.length} 场疑似导入表头/乱码行`);
+    setTimeout(() => setDeleteToast(null), 3500);
+  };
 
   const getBadgeForModel = (model: string) => {
     switch (model) {
@@ -892,12 +1092,29 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
                 e.stopPropagation();
                 onSelectMatch(item.data);
               }}
-              className="px-2 py-1 bg-slate-800 hover:bg-emerald-500 hover:text-slate-950 text-slate-300 text-[11px] font-bold rounded border border-slate-700 transition-all inline-flex items-center gap-1 cursor-pointer"
+              className="px-2 py-1 bg-slate-800 hover:bg-emerald-500 hover:text-slate-950 text-slate-300 text-[11px] font-bold rounded border border-slate-700 transition-all inline-flex items-center gap-1 cursor-pointer shrink-0"
               title="载入左侧单场精算台"
             >
               <span>研判</span>
               <ArrowRight className="w-3 h-3" />
             </button>
+
+            {onDeleteMatch && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDeleteSingleMatch(
+                    item.id,
+                    `${item.data.matchInfo.homeTeam || '主队'} VS ${item.data.matchInfo.awayTeam || '客队'}`
+                  );
+                }}
+                className="p-1 text-slate-400 hover:text-rose-400 hover:bg-rose-500/15 rounded border border-transparent hover:border-rose-500/30 transition-all cursor-pointer shrink-0"
+                title={`从队列删除此场赛事 (${item.data.matchInfo.homeTeam || '主队'} VS ${item.data.matchInfo.awayTeam || '客队'})`}
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-400/80 hover:text-rose-300" />
+              </button>
+            )}
           </div>
         </td>
       </tr>
@@ -1058,6 +1275,22 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
               <span>载入精算台</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
+
+            {onDeleteMatch && (
+              <button
+                type="button"
+                onClick={() =>
+                  handleDeleteSingleMatch(
+                    item.id,
+                    `${item.data.matchInfo.homeTeam || '主队'} VS ${item.data.matchInfo.awayTeam || '客队'}`
+                  )
+                }
+                className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/15 rounded-lg border border-slate-700 hover:border-rose-500/30 transition-all cursor-pointer"
+                title={`从队列删除此场赛事 (${item.data.matchInfo.homeTeam || '主队'} VS ${item.data.matchInfo.awayTeam || '客队'})`}
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-400/80 hover:text-rose-300" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -1283,6 +1516,22 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
               <span>三维精修</span>
               <ArrowRight className="w-3 h-3" />
             </button>
+
+            {onDeleteMatch && (
+              <button
+                type="button"
+                onClick={() =>
+                  handleDeleteSingleMatch(
+                    item.id,
+                    `${mData.matchInfo.homeTeam || '主队'} VS ${mData.matchInfo.awayTeam || '客队'}`
+                  )
+                }
+                className="p-1 text-slate-400 hover:text-rose-400 hover:bg-rose-500/15 rounded border border-slate-700 hover:border-rose-500/30 transition-all cursor-pointer"
+                title={`从队列删除此场赛事 (${mData.matchInfo.homeTeam || '主队'} VS ${mData.matchInfo.awayTeam || '客队'})`}
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-400/80 hover:text-rose-300" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -1475,6 +1724,23 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
             type="button"
             onClick={() => setLockFeedbackToast(null)}
             className="text-amber-400 hover:text-white"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Delete Match Feedback Toast */}
+      {deleteToast && (
+        <div className="bg-rose-950/70 border border-rose-500/50 text-rose-300 px-4 py-2.5 rounded-xl text-xs flex items-center justify-between shadow-lg animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <Trash2 className="w-4 h-4 text-rose-400 shrink-0" />
+            <span className="font-bold">{deleteToast}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setDeleteToast(null)}
+            className="text-rose-400 hover:text-white p-1 rounded hover:bg-rose-900/40 transition-colors cursor-pointer"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -1954,6 +2220,17 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
           )}
+          {suspiciousItemsCount > 0 && onDeleteMatch && (
+            <button
+              type="button"
+              onClick={handleCleanSuspiciousItems}
+              className="px-2.5 py-1.5 bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 text-xs font-bold rounded-lg border border-rose-500/30 transition-colors flex items-center gap-1 cursor-pointer"
+              title="一键清理包含 MatchTime、探球赛事ID 等疑似导入表头或乱码场次"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <span>清理乱码行 ({suspiciousItemsCount})</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={onClearQueue}
@@ -2031,181 +2308,185 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
             <div className="space-y-6">
               {/* Tier 5 */}
               {tier5Items.length > 0 && (
-                <div className="bg-slate-900 border border-amber-500/40 rounded-xl overflow-hidden shadow-lg shadow-amber-500/5">
-                  <div className="bg-gradient-to-r from-amber-500/20 via-slate-950 to-slate-900 px-4 py-2.5 border-b border-amber-500/30 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-amber-400 font-extrabold text-sm">👑 第一梯队 · 五星黄金稳胆区</span>
-                      <span className="px-2 py-0.2 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-bold border border-amber-500/40">
-                        {tier5Items.length} 场核心精选
+                <SyncedTableWrapper
+                  containerClassName="border-amber-500/40 shadow-amber-500/5"
+                  headerBar={
+                    <div className="bg-gradient-to-r from-amber-500/20 via-slate-950 to-slate-900 px-4 py-2.5 border-b border-amber-500/30 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-amber-400 font-extrabold text-sm">👑 第一梯队 · 五星黄金稳胆区</span>
+                        <span className="px-2 py-0.2 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-bold border border-amber-500/40">
+                          {tier5Items.length} 场核心精选
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-slate-400">
+                        机构避险正向控赔 / 极度看好打出，适合作为 2串1 / 3串1 核心稳胆
                       </span>
                     </div>
-                    <span className="text-[11px] text-slate-400">
-                      机构避险正向控赔 / 极度看好打出，适合作为 2串1 / 3串1 核心稳胆
-                    </span>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs min-w-[1020px]">
-                      <thead className="bg-slate-950/90 text-slate-400 text-[11px] uppercase border-b border-slate-800">
-                        <tr>
-                          <th className="py-2.5 px-3 w-14 text-center">#</th>
-                          <th className="py-2.5 px-3 w-32">推荐星级</th>
-                          <th className="py-2.5 px-4 min-w-[240px]">赛事 / 对阵</th>
-                          <th className="py-2.5 px-3 min-w-[120px]">胜平负首选</th>
-                          <th className="py-2.5 px-3 min-w-[160px]">让球首选</th>
-                          <th className="py-2.5 px-3 min-w-[120px]">大小球首选</th>
-                          <th className="py-2.5 px-3 min-w-[130px]">参考比分</th>
-                          <th className="py-2.5 px-3 min-w-[100px]">操盘定性</th>
-                          <th className="py-2.5 px-3 min-w-[160px] text-right">操作与研判</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/70 font-sans">
-                        {tier5Items.map((item, idx) => renderTableRow(item, idx))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                  }
+                >
+                  <table className="w-full text-left text-xs min-w-[1020px]">
+                    <thead className="bg-slate-950/90 text-slate-400 text-[11px] uppercase border-b border-slate-800">
+                      <tr>
+                        <th className="py-2.5 px-3 w-14 text-center">#</th>
+                        <th className="py-2.5 px-3 w-32">推荐星级</th>
+                        <th className="py-2.5 px-4 min-w-[240px]">赛事 / 对阵</th>
+                        <th className="py-2.5 px-3 min-w-[120px]">胜平负首选</th>
+                        <th className="py-2.5 px-3 min-w-[160px]">让球首选</th>
+                        <th className="py-2.5 px-3 min-w-[120px]">大小球首选</th>
+                        <th className="py-2.5 px-3 min-w-[130px]">参考比分</th>
+                        <th className="py-2.5 px-3 min-w-[100px]">操盘定性</th>
+                        <th className="py-2.5 px-3 min-w-[210px] text-right whitespace-nowrap">操作与研判</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/70 font-sans">
+                      {tier5Items.map((item, idx) => renderTableRow(item, idx))}
+                    </tbody>
+                  </table>
+                </SyncedTableWrapper>
               )}
 
               {/* Tier 4 */}
               {tier4Items.length > 0 && (
-                <div className="bg-slate-900 border border-emerald-500/40 rounded-xl overflow-hidden shadow-lg">
-                  <div className="bg-gradient-to-r from-emerald-500/15 via-slate-950 to-slate-900 px-4 py-2.5 border-b border-emerald-500/30 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-emerald-300 font-extrabold text-sm">💎 第二梯队 · 四星重点博弈区</span>
-                      <span className="px-2 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold border border-emerald-500/40">
-                        {tier4Items.length} 场明确信号
+                <SyncedTableWrapper
+                  containerClassName="border-emerald-500/40 shadow-lg"
+                  headerBar={
+                    <div className="bg-gradient-to-r from-emerald-500/15 via-slate-950 to-slate-900 px-4 py-2.5 border-b border-emerald-500/30 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-emerald-300 font-extrabold text-sm">💎 第二梯队 · 四星重点博弈区</span>
+                        <span className="px-2 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold border border-emerald-500/40">
+                          {tier4Items.length} 场明确信号
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-slate-400">
+                        明确操盘意图（高息诱上杀猪盘反选 / 平赔防守），适合单场重点或容错
                       </span>
                     </div>
-                    <span className="text-[11px] text-slate-400">
-                      明确操盘意图（高息诱上杀猪盘反选 / 平赔防守），适合单场重点或容错
-                    </span>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs min-w-[1020px]">
-                      <thead className="bg-slate-950/90 text-slate-400 text-[11px] uppercase border-b border-slate-800">
-                        <tr>
-                          <th className="py-2.5 px-3 w-14 text-center">#</th>
-                          <th className="py-2.5 px-3 w-32">推荐星级</th>
-                          <th className="py-2.5 px-4 min-w-[240px]">赛事 / 对阵</th>
-                          <th className="py-2.5 px-3 min-w-[120px]">胜平负首选</th>
-                          <th className="py-2.5 px-3 min-w-[160px]">让球首选</th>
-                          <th className="py-2.5 px-3 min-w-[120px]">大小球首选</th>
-                          <th className="py-2.5 px-3 min-w-[130px]">参考比分</th>
-                          <th className="py-2.5 px-3 min-w-[100px]">操盘定性</th>
-                          <th className="py-2.5 px-3 min-w-[160px] text-right">操作与研判</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/70 font-sans">
-                        {tier4Items.map((item, idx) => renderTableRow(item, idx))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                  }
+                >
+                  <table className="w-full text-left text-xs min-w-[1020px]">
+                    <thead className="bg-slate-950/90 text-slate-400 text-[11px] uppercase border-b border-slate-800">
+                      <tr>
+                        <th className="py-2.5 px-3 w-14 text-center">#</th>
+                        <th className="py-2.5 px-3 w-32">推荐星级</th>
+                        <th className="py-2.5 px-4 min-w-[240px]">赛事 / 对阵</th>
+                        <th className="py-2.5 px-3 min-w-[120px]">胜平负首选</th>
+                        <th className="py-2.5 px-3 min-w-[160px]">让球首选</th>
+                        <th className="py-2.5 px-3 min-w-[120px]">大小球首选</th>
+                        <th className="py-2.5 px-3 min-w-[130px]">参考比分</th>
+                        <th className="py-2.5 px-3 min-w-[100px]">操盘定性</th>
+                        <th className="py-2.5 px-3 min-w-[210px] text-right whitespace-nowrap">操作与研判</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/70 font-sans">
+                      {tier4Items.map((item, idx) => renderTableRow(item, idx))}
+                    </tbody>
+                  </table>
+                </SyncedTableWrapper>
               )}
 
               {/* Tier 3 */}
               {tier3Items.length > 0 && (
-                <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg">
-                  <div className="bg-slate-950 px-4 py-2.5 border-b border-slate-800 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-300 font-extrabold text-sm">⚡ 第三梯队 · 三星常规调仓区</span>
-                      <span className="px-2 py-0.2 rounded-full bg-slate-800 text-slate-300 text-[10px] font-bold border border-slate-700">
-                        {tier3Items.length} 场均势博弈
+                <SyncedTableWrapper
+                  containerClassName="border-slate-800 shadow-lg"
+                  headerBar={
+                    <div className="bg-slate-950 px-4 py-2.5 border-b border-slate-800 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-300 font-extrabold text-sm">⚡ 第三梯队 · 三星常规调仓区</span>
+                        <span className="px-2 py-0.2 rounded-full bg-slate-800 text-slate-300 text-[10px] font-bold border border-slate-700">
+                          {tier3Items.length} 场均势博弈
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-slate-400">
+                        机构常规盘赔波动与平衡对冲，防范平局与震荡
                       </span>
                     </div>
-                    <span className="text-[11px] text-slate-400">
-                      机构常规盘赔波动与平衡对冲，防范平局与震荡
-                    </span>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs min-w-[1020px]">
-                      <thead className="bg-slate-950/90 text-slate-400 text-[11px] uppercase border-b border-slate-800">
-                        <tr>
-                          <th className="py-2.5 px-3 w-14 text-center">#</th>
-                          <th className="py-2.5 px-3 w-32">推荐星级</th>
-                          <th className="py-2.5 px-4 min-w-[240px]">赛事 / 对阵</th>
-                          <th className="py-2.5 px-3 min-w-[120px]">胜平负首选</th>
-                          <th className="py-2.5 px-3 min-w-[160px]">让球首选</th>
-                          <th className="py-2.5 px-3 min-w-[120px]">大小球首选</th>
-                          <th className="py-2.5 px-3 min-w-[130px]">参考比分</th>
-                          <th className="py-2.5 px-3 min-w-[100px]">操盘定性</th>
-                          <th className="py-2.5 px-3 min-w-[160px] text-right">操作与研判</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/70 font-sans">
-                        {tier3Items.map((item, idx) => renderTableRow(item, idx))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                  }
+                >
+                  <table className="w-full text-left text-xs min-w-[1020px]">
+                    <thead className="bg-slate-950/90 text-slate-400 text-[11px] uppercase border-b border-slate-800">
+                      <tr>
+                        <th className="py-2.5 px-3 w-14 text-center">#</th>
+                        <th className="py-2.5 px-3 w-32">推荐星级</th>
+                        <th className="py-2.5 px-4 min-w-[240px]">赛事 / 对阵</th>
+                        <th className="py-2.5 px-3 min-w-[120px]">胜平负首选</th>
+                        <th className="py-2.5 px-3 min-w-[160px]">让球首选</th>
+                        <th className="py-2.5 px-3 min-w-[120px]">大小球首选</th>
+                        <th className="py-2.5 px-3 min-w-[130px]">参考比分</th>
+                        <th className="py-2.5 px-3 min-w-[100px]">操盘定性</th>
+                        <th className="py-2.5 px-3 min-w-[210px] text-right whitespace-nowrap">操作与研判</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/70 font-sans">
+                      {tier3Items.map((item, idx) => renderTableRow(item, idx))}
+                    </tbody>
+                  </table>
+                </SyncedTableWrapper>
               )}
             </div>
           ) : (
             /* Flat Matrix Table */
-            <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs min-w-[1020px]">
-                  <thead className="bg-slate-950/90 text-slate-400 text-[11px] uppercase border-b border-slate-800 sticky top-0">
-                    <tr>
-                      <th
-                        onClick={() => toggleSort('default')}
-                        className="py-3 px-3 w-14 text-center whitespace-nowrap cursor-pointer hover:text-white select-none"
-                        title="点击切换原始序号排序"
-                      >
-                        <div className="flex items-center justify-center gap-1">
-                          <span>#</span>
-                          {sortBy === 'default' && (
-                            sortOrder === 'desc' ? <ArrowDown className="w-3 h-3 text-cyan-400" /> : <ArrowUp className="w-3 h-3 text-cyan-400" />
-                          )}
-                        </div>
-                      </th>
-                      <th
-                        onClick={() => toggleSort('stars')}
-                        className="py-3 px-3 w-32 whitespace-nowrap cursor-pointer hover:text-amber-300 select-none"
-                        title="点击切换星级从高到低/从低到高"
-                      >
-                        <div className="flex items-center gap-1 font-bold">
-                          <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-                          <span className={sortBy === 'stars' ? 'text-amber-300' : ''}>推荐星级</span>
-                          {sortBy === 'stars' ? (
-                            sortOrder === 'desc' ? (
-                              <span className="text-[10px] text-amber-400 font-mono ml-0.5">↓(高)</span>
-                            ) : (
-                              <span className="text-[10px] text-amber-400 font-mono ml-0.5">↑(低)</span>
-                            )
+            <SyncedTableWrapper>
+              <table className="w-full text-left text-xs min-w-[1020px]">
+                <thead className="bg-slate-950/90 text-slate-400 text-[11px] uppercase border-b border-slate-800 sticky top-0">
+                  <tr>
+                    <th
+                      onClick={() => toggleSort('default')}
+                      className="py-3 px-3 w-14 text-center whitespace-nowrap cursor-pointer hover:text-white select-none"
+                      title="点击切换原始序号排序"
+                    >
+                      <div className="flex items-center justify-center gap-1">
+                        <span>#</span>
+                        {sortBy === 'default' && (
+                          sortOrder === 'desc' ? <ArrowDown className="w-3 h-3 text-cyan-400" /> : <ArrowUp className="w-3 h-3 text-cyan-400" />
+                        )}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => toggleSort('stars')}
+                      className="py-3 px-3 w-32 whitespace-nowrap cursor-pointer hover:text-amber-300 select-none"
+                      title="点击切换星级从高到低/从低到高"
+                    >
+                      <div className="flex items-center gap-1 font-bold">
+                        <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                        <span className={sortBy === 'stars' ? 'text-amber-300' : ''}>推荐星级</span>
+                        {sortBy === 'stars' ? (
+                          sortOrder === 'desc' ? (
+                            <span className="text-[10px] text-amber-400 font-mono ml-0.5">↓(高)</span>
                           ) : (
-                            <ArrowUpDown className="w-3 h-3 text-slate-600" />
-                          )}
-                        </div>
-                      </th>
-                      <th
-                        onClick={() => toggleSort('time')}
-                        className="py-3 px-4 min-w-[240px] whitespace-nowrap cursor-pointer hover:text-cyan-300 select-none"
-                        title="点击按开赛时间排序"
-                      >
-                        <div className="flex items-center gap-1">
-                          <span className={sortBy === 'time' ? 'text-cyan-300 font-bold' : ''}>赛事 / 对阵</span>
-                          {sortBy === 'time' ? (
-                            sortOrder === 'desc' ? <ArrowDown className="w-3 h-3 text-cyan-400" /> : <ArrowUp className="w-3 h-3 text-cyan-400" />
-                          ) : (
-                            <ArrowUpDown className="w-3 h-3 text-slate-600" />
-                          )}
-                        </div>
-                      </th>
-                      <th className="py-3 px-3 min-w-[120px] whitespace-nowrap">胜平负首选</th>
-                      <th className="py-3 px-3 min-w-[160px] whitespace-nowrap">让球首选</th>
-                      <th className="py-3 px-3 min-w-[120px] whitespace-nowrap">大小球首选</th>
-                      <th className="py-3 px-3 min-w-[130px] whitespace-nowrap">参考比分</th>
-                      <th className="py-3 px-3 min-w-[100px] whitespace-nowrap">操盘定性</th>
-                      <th className="py-3 px-3 min-w-[160px] text-right whitespace-nowrap">操作与研判</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/70 font-sans">
-                    {sortedItems.map((item, idx) => renderTableRow(item, idx))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+                            <span className="text-[10px] text-amber-400 font-mono ml-0.5">↑(低)</span>
+                          )
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 text-slate-600" />
+                        )}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => toggleSort('time')}
+                      className="py-3 px-4 min-w-[240px] whitespace-nowrap cursor-pointer hover:text-cyan-300 select-none"
+                      title="点击按开赛时间排序"
+                    >
+                      <div className="flex items-center gap-1">
+                        <span className={sortBy === 'time' ? 'text-cyan-300 font-bold' : ''}>赛事 / 对阵</span>
+                        {sortBy === 'time' ? (
+                          sortOrder === 'desc' ? <ArrowDown className="w-3 h-3 text-cyan-400" /> : <ArrowUp className="w-3 h-3 text-cyan-400" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 text-slate-600" />
+                        )}
+                      </div>
+                    </th>
+                    <th className="py-3 px-3 min-w-[120px] whitespace-nowrap">胜平负首选</th>
+                    <th className="py-3 px-3 min-w-[160px] whitespace-nowrap">让球首选</th>
+                    <th className="py-3 px-3 min-w-[120px] whitespace-nowrap">大小球首选</th>
+                    <th className="py-3 px-3 min-w-[130px] whitespace-nowrap">参考比分</th>
+                    <th className="py-3 px-3 min-w-[100px] whitespace-nowrap">操盘定性</th>
+                    <th className="py-3 px-3 min-w-[210px] text-right whitespace-nowrap">操作与研判</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/70 font-sans">
+                  {sortedItems.map((item, idx) => renderTableRow(item, idx))}
+                </tbody>
+              </table>
+            </SyncedTableWrapper>
           )}
         </div>
       )}
