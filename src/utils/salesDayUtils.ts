@@ -370,3 +370,209 @@ export function unifyReviewsToOneSalesDay(reviews: PostMatchReview[], targetSale
   if (!/^\d{4}-\d{2}-\d{2}$/.test(targetSalesDate) || !parseSalesDate(targetSalesDate)) return reviews;
   return reviews.map(review => calibrateReviewSalesDate({ ...review, salesDateOverride: targetSalesDate }));
 }
+
+export interface ParsedKickoffDetails {
+  raw: string;
+  hasTime: boolean;
+  timeOnly: string; // e.g. "20:30" or "02:45"
+  hour: number;
+  minute: number;
+  salesDayOffset: number; // 0..1439 minutes from 11:00 AM of sales day
+  displayLabel: string;
+  kickoffTimestamp: number;
+  isStarted: boolean;
+  salesDate: string;
+}
+
+/**
+ * Returns minute offset from 11:00 AM of lottery sales cycle (11:00 AM -> next day 10:59 AM)
+ * Hour 11:00 -> 0; Hour 23:00 -> 720; Hour 00:00 (next day) -> 780; Hour 02:45 -> 945
+ */
+export function getSalesDayMinuteOffset(hour: number, minute: number): number {
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return 9999;
+  if (hour >= 11) {
+    return (hour - 11) * 60 + minute;
+  } else {
+    return (hour + 13) * 60 + minute;
+  }
+}
+
+/**
+ * Robustly parses match kickoff time into structured components and exact Beijing/UTC epoch timestamp
+ */
+export function parseKickoffDetails(
+  matchTime?: string,
+  fallbackTimestamp?: number,
+  nowMs: number = Date.now()
+): ParsedKickoffDetails {
+  const raw = (matchTime || '').trim();
+  const salesInfo = calculateSalesDate(raw, fallbackTimestamp);
+  const timeMatch = raw.match(/(\d{1,2})[:：](\d{2})/);
+
+  if (!timeMatch || /临场|已完场/.test(raw)) {
+    return {
+      raw,
+      hasTime: false,
+      timeOnly: '',
+      hour: -1,
+      minute: -1,
+      salesDayOffset: 9999,
+      displayLabel: raw || '临场',
+      kickoffTimestamp: Infinity,
+      isStarted: false,
+      salesDate: salesInfo.salesDate,
+    };
+  }
+
+  const hour = Number(timeMatch[1]);
+  const minute = Number(timeMatch[2]);
+  if (!validTime(hour, minute)) {
+    return {
+      raw,
+      hasTime: false,
+      timeOnly: '',
+      hour: -1,
+      minute: -1,
+      salesDayOffset: 9999,
+      displayLabel: raw || '临场',
+      kickoffTimestamp: Infinity,
+      isStarted: false,
+      salesDate: salesInfo.salesDate,
+    };
+  }
+
+  const timeOnly = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  const salesDayOffset = getSalesDayMinuteOffset(hour, minute);
+
+  // Resolve calendar date in Beijing time (UTC+8)
+  const dateMatch = salesInfo.kickoffTimeFormatted.match(/(20\d{2})-(\d{2})-(\d{2})/);
+  let year: number;
+  let month: number;
+  let day: number;
+
+  if (dateMatch) {
+    year = Number(dateMatch[1]);
+    month = Number(dateMatch[2]);
+    day = Number(dateMatch[3]);
+  } else {
+    const [sYear, sMonth, sDay] = salesInfo.salesDate.split('-').map(Number);
+    year = sYear;
+    month = sMonth;
+    day = sDay;
+    if (hour < 11 || /次日|翌日/.test(raw)) {
+      const nextDayDate = new Date(Date.UTC(year, month - 1, day + 1));
+      year = nextDayDate.getUTCFullYear();
+      month = nextDayDate.getUTCMonth() + 1;
+      day = nextDayDate.getUTCDate();
+    }
+  }
+
+  const kickoffTimestamp = Date.UTC(year, month - 1, day, hour, minute) - SALES_TIMEZONE_OFFSET;
+  const isStarted = Number.isFinite(kickoffTimestamp) && kickoffTimestamp <= nowMs;
+
+  return {
+    raw,
+    hasTime: true,
+    timeOnly,
+    hour,
+    minute,
+    salesDayOffset,
+    displayLabel: salesInfo.kickoffTimeFormatted || timeOnly,
+    kickoffTimestamp,
+    isStarted,
+    salesDate: salesInfo.salesDate,
+  };
+}
+
+/**
+ * Intelligently normalizes flexible user cutoff input (e.g. "0030", "00.30", "00点30分", "00:30", "周日 00:30")
+ */
+export function normalizeCutoffTimeInput(input: string): string {
+  if (!input) return '';
+  let cleaned = input.trim().replace(/：/g, ':');
+  // Handle Chinese style e.g. "00点30分" or "00点30"
+  const cnMatch = cleaned.match(/(\d{1,2})点(\d{2})/);
+  if (cnMatch) {
+    return `${cnMatch[1].padStart(2, '0')}:${cnMatch[2]}`;
+  }
+  // Handle 4 continuous digits e.g. "0030" or "2300"
+  const fourDigit = cleaned.match(/^(\d{2})(\d{2})$/);
+  if (fourDigit) {
+    return `${fourDigit[1]}:${fourDigit[2]}`;
+  }
+  // Handle dot or dash separation e.g. "00.30" or "00-30"
+  const dotSeparated = cleaned.match(/^(\d{1,2})[.\-_](\d{2})$/);
+  if (dotSeparated) {
+    return `${dotSeparated[1].padStart(2, '0')}:${dotSeparated[2]}`;
+  }
+  // Standard HH:mm extraction if there are surrounding characters
+  const stdMatch = cleaned.match(/(\d{1,2})[:：](\d{2})/);
+  if (stdMatch) {
+    const prefixDate = cleaned.match(/(?:20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?|\d{1,2}[-/.月]\d{1,2}日?|(?:周|星期)[一二三四五六日天])/);
+    const timeFormatted = `${stdMatch[1].padStart(2, '0')}:${stdMatch[2]}`;
+    return prefixDate ? `${prefixDate[0]} ${timeFormatted}` : timeFormatted;
+  }
+  return cleaned;
+}
+
+/**
+ * Compares whether matchTime is before or at cutoffStr
+ * mode 'lte': <= cutoff (chronologically earlier or equal)
+ * mode 'exact': == cutoff
+ */
+export function isMatchBeforeOrAtCutoff(
+  matchTime?: string,
+  cutoffStr?: string,
+  fallbackTimestamp?: number,
+  mode: 'lte' | 'exact' = 'lte'
+): boolean {
+  if (!matchTime || !cutoffStr) return false;
+  const normalizedCutoff = normalizeCutoffTimeInput(cutoffStr);
+  const matchDetails = parseKickoffDetails(matchTime, fallbackTimestamp);
+  if (!matchDetails.hasTime) return false;
+
+  const cutoffDetails = parseKickoffDetails(normalizedCutoff, fallbackTimestamp);
+  if (!cutoffDetails.hasTime) return false;
+
+  if (mode === 'exact') {
+    return matchDetails.timeOnly === cutoffDetails.timeOnly;
+  }
+
+  // Check if cutoff explicitly specifies a calendar date or weekday
+  const cutoffHasExplicitDate =
+    hasExplicitKickoffDate(normalizedCutoff) || /(?:周|星期)[一二三四五六日天]/.test(normalizedCutoff);
+
+  // If cutoff has an explicit date/weekday: compare precise timestamps
+  if (cutoffHasExplicitDate) {
+    if (
+      Number.isFinite(matchDetails.kickoffTimestamp) &&
+      Number.isFinite(cutoffDetails.kickoffTimestamp) &&
+      matchDetails.kickoffTimestamp !== Infinity &&
+      cutoffDetails.kickoffTimestamp !== Infinity
+    ) {
+      return matchDetails.kickoffTimestamp <= cutoffDetails.kickoffTimestamp;
+    }
+  }
+
+  // When cutoff is a pure time (e.g. "00:30", "23:00", without calendar date):
+  // 1. Primary rule: Compare lottery sales cycle continuous timeline offset
+  // (11:00 AM of sales day -> 23:00 [720] -> 00:00 [780] -> 00:05 [785] -> 00:30 [810] -> 02:45 [945])
+  if (matchDetails.salesDayOffset <= cutoffDetails.salesDayOffset) {
+    return true;
+  }
+
+  // 2. Secondary fallback: Clock time comparison within same window (e.g. both 00:05 and 00:30 in early morning)
+  const matchMinuteOfDay = matchDetails.hour * 60 + matchDetails.minute;
+  const cutoffMinuteOfDay = cutoffDetails.hour * 60 + cutoffDetails.minute;
+  if (matchMinuteOfDay <= cutoffMinuteOfDay) {
+    if (
+      (matchDetails.hour < 11 && cutoffDetails.hour < 11) ||
+      (matchDetails.hour >= 11 && cutoffDetails.hour >= 11)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+

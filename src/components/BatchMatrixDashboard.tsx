@@ -59,7 +59,7 @@ import {
 import { generateActuarialRuleReport, compareEarlyVsLateConfidence } from '../utils/actuaryEngine';
 import { PRESET_CASES } from '../utils/presetCases';
 import { saveParlayReview, evaluateParlaySettlement, getPostMatchReviews } from '../utils/experienceStore';
-import { calculateSalesDate } from '../utils/salesDayUtils';
+import { calculateSalesDate, parseKickoffDetails, isMatchBeforeOrAtCutoff, getSalesDayMinuteOffset } from '../utils/salesDayUtils';
 import { MarkdownView } from './MarkdownView';
 import { HandicapOddsDistributionChart } from './HandicapOddsDistributionChart';
 
@@ -76,7 +76,9 @@ interface BatchMatrixDashboardProps {
   isBatchAnalyzing: boolean;
   onToggleLockMatch?: (id: string) => void;
   onBatchLockMatches?: (lock: boolean) => void;
-  onAutoLockStartedMatches?: (cutoffTime?: string) => number;
+  onAutoLockStartedMatches?: (
+    target?: string | string[] | { mode?: 'started' | 'cutoff' | 'exact' | 'ids'; cutoffTime?: string; ids?: string[] }
+  ) => number;
   importNotification?: {
     message: string;
     details: string;
@@ -102,8 +104,12 @@ const SyncedTableWrapper: React.FC<SyncedTableWrapperProps> = ({
 }) => {
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
+  const bottomScrollRef = useRef<HTMLDivElement>(null);
   const [tableScrollWidth, setTableScrollWidth] = useState<number>(1200);
+  const [wheelHorizontalMode, setWheelHorizontalMode] = useState<boolean>(true);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
   const isSyncingScroll = useRef<boolean>(false);
+  const dragStartRef = useRef<{ startX: number; scrollLeft: number }>({ startX: 0, scrollLeft: 0 });
 
   useEffect(() => {
     const el = tableContainerRef.current;
@@ -134,26 +140,105 @@ const SyncedTableWrapper: React.FC<SyncedTableWrapperProps> = ({
     };
   }, [children]);
 
-  const handleTopScroll = () => {
+  // Synchronize top, bottom, and table scroll positions
+  const syncAllScrolls = (sourceLeft: number, exclude?: 'top' | 'bottom' | 'table') => {
     if (isSyncingScroll.current) return;
-    if (topScrollRef.current && tableContainerRef.current) {
-      isSyncingScroll.current = true;
-      tableContainerRef.current.scrollLeft = topScrollRef.current.scrollLeft;
-      requestAnimationFrame(() => {
-        isSyncingScroll.current = false;
-      });
+    isSyncingScroll.current = true;
+
+    if (exclude !== 'top' && topScrollRef.current) {
+      topScrollRef.current.scrollLeft = sourceLeft;
     }
+    if (exclude !== 'bottom' && bottomScrollRef.current) {
+      bottomScrollRef.current.scrollLeft = sourceLeft;
+    }
+    if (exclude !== 'table' && tableContainerRef.current) {
+      tableContainerRef.current.scrollLeft = sourceLeft;
+    }
+
+    requestAnimationFrame(() => {
+      isSyncingScroll.current = false;
+    });
+  };
+
+  const handleTopScroll = () => {
+    if (topScrollRef.current) syncAllScrolls(topScrollRef.current.scrollLeft, 'top');
+  };
+
+  const handleBottomScroll = () => {
+    if (bottomScrollRef.current) syncAllScrolls(bottomScrollRef.current.scrollLeft, 'bottom');
   };
 
   const handleTableScroll = () => {
-    if (isSyncingScroll.current) return;
-    if (topScrollRef.current && tableContainerRef.current) {
-      isSyncingScroll.current = true;
-      topScrollRef.current.scrollLeft = tableContainerRef.current.scrollLeft;
-      requestAnimationFrame(() => {
-        isSyncingScroll.current = false;
-      });
+    if (tableContainerRef.current) syncAllScrolls(tableContainerRef.current.scrollLeft, 'table');
+  };
+
+  // Direct Mouse Wheel Event routing on table container:
+  // 1. Catches horizontal scroll wheel / trackpad deltaX
+  // 2. Catches Shift + Wheel
+  // 3. When wheelHorizontalMode is enabled, translates vertical deltaY into horizontal scrollLeft
+  useEffect(() => {
+    const container = tableContainerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      // 1. Dedicated horizontal scroll wheel or touchpad swipe (deltaX)
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        e.preventDefault();
+        container.scrollLeft += e.deltaX * 1.2;
+        syncAllScrolls(container.scrollLeft, 'table');
+        return;
+      }
+
+      // 2. Shift + Wheel (Standard horizontal wheel shortcut)
+      if (e.shiftKey && Math.abs(e.deltaY) > 0) {
+        e.preventDefault();
+        container.scrollLeft += e.deltaY * 1.5;
+        syncAllScrolls(container.scrollLeft, 'table');
+        return;
+      }
+
+      // 3. User enabled "滚轮横移模式" (wheelHorizontalMode)
+      if (wheelHorizontalMode && Math.abs(e.deltaY) > 0) {
+        const maxScroll = container.scrollWidth - container.clientWidth;
+        if (maxScroll > 0) {
+          const canScrollLeft = container.scrollLeft > 0 && e.deltaY < 0;
+          const canScrollRight = container.scrollLeft < maxScroll && e.deltaY > 0;
+          if (canScrollLeft || canScrollRight) {
+            e.preventDefault();
+            container.scrollLeft += e.deltaY * 1.3;
+            syncAllScrolls(container.scrollLeft, 'table');
+          }
+        }
+      }
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => container.removeEventListener('wheel', handleWheel);
+  }, [wheelHorizontalMode]);
+
+  // Mouse Drag-to-Scroll (鼠标按住直接横向拖动平移)
+  const handleMouseDown = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('input') || target.closest('select') || target.closest('a')) {
+      return;
     }
+    setIsDragging(true);
+    dragStartRef.current = {
+      startX: e.pageX,
+      scrollLeft: tableContainerRef.current?.scrollLeft || 0,
+    };
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging || !tableContainerRef.current) return;
+    e.preventDefault();
+    const dx = e.pageX - dragStartRef.current.startX;
+    tableContainerRef.current.scrollLeft = dragStartRef.current.scrollLeft - dx * 1.3;
+    syncAllScrolls(tableContainerRef.current.scrollLeft, 'table');
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
   };
 
   const scrollToX = (x: number) => {
@@ -173,19 +258,34 @@ const SyncedTableWrapper: React.FC<SyncedTableWrapperProps> = ({
   };
 
   return (
-    <div className={`bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg ${containerClassName || ''}`}>
+    <div className={`bg-slate-900 border border-slate-800 rounded-xl overflow-visible shadow-lg relative ${containerClassName || ''}`}>
       {headerBar}
 
       {/* 顶部双向同步横向滚动条 (吸顶常驻，无需滑动到50+场底部即可横向查看所有列) */}
-      <div className="sticky top-0 z-20 bg-slate-950/95 backdrop-blur border-b border-slate-800 px-3 py-1.5 flex flex-col gap-1 shadow-sm">
-        <div className="flex items-center justify-between gap-2 text-xs">
+      <div className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-md border-b border-slate-800 px-3 py-1.5 flex flex-col gap-1 shadow-sm rounded-t-xl">
+        <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
           <div className="flex items-center gap-2">
             <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
               <span>顶部横向滚动控制栏</span>
             </span>
-            <span className="text-[10px] text-slate-400 hidden sm:inline">
-              (双向同步 · 无需滚到表格底部即可查看全部列)
+            <button
+              type="button"
+              onClick={() => setWheelHorizontalMode(!wheelHorizontalMode)}
+              className={`px-2 py-0.5 rounded text-[10px] font-bold border flex items-center gap-1 transition-all cursor-pointer ${
+                wheelHorizontalMode
+                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50 shadow-sm'
+                  : 'bg-slate-800 text-slate-400 border-slate-700'
+              }`}
+              title="切换鼠标滚轮直接在表格内横向滚动（无需按Shift）"
+            >
+              <span>🖲️ 滚轮横移:</span>
+              <span className={wheelHorizontalMode ? 'text-emerald-400 font-extrabold' : 'text-slate-400'}>
+                {wheelHorizontalMode ? '已开启 (滚轮直接横滑)' : '已关闭'}
+              </span>
+            </button>
+            <span className="text-[10px] text-slate-500 hidden md:inline">
+              (在中间行直接滚轮、按Shift+滚轮或鼠标拖拽即可横移)
             </span>
           </div>
 
@@ -237,9 +337,85 @@ const SyncedTableWrapper: React.FC<SyncedTableWrapperProps> = ({
         </div>
       </div>
 
-      {/* 表格容器 */}
-      <div ref={tableContainerRef} onScroll={handleTableScroll} className="overflow-x-auto">
+      {/* 表格容器 (支持鼠标左键按住拖拽平移 & 滚轮直接横向平移) */}
+      <div
+        ref={tableContainerRef}
+        onScroll={handleTableScroll}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        className={`overflow-x-auto ${isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'}`}
+      >
         {children}
+      </div>
+
+      {/* 随屏悬浮底栏横向滚动控制栏 (滚动到中间场次时始终随屏可见) */}
+      <div className="sticky bottom-2 z-30 mx-auto max-w-2xl bg-slate-950/95 backdrop-blur-md border border-cyan-500/40 rounded-2xl p-2.5 shadow-2xl shadow-cyan-950/50 flex flex-col gap-1.5 my-2">
+        <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-bold text-cyan-300 flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-cyan-400" />
+              <span>随屏底栏横向滚动</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setWheelHorizontalMode(!wheelHorizontalMode)}
+              className={`px-2 py-0.5 rounded text-[10px] font-bold border transition-colors cursor-pointer ${
+                wheelHorizontalMode
+                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50'
+                  : 'bg-slate-800 text-slate-400 border-slate-700'
+              }`}
+            >
+              <span>滚轮横移: {wheelHorizontalMode ? '开启' : '关闭'}</span>
+            </button>
+            <span className="text-[10px] text-slate-400 hidden sm:inline">
+              (在中间随时滚动鼠标滚轮、Shift+滚轮或拖拽底栏)
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => scrollToX(0)}
+              className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold rounded border border-slate-700 transition-colors cursor-pointer"
+            >
+              ⏮ 对阵
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollStep('left')}
+              className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[10px] font-bold rounded border border-slate-700 transition-colors flex items-center gap-0.5 cursor-pointer"
+            >
+              <ChevronLeft className="w-3 h-3" />
+              <span>向左</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollStep('right')}
+              className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[10px] font-bold rounded border border-slate-700 transition-colors flex items-center gap-0.5 cursor-pointer"
+            >
+              <span>向右</span>
+              <ChevronRight className="w-3 h-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollToX(9999)}
+              className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-emerald-300 text-[10px] font-bold rounded border border-slate-700 transition-colors cursor-pointer"
+            >
+              研判/操作 ⏭
+            </button>
+          </div>
+        </div>
+
+        {/* 底栏原生滚动条轨道 */}
+        <div
+          ref={bottomScrollRef}
+          onScroll={handleBottomScroll}
+          className="overflow-x-auto overflow-y-hidden h-3 bg-slate-900 rounded border border-slate-800/80 scrollbar-thin scrollbar-thumb-cyan-500/50 hover:scrollbar-thumb-cyan-400 scrollbar-track-slate-950/60 cursor-ew-resize"
+        >
+          <div style={{ width: `${Math.max(tableScrollWidth, 1020)}px`, height: '1px' }} />
+        </div>
       </div>
     </div>
   );
@@ -287,7 +463,12 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
 
   // Auto-lock by kickoff time modal & toast
   const [isAutoLockModalOpen, setIsAutoLockModalOpen] = useState(false);
-  const [cutoffInput, setCutoffInput] = useState<string>('00:00');
+  const [lockTab, setLockTab] = useState<'slots' | 'started' | 'cutoff'>('slots');
+  const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
+  const [slotCondition, setSlotCondition] = useState<'exact' | 'lte'>('lte');
+  const [cutoffInput, setCutoffInput] = useState<string>('23:00');
+  const [cutoffMode, setCutoffMode] = useState<'lte' | 'exact'>('lte');
+  const [previewExpanded, setPreviewExpanded] = useState<boolean>(true);
   const [lockFeedbackToast, setLockFeedbackToast] = useState<string | null>(null);
 
   // Quick Post-Match Review Modal State
@@ -427,6 +608,101 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
   const fourStarCount = useMemo(() => processedItems.filter((p) => p.stars === 4).length, [processedItems]);
   const threeStarCount = useMemo(() => processedItems.filter((p) => p.stars === 3).length, [processedItems]);
   const lockedMatchesCount = useMemo(() => queue.filter((q) => q.isLocked).length, [queue]);
+
+  // Group all matches by their formatted kickoff time slot
+  const kickoffTimeSlotGroups = useMemo(() => {
+    const slotMap = new Map<string, {
+      key: string;
+      displayTime: string;
+      salesDayOffset: number;
+      matches: Array<{ id: string; homeTeam: string; awayTeam: string; isLocked: boolean; rawTime: string }>;
+    }>();
+
+    queue.forEach((item) => {
+      const raw = item.data.matchInfo.matchTime || '';
+      const details = parseKickoffDetails(raw, item.timestamp);
+      const key = details.hasTime ? details.timeOnly : (raw || '未标注时间');
+      const displayTime = details.hasTime ? details.displayLabel : (raw || '未标注时间');
+
+      if (!slotMap.has(key)) {
+        slotMap.set(key, {
+          key,
+          displayTime,
+          salesDayOffset: details.hasTime ? details.salesDayOffset : 9999,
+          matches: [],
+        });
+      }
+
+      slotMap.get(key)!.matches.push({
+        id: item.id,
+        homeTeam: item.data.matchInfo.homeTeam,
+        awayTeam: item.data.matchInfo.awayTeam,
+        isLocked: !!item.isLocked,
+        rawTime: raw,
+      });
+    });
+
+    return Array.from(slotMap.values())
+      .map((slot) => ({
+        ...slot,
+        totalCount: slot.matches.length,
+        unlockedCount: slot.matches.filter((m) => !m.isLocked).length,
+        lockedCount: slot.matches.filter((m) => m.isLocked).length,
+      }))
+      .sort((a, b) => a.salesDayOffset - b.salesDayOffset);
+  }, [queue]);
+
+  // Matches whose kickoff time has already arrived according to real system clock
+  const detectedStartedMatches = useMemo(() => {
+    const now = Date.now();
+    return queue.filter((item) => {
+      if (item.isLocked) return false;
+      const details = parseKickoffDetails(item.data.matchInfo.matchTime, item.timestamp, now);
+      return details.hasTime && details.isStarted;
+    });
+  }, [queue]);
+
+  // Set default selectedSlot whenever modal opens if none is selected
+  useEffect(() => {
+    if (isAutoLockModalOpen && !selectedSlot) {
+      const firstAvailable = kickoffTimeSlotGroups.find((s) => s.unlockedCount > 0 && s.key !== '未标注时间');
+      if (firstAvailable) {
+        setSelectedSlot(firstAvailable.key);
+      }
+    }
+  }, [isAutoLockModalOpen, kickoffTimeSlotGroups, selectedSlot]);
+
+  // Precise live list of matches to be locked under current active filter
+  const previewMatchesToLock = useMemo(() => {
+    if (lockTab === 'started') {
+      return detectedStartedMatches;
+    }
+    if (lockTab === 'slots') {
+      if (!selectedSlot) return [];
+      if (slotCondition === 'exact') {
+        return queue.filter((item) => {
+          if (item.isLocked) return false;
+          const details = parseKickoffDetails(item.data.matchInfo.matchTime, item.timestamp);
+          return details.hasTime && details.timeOnly === selectedSlot;
+        });
+      } else {
+        // <= selectedSlot (chronologically on or before this slot)
+        return queue.filter((item) => {
+          if (item.isLocked) return false;
+          return isMatchBeforeOrAtCutoff(item.data.matchInfo.matchTime, selectedSlot, item.timestamp, 'lte');
+        });
+      }
+    }
+    if (lockTab === 'cutoff') {
+      const trimmed = cutoffInput.trim();
+      if (!trimmed) return [];
+      return queue.filter((item) => {
+        if (item.isLocked) return false;
+        return isMatchBeforeOrAtCutoff(item.data.matchInfo.matchTime, trimmed, item.timestamp, cutoffMode);
+      });
+    }
+    return [];
+  }, [queue, lockTab, selectedSlot, slotCondition, cutoffInput, cutoffMode, detectedStartedMatches]);
 
   // Confidence shift counts across all items
   const increasedConfidenceCount = useMemo(
@@ -617,15 +893,23 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
   };
 
   const handleExecuteAutoLock = () => {
-    if (onAutoLockStartedMatches) {
-      const lockedCount = onAutoLockStartedMatches(cutoffInput.trim() || undefined);
-      setLockFeedbackToast(
-        lockedCount > 0
-          ? `已成功锁定 ${lockedCount} 场比赛！终盘快照已冻结，再次导入 Markdown 自动免疫覆盖。`
-          : `未发现符合截止时间（${cutoffInput}）且未锁定的比赛。`
-      );
+    if (!onAutoLockStartedMatches) return;
+    if (previewMatchesToLock.length === 0) {
+      setLockFeedbackToast('⚠️ 当前筛选条件下未匹配到任何未锁定场次，未执行锁定操作。');
       setTimeout(() => setLockFeedbackToast(null), 3500);
+      setIsAutoLockModalOpen(false);
+      return;
     }
+
+    const targetIds = previewMatchesToLock.map((m) => m.id);
+    const lockedCount = onAutoLockStartedMatches(targetIds);
+    const effectiveCount = lockedCount > 0 ? lockedCount : targetIds.length;
+    const remainingUnlocked = Math.max(0, queue.length - (lockedMatchesCount + effectiveCount));
+
+    setLockFeedbackToast(
+      `✅ 成功精准锁定 ${effectiveCount} 场比赛！终盘快照已冻结，再次导入 Markdown 自动免疫覆盖（保留 ${remainingUnlocked} 场未锁定）。`
+    );
+    setTimeout(() => setLockFeedbackToast(null), 4000);
     setIsAutoLockModalOpen(false);
   };
 
@@ -1683,10 +1967,15 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
             type="button"
             onClick={() => setIsAutoLockModalOpen(true)}
             className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
-            title="按开赛时间智能锁定早于指定时刻的场次"
+            title="按开赛时间智能锁定对应比赛（支持时段批次、当前时间对比与自定义截止时刻）"
           >
             <Zap className="w-3.5 h-3.5 text-amber-400" />
             <span>智能锁定已开赛场次</span>
+            {detectedStartedMatches.length > 0 && (
+              <span className="px-1.5 py-0.2 bg-amber-400 text-slate-950 font-black text-[10px] rounded-full">
+                {detectedStartedMatches.length} 场已开赛
+              </span>
+            )}
           </button>
           {onBatchLockMatches && (
             <>
@@ -2657,85 +2946,357 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
         </div>
       )}
 
-      {/* 5. Auto Lock Cutoff Time Modal */}
+      {/* 5. Auto Lock By Kickoff Time & Batch Slots Modal */}
       {isAutoLockModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="relative w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950/60">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
-                  <Lock className="w-3.5 h-3.5" />
+          <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950/70">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
+                  <Lock className="w-4 h-4" />
                 </div>
-                <h3 className="text-sm font-bold text-white">
-                  智能按开赛时刻批量锁定快照
-                </h3>
+                <div>
+                  <h3 className="text-sm font-bold text-white">
+                    ⏱ 按开赛时间智能锁定快照（固化终盘与预测）
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    支持按开赛时段批次、当前时间已开赛、或自定义截止时刻精准锁定，杜绝误锁全部比赛！
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={() => setIsAutoLockModalOpen(false)}
-                className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+                className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-6 space-y-3 text-xs">
-              <p className="text-slate-300 leading-relaxed">
-                请输入开赛截止时间。系统将自动<strong>锁定开赛时刻早于或等于该时间的比赛</strong>，并将其终盘赔率快照与五项推荐永久封存：
-              </p>
+            {/* Mode Switcher Tabs */}
+            <div className="flex border-b border-slate-800 bg-slate-950/50 p-2 gap-2 text-xs">
+              <button
+                type="button"
+                onClick={() => setLockTab('slots')}
+                className={`flex-1 py-2 px-3 rounded-lg font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  lockTab === 'slots'
+                    ? 'bg-amber-500 text-slate-950 shadow-md'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>🏷️ 按场次开赛时段选择</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${lockTab === 'slots' ? 'bg-slate-950/20 text-slate-950' : 'bg-slate-800 text-slate-300'}`}>
+                  {kickoffTimeSlotGroups.filter((s) => s.unlockedCount > 0).length} 个时段
+                </span>
+              </button>
 
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1">
-                  开赛截止时刻（HH:mm 格式，例如 00:00 或 02:45）
-                </label>
-                <input
-                  type="text"
-                  value={cutoffInput}
-                  onChange={(e) => setCutoffInput(e.target.value)}
-                  placeholder="00:00"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-amber-300 font-mono font-bold focus:outline-none focus:ring-1 focus:ring-amber-500"
-                />
-              </div>
+              <button
+                type="button"
+                onClick={() => setLockTab('started')}
+                className={`flex-1 py-2 px-3 rounded-lg font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  lockTab === 'started'
+                    ? 'bg-amber-500 text-slate-950 shadow-md'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <Zap className="w-3.5 h-3.5" />
+                <span>🕒 智能当前时间已开赛</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${lockTab === 'started' ? 'bg-slate-950/20 text-slate-950' : 'bg-slate-800 text-slate-300'}`}>
+                  {detectedStartedMatches.length} 场
+                </span>
+              </button>
 
-              <div className="flex items-center gap-2 pt-1 flex-wrap">
-                <span className="text-[11px] text-slate-500">快捷填充：</span>
-                <button
-                  type="button"
-                  onClick={() => setCutoffInput('00:00')}
-                  className="px-2 py-0.5 rounded bg-slate-800 text-amber-300 text-[11px] font-mono border border-slate-700 hover:bg-slate-750"
-                >
-                  00:00 (塞浦路斯等)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCutoffInput('02:45')}
-                  className="px-2 py-0.5 rounded bg-slate-800 text-cyan-300 text-[11px] font-mono border border-slate-700 hover:bg-slate-750"
-                >
-                  02:45 (欧国联主力)
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => setLockTab('cutoff')}
+                className={`flex-1 py-2 px-3 rounded-lg font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  lockTab === 'cutoff'
+                    ? 'bg-amber-500 text-slate-950 shadow-md'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+                <span>⏱️ 自定义截止时刻</span>
+              </button>
+            </div>
 
-              <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2.5 text-[11px] text-amber-300/90 leading-relaxed">
-                🔒 <strong>防覆盖说明</strong>：锁定后的比赛在下一次导入更新盘口的 Markdown 时，将被自动保护跳过，绝不会被最新盘口重置，确保赛后复盘与当时判定 100% 对应！
+            {/* Modal Body */}
+            <div className="p-5 overflow-y-auto space-y-4 text-xs">
+              {/* Tab 1: Slots Grouping */}
+              {lockTab === 'slots' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-slate-300">
+                    <span className="font-bold">点击选择要锁定的目标开赛时段：</span>
+                    <span className="text-[11px] text-slate-400">已自动归类大盘中的各场开赛时间</span>
+                  </div>
+
+                  {kickoffTimeSlotGroups.length === 0 ? (
+                    <div className="p-4 text-center text-slate-400 bg-slate-950 rounded-xl border border-slate-800">
+                      大盘暂无比赛数据
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {kickoffTimeSlotGroups.map((slot) => {
+                        const isSelected = selectedSlot === slot.key;
+                        const isAllLocked = slot.unlockedCount === 0;
+
+                        return (
+                          <button
+                            key={slot.key}
+                            type="button"
+                            onClick={() => setSelectedSlot(slot.key)}
+                            className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer relative ${
+                              isSelected
+                                ? 'bg-amber-500/20 border-amber-500 text-amber-300 shadow-md ring-1 ring-amber-500/50'
+                                : isAllLocked
+                                ? 'bg-slate-950/40 border-slate-800 text-slate-500 hover:border-slate-700'
+                                : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="font-mono font-black text-sm tracking-wide">
+                                {slot.displayTime}
+                              </span>
+                              {isSelected && (
+                                <Check className="w-3.5 h-3.5 text-amber-400" />
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5 mt-1.5 text-[10px]">
+                              <span className="text-slate-400 font-mono">共 {slot.totalCount} 场</span>
+                              <span>｜</span>
+                              {isAllLocked ? (
+                                <span className="text-slate-500 font-bold">已全锁</span>
+                              ) : (
+                                <span className="text-amber-400 font-bold">待锁 {slot.unlockedCount} 场</span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Condition radio for selected slot */}
+                  {selectedSlot && (
+                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80 space-y-2 mt-2">
+                      <div className="text-slate-300 font-bold text-[11px]">
+                        针对选中时刻 <span className="text-amber-400 font-mono font-bold text-xs">{selectedSlot}</span> 的锁定规则：
+                      </div>
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-3 text-xs">
+                        <label className="flex items-center gap-2 cursor-pointer select-none text-slate-200">
+                          <input
+                            type="radio"
+                            name="slotCondition"
+                            checked={slotCondition === 'lte'}
+                            onChange={() => setSlotCondition('lte')}
+                            className="accent-amber-400"
+                          />
+                          <span><strong>早于或等于该时刻全部场次 (≤ {selectedSlot})</strong> <span className="text-slate-400 text-[10px]">（包含前面更早场次）</span></span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer select-none text-slate-200">
+                          <input
+                            type="radio"
+                            name="slotCondition"
+                            checked={slotCondition === 'exact'}
+                            onChange={() => setSlotCondition('exact')}
+                            className="accent-amber-400"
+                          />
+                          <span><strong>仅锁定该开赛时刻 (== {selectedSlot})</strong></span>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tab 2: Current System Time Auto-Detection */}
+              {lockTab === 'started' && (
+                <div className="space-y-3">
+                  <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between text-slate-300">
+                      <span className="flex items-center gap-2 font-bold text-white">
+                        <Clock className="w-4 h-4 text-cyan-400" />
+                        <span>真实当前时刻对比</span>
+                      </span>
+                      <span className="font-mono text-cyan-300 text-xs font-bold bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/50">
+                        {new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    <p className="text-slate-400 leading-relaxed text-[11px]">
+                      系统已自动比对大盘每场比赛的准确开赛时间。当前时刻之前已开赛的比赛将被冻结终盘快照，后续导入晚盘数据时自动跳过防覆盖；尚未开赛的比赛将原封不动保留未锁状态，继续接收临场更新。
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 pt-1 font-mono">
+                      <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800">
+                        <span className="text-[10px] text-slate-400 block font-sans">已达开赛时刻（即将锁定）</span>
+                        <span className="text-base font-black text-amber-400">{detectedStartedMatches.length} 场</span>
+                      </div>
+                      <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800">
+                        <span className="text-[10px] text-slate-400 block font-sans">尚未开赛（保持未锁）</span>
+                        <span className="text-base font-black text-emerald-400">{queue.length - lockedMatchesCount - detectedStartedMatches.length} 场</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Tab 3: Custom Cutoff Input */}
+              {lockTab === 'cutoff' && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-slate-300 font-bold mb-1">
+                      输入开赛截止时刻（HH:mm 格式，例如 23:00 或 02:45）
+                    </label>
+                    <input
+                      type="text"
+                      value={cutoffInput}
+                      onChange={(e) => setCutoffInput(e.target.value)}
+                      placeholder="23:00"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-base text-amber-300 font-mono font-black focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    />
+                  </div>
+
+                  {/* Cutoff Condition */}
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-3 text-xs bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-slate-200">
+                      <input
+                        type="radio"
+                        name="cutoffMode"
+                        checked={cutoffMode === 'lte'}
+                        onChange={() => setCutoffMode('lte')}
+                        className="accent-amber-400"
+                      />
+                      <span><strong>早于或等于该时刻全部场次 (≤ {cutoffInput || '时间'})</strong></span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-slate-200">
+                      <input
+                        type="radio"
+                        name="cutoffMode"
+                        checked={cutoffMode === 'exact'}
+                        onChange={() => setCutoffMode('exact')}
+                        className="accent-amber-400"
+                      />
+                      <span><strong>仅该时刻 (== {cutoffInput || '时间'})</strong></span>
+                    </label>
+                  </div>
+
+                  {/* Quick Pill Presets */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[11px] text-slate-400">快捷时点：</span>
+                    {['20:00', '22:30', '23:00', '00:00', '00:05', '00:30', '01:00', '02:45'].map((time) => (
+                      <button
+                        key={time}
+                        type="button"
+                        onClick={() => setCutoffInput(time)}
+                        className={`px-2 py-0.5 rounded text-[11px] font-mono border transition-all cursor-pointer ${
+                          cutoffInput === time
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500 font-bold'
+                            : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-750'
+                        }`}
+                      >
+                        {time}
+                      </button>
+                    ))}
+                  </div>
+
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    💡 提示：输入 <span className="font-mono text-amber-300">00:30</span> 将智能锁定包括 <span className="font-mono text-cyan-300">00:05</span>、<span className="font-mono text-cyan-300">23:00</span> 等所有在此时刻或更早开赛的未锁定场次；未开赛场次将原样保留。
+                  </p>
+                </div>
+              )}
+
+              {/* LIVE PREVIEW SECTION (核心防误锁机制) */}
+              <div className="bg-slate-950/90 rounded-xl border border-slate-800 p-3.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                    <span className="font-bold text-white text-xs">锁定结果实时核验预览</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] font-mono">
+                    <span className="text-amber-400 font-bold">预计锁定 {previewMatchesToLock.length} 场</span>
+                    <span className="text-slate-600">｜</span>
+                    <span className="text-emerald-400">保留未锁 {queue.length - lockedMatchesCount - previewMatchesToLock.length} 场</span>
+                    <span className="text-slate-600">｜</span>
+                    <span className="text-slate-400">此前已锁 {lockedMatchesCount} 场</span>
+                  </div>
+                </div>
+
+                {previewMatchesToLock.length === 0 ? (
+                  <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 text-[11px] text-amber-300 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>当前筛选条件下未匹配到任何未锁定比赛，点击确认将不会执行任何多余锁定操作。</span>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <div className="text-[10px] text-slate-400 flex items-center justify-between">
+                      <span>将锁定以下 {previewMatchesToLock.length} 场比赛终盘快照：</span>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewExpanded(!previewExpanded)}
+                        className="text-cyan-400 hover:text-cyan-300 cursor-pointer"
+                      >
+                        {previewExpanded ? '收起清单 ▲' : '展开清单 ▼'}
+                      </button>
+                    </div>
+
+                    {previewExpanded && (
+                      <div className="max-h-36 overflow-y-auto space-y-1 pr-1 scrollbar-thin scrollbar-thumb-slate-700">
+                        {previewMatchesToLock.map((m, idx) => (
+                          <div
+                            key={m.id}
+                            className="bg-slate-900/90 border border-slate-800/80 px-2.5 py-1.5 rounded-lg flex items-center justify-between text-[11px]"
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <span className="font-mono text-slate-500 text-[10px]">#{idx + 1}</span>
+                              <span className="font-bold text-slate-200 truncate">
+                                {m.data.matchInfo.homeTeam} VS {m.data.matchInfo.awayTeam}
+                              </span>
+                              <span className="text-[10px] text-slate-400">({m.data.matchInfo.league || '常规'})</span>
+                            </div>
+                            <span className="font-mono text-amber-400 shrink-0 text-[10px] bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/30">
+                              {m.data.matchInfo.matchTime || '临场'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-slate-800 bg-slate-950/60">
-              <button
-                type="button"
-                onClick={() => setIsAutoLockModalOpen(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white bg-slate-800 rounded-lg"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={handleExecuteAutoLock}
-                className="px-5 py-2 text-xs font-black text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg shadow-lg flex items-center gap-1.5 cursor-pointer"
-              >
-                <Lock className="w-3.5 h-3.5" />
-                <span>立即锁定</span>
-              </button>
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between px-6 py-3.5 border-t border-slate-800 bg-slate-950/80">
+              <span className="text-[11px] text-slate-400 hidden sm:inline">
+                🔒 终盘快照锁定后，后续多次导入晚盘 Markdown 均自动免疫覆盖
+              </span>
+              <div className="flex items-center gap-2 ml-auto">
+                <button
+                  type="button"
+                  onClick={() => setIsAutoLockModalOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-750 rounded-lg transition-colors cursor-pointer"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteAutoLock}
+                  disabled={previewMatchesToLock.length === 0}
+                  className={`px-5 py-2 text-xs font-black rounded-lg shadow-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+                    previewMatchesToLock.length > 0
+                      ? 'bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 shadow-amber-500/20'
+                      : 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-60'
+                  }`}
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>
+                    {previewMatchesToLock.length > 0
+                      ? `确认锁定选中的 ${previewMatchesToLock.length} 场比赛`
+                      : '未匹配到场次'}
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

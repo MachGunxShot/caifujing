@@ -913,11 +913,24 @@ export function parseBatchMatchScoresFromText(
       timeColumnIndex = columnIndex < 0 ? undefined : columnIndex;
       continue;
     }
-    if (!line || line.startsWith('#') || line.startsWith('---') || line.startsWith('===') || isDateHeading) {
+    // Skip Markdown table dividers like |---|---|
+    if (/^\|?[\s\-:|]+\|?$/.test(line) || line.startsWith('---') || line.startsWith('===') || !line) {
       continue;
     }
 
-    const metadata = extractScoreLineMetadata(line, salesDateAnchor, documentDate, timeColumnIndex);
+    // If it's a date heading without match score, extract date anchor and continue
+    if (isDateHeading && !/\d{1,2}\s*[-:：比]\s*\d{1,2}/.test(line)) {
+      continue;
+    }
+
+    // If it's a markdown heading without match score, continue
+    if (line.startsWith('#') && !/\d{1,2}\s*[-:：比]\s*\d{1,2}/.test(line)) {
+      continue;
+    }
+
+    // Strip leading markdown heading tokens, lists, numbers
+    const strippedLine = line.replace(/^#+\s*/, '');
+    const metadata = extractScoreLineMetadata(strippedLine, salesDateAnchor, documentDate, timeColumnIndex);
 
     let home = '';
     let away = '';
@@ -931,7 +944,12 @@ export function parseBatchMatchScoresFromText(
       incidents = incidentMatch[1].replace(/^[\s,，;；]+|[\s,，;；]+$/g, '').trim();
     }
 
-    const cleanLine = metadata.cleanLine.replace(/[（(][^）)]*[）)]/g, '').trim();
+    // Strip parentheses and Markdown syntax (bullets, bold, backticks)
+    let cleanLine = metadata.cleanLine
+      .replace(/[（(][^）)]*[）)]/g, '')
+      .replace(/^[*\-+]\s+|\d+[.、]\s+/g, '')
+      .replace(/[*_`#]/g, '')
+      .trim();
 
     // Pattern 1: [TeamA] vs [TeamB] [Score] (e.g. "曼城 vs 埃弗顿 2-1" or "曼城 VS 埃弗顿 : 2:1")
     const p1 = cleanLine.match(/([^\d\n\r|:：,，;；\t]{2,12})\s*(?:vs|VS|对阵|对)\s*([^\d\n\r|:：,，;；\t]{2,12})[\s\t,，:：|]+(?:比分)?\s*(\d{1,2})\s*[-:：比\s]\s*(\d{1,2})/i);

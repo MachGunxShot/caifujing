@@ -191,6 +191,10 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
   const [batchSyncToCoreRules, setBatchSyncToCoreRules] = useState<boolean>(true);
   const [batchTargetSalesDate, setBatchTargetSalesDate] = useState<string>('');
   const scoreFileInputRef = useRef<HTMLInputElement>(null);
+  const markdownFileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadedMarkdownName, setUploadedMarkdownName] = useState<string | null>(null);
+  const [markdownFeedback, setMarkdownFeedback] = useState<string | null>(null);
+  const [isDraggingMarkdown, setIsDraggingMarkdown] = useState<boolean>(false);
 
   // Manual Rule Modal
   const [isAddRuleOpen, setIsAddRuleOpen] = useState(false);
@@ -938,6 +942,37 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     reader.readAsDataURL(file);
   };
 
+  // Handle Markdown / Text file upload and instant parsing
+  const handleMarkdownFileUpload = (file: File) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = (e.target?.result as string) || '';
+      setBatchRawText(text);
+      setUploadedMarkdownName(file.name);
+      setBatchReviewSummary(null);
+
+      const candidateList = [
+        { id: 'current', home: currentMatch.matchInfo.homeTeam, away: currentMatch.matchInfo.awayTeam, league: currentMatch.matchInfo.league, matchTime: currentMatch.matchInfo.matchTime },
+        ...queue.map((q) => ({ id: q.id, home: q.data.matchInfo.homeTeam, away: q.data.matchInfo.awayTeam, league: q.data.matchInfo.league, matchTime: q.data.matchInfo.matchTime, timestamp: q.timestamp, salesDate: q.review?.salesDateOverride || q.review?.salesDate })),
+      ];
+      const results = parseBatchMatchScoresFromText(text, candidateList);
+      if (results.length > 0) {
+        setParsedScores(results);
+        const matchedCount = results.filter((p) => p.matchedId).length;
+        setMarkdownFeedback(
+          `✅ 成功识别 Markdown 文件「${file.name}」：共提取 ${results.length} 场完场赛果，已自动对齐待复盘赛事 ${matchedCount} 场！`
+        );
+      } else {
+        setMarkdownFeedback(
+          `📄 已成功载入文件「${file.name}」，未直接匹配到“主队 比分 客队”标准赛果行。您可直接在下方文本框微调后点击解析。`
+        );
+      }
+      setTimeout(() => setMarkdownFeedback(null), 7000);
+    };
+    reader.readAsText(file, 'utf-8');
+  };
+
   // Handle Text/Markdown/Table Score Recognition
   const handleRecognizeTextScores = () => {
     if (!batchRawText.trim()) return;
@@ -949,8 +984,12 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     const results = parseBatchMatchScoresFromText(batchRawText, candidateList);
     if (results.length > 0) {
       setParsedScores(results);
+      const matchedCount = results.filter((p) => p.matchedId).length;
+      setMarkdownFeedback(`✅ 成功解析提取到 ${results.length} 场赛果比分，已自动对齐 ${matchedCount} 场待复盘比赛！`);
+      setTimeout(() => setMarkdownFeedback(null), 5000);
     } else {
-      alert('未检测到可识别的比分行。请确保每行包含“主队 最终比分 客队”，例如：“瑞士 1-0 斯洛文尼亚” 或 Markdown 表格。');
+      setMarkdownFeedback('⚠️ 未检测到可识别的比分行。请确保每行包含“主队 最终比分 客队”（例如：“瑞士 1-0 斯洛文尼亚”或 Markdown 表格）。');
+      setTimeout(() => setMarkdownFeedback(null), 7000);
     }
   };
 
@@ -1979,23 +2018,74 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
               {/* Sub-Panel B: Text / Markdown / Table input */}
               {batchInputType === 'text' && (
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between text-xs">
-                    <label className="text-slate-300 font-bold flex items-center gap-1">
-                      <span>粘贴赛果列表（支持多种格式，每行一场）：</span>
-                    </label>
+                  {/* Markdown File Upload & Helper Actions Bar */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
                     <div className="flex items-center gap-2 flex-wrap">
+                      <label className="text-slate-300 font-bold flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>赛果列表与 Markdown 输入：</span>
+                      </label>
+                      {uploadedMarkdownName && (
+                        <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[11px] font-mono flex items-center gap-1">
+                          <span>已载入文件：{uploadedMarkdownName}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setUploadedMarkdownName(null);
+                              setBatchRawText('');
+                              setParsedScores([]);
+                            }}
+                            className="text-slate-400 hover:text-white ml-1 cursor-pointer"
+                            title="清空"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <input
+                        type="file"
+                        ref={markdownFileInputRef}
+                        accept=".md,.markdown,.txt"
+                        className="hidden"
+                        onChange={(e) => {
+                          if (e.target.files && e.target.files[0]) {
+                            handleMarkdownFileUpload(e.target.files[0]);
+                          }
+                          e.target.value = '';
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => markdownFileInputRef.current?.click()}
+                        className="px-2.5 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                        title="点击选择本地 .md 或 .txt 文件直接上传并自动解析提取比分"
+                      >
+                        <Upload className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>📁 上传 Markdown 文件 (.md/.txt)</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={handleLoadQueueScoreSample}
                         className="text-[11px] text-cyan-400 hover:text-cyan-300 underline font-mono cursor-pointer"
                       >
-                        + 载入当前待复盘队列比分范例
+                        + 载入待复盘比分范例
                       </button>
                       <button
                         type="button"
                         onClick={() => {
-                          const demo = `瑞士 1-0 斯洛文尼亚 (点球绝杀)\n北马其顿 0:1 苏格兰 (客队全场铁桶阵防守反击)\n西班牙 3-0 捷克 (早早两球领先，全场压制)\n曼城 2:1 埃弗顿 (补时阶段被客队打入安慰球)\n皇家马德里 0-1 赫塔菲 (全场狂攻未果，冷门收割)`;
+                          const demo = `# 2026-10-25 完场赛果列表
+| 赛事 | 主队 | 比分 | 客队 | 关键事件 |
+| 欧国联 | 瑞士 | 1-0 | 斯洛文尼亚 | 点球绝杀 |
+| 欧国联 | 北马其顿 | 0:1 | 苏格兰 | 全场铁桶防反 |
+| 欧国联 | 西班牙 | 3-0 | 捷克 | 早早领先，全场压制 |
+| 英超 | 曼城 | 2:1 | 埃弗顿 | 补时客队安慰球 |
+| 西甲 | 皇家马德里 | 0-1 | 赫塔菲 | 冷门收割 |`;
                           setBatchRawText(demo);
+                          setUploadedMarkdownName('demo_results.md');
                           const candidateList = [
                             { id: 'current', home: currentMatch.matchInfo.homeTeam, away: currentMatch.matchInfo.awayTeam, league: currentMatch.matchInfo.league, matchTime: currentMatch.matchInfo.matchTime },
                             ...queue.map((q) => ({ id: q.id, home: q.data.matchInfo.homeTeam, away: q.data.matchInfo.awayTeam, league: q.data.matchInfo.league, matchTime: q.data.matchInfo.matchTime, timestamp: q.timestamp, salesDate: q.review?.salesDateOverride || q.review?.salesDate })),
@@ -2005,25 +2095,77 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                         }}
                         className="text-[11px] text-emerald-400 hover:text-emerald-300 underline font-mono cursor-pointer"
                       >
-                        + 载入通用比分测试文本
+                        + 载入 Markdown 范例
                       </button>
                     </div>
                   </div>
 
-                  <textarea
-                    rows={4}
-                    value={batchRawText}
-                    onChange={(e) => setBatchRawText(e.target.value)}
-                    placeholder={`支持以下格式（每行一场，自动识别）：
-瑞士 1-0 斯洛文尼亚
-北马其顿 0:1 苏格兰 (红牌)
-西班牙 3-0 捷克
-或者粘贴 Markdown 比分表格：
-| 瑞士 | 1-0 | 斯洛文尼亚 |`}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs text-white font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500 leading-relaxed"
-                  />
+                  {/* Feedback Notification Banner */}
+                  {markdownFeedback && (
+                    <div className="bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 px-3.5 py-2 rounded-xl text-xs flex items-center justify-between shadow-sm animate-in fade-in">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>{markdownFeedback}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setMarkdownFeedback(null)}
+                        className="text-emerald-400 hover:text-white text-xs p-1 cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
 
-                  <div className="flex justify-end">
+                  {/* Textarea with Drag & Drop Zone */}
+                  <div
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setIsDraggingMarkdown(true);
+                    }}
+                    onDragLeave={(e) => {
+                      e.preventDefault();
+                      setIsDraggingMarkdown(false);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setIsDraggingMarkdown(false);
+                      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                        handleMarkdownFileUpload(e.dataTransfer.files[0]);
+                      }
+                    }}
+                    className={`relative rounded-lg transition-all ${
+                      isDraggingMarkdown ? 'ring-2 ring-emerald-400 bg-emerald-500/10' : ''
+                    }`}
+                  >
+                    {isDraggingMarkdown && (
+                      <div className="absolute inset-0 bg-slate-900/95 border-2 border-dashed border-emerald-400 rounded-lg flex flex-col items-center justify-center z-10 text-emerald-300 font-bold text-xs gap-1.5 shadow-2xl">
+                        <Upload className="w-6 h-6 animate-bounce text-emerald-400" />
+                        <span>松开鼠标立即导入并解析 Markdown / 文本文件...</span>
+                        <span className="text-[10px] text-slate-400">支持 .md、.markdown、.txt 格式</span>
+                      </div>
+                    )}
+
+                    <textarea
+                      rows={5}
+                      value={batchRawText}
+                      onChange={(e) => setBatchRawText(e.target.value)}
+                      placeholder={`支持直接粘贴或拖拽/上传 .md 文件：
+1. Markdown 标题或列表：
+   - 瑞士 1-0 斯洛文尼亚 (点球)
+   - 曼城 2:1 埃弗顿
+2. Markdown 比分表格：
+   | 赛事 | 主队 | 比分 | 客队 |
+   | 欧冠 | 皇家马德里 | 3-1 | 多特蒙德 |
+3. 文本行：西班牙 3-0 捷克`}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs text-white font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500 leading-relaxed"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] text-slate-400">
+                    <span className="font-mono">
+                      💡 提示：可直接拖拽本地 Markdown 文件到文本框中，系统将自动读取并匹配比分
+                    </span>
                     <button
                       type="button"
                       onClick={handleRecognizeTextScores}

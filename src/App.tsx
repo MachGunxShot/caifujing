@@ -15,7 +15,14 @@ import { ReviewEvolutionView } from './components/ReviewEvolutionView';
 import { FullMatchData, AnalysisReportResult, BatchMatchItem } from './types/fortuneActuary';
 import { PRESET_CASES, PresetCase } from './utils/presetCases';
 import { generateActuarialRuleReport, compareEarlyVsLateConfidence } from './utils/actuaryEngine';
-import { calculateSalesDate, calibrateReviewSalesDate, getReviewSalesInfo, hasExplicitKickoffDate } from './utils/salesDayUtils';
+import {
+  calculateSalesDate,
+  calibrateReviewSalesDate,
+  getReviewSalesInfo,
+  hasExplicitKickoffDate,
+  parseKickoffDetails,
+  isMatchBeforeOrAtCutoff,
+} from './utils/salesDayUtils';
 import {
   getActiveExperiencePromptText,
   evaluateMatchOutcomeAndExtractLesson,
@@ -714,40 +721,67 @@ export default function App() {
     }
   };
 
-  // Auto-lock matches that have kicked off or have specific matchTime (e.g. <= cutoff)
-  const handleAutoLockStartedMatches = (cutoffTimeStr?: string) => {
-    let count = 0;
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  // Auto-lock matches by kickoff time or by explicit target IDs (never naively locks everything)
+  const handleAutoLockStartedMatches = (
+    target?: string | string[] | { mode?: 'started' | 'cutoff' | 'exact' | 'ids'; cutoffTime?: string; ids?: string[] }
+  ): number => {
+    const now = Date.now();
+    const timeStr = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    const targetIdsToLock = new Set<string>();
 
-    setBatchQueue((prev) =>
-      prev.map((item) => {
-        if (item.isLocked) return item;
+    if (Array.isArray(target)) {
+      // Direct array of specific match IDs
+      target.forEach((id) => targetIdsToLock.add(id));
+    } else if (typeof target === 'object' && target !== null && Array.isArray(target.ids)) {
+      // Structured object with explicit target IDs
+      target.ids.forEach((id) => targetIdsToLock.add(id));
+    } else {
+      const targetStr = typeof target === 'string' ? target.trim() : '';
+
+      for (const item of batchQueue) {
+        if (item.isLocked) continue;
         const mTime = item.data.matchInfo.matchTime || '';
-        let shouldLock = false;
+        if (!mTime || mTime === '临场') continue;
 
-        if (cutoffTimeStr) {
-          // E.g., if match time equals cutoff or user explicitly specified
-          if (mTime.includes(cutoffTimeStr) || mTime.localeCompare(cutoffTimeStr) <= 0) {
-            shouldLock = true;
+        if (targetStr && targetStr !== 'STARTED') {
+          // Cutoff evaluation (e.g. "23:00" or "00:30")
+          if (isMatchBeforeOrAtCutoff(mTime, targetStr, item.timestamp, 'lte')) {
+            targetIdsToLock.add(item.id);
           }
         } else {
-          // Default: if match has a concrete time like "00:00" or user wants to lock current early games
-          shouldLock = true;
+          // Default or 'STARTED': only lock matches whose real-world kickoff has actually arrived
+          const details = parseKickoffDetails(mTime, item.timestamp, now);
+          if (details.hasTime && details.isStarted) {
+            targetIdsToLock.add(item.id);
+          }
         }
+      }
+    }
 
-        if (shouldLock) {
-          count++;
-          return {
-            ...item,
-            isLocked: true,
-            lockedAt: mTime || timeStr,
-            lockedReason: '开赛封盘保护 (固化终盘)',
-          };
-        }
-        return item;
-      })
-    );
+    // Accurately compute count of unlocked matches to be locked
+    let count = 0;
+    for (const item of batchQueue) {
+      if (!item.isLocked && targetIdsToLock.has(item.id)) {
+        count++;
+      }
+    }
+
+    if (count > 0) {
+      setBatchQueue((prev) =>
+        prev.map((item) => {
+          if (item.isLocked) return item;
+          if (targetIdsToLock.has(item.id)) {
+            return {
+              ...item,
+              isLocked: true,
+              lockedAt: item.data.matchInfo.matchTime || timeStr,
+              lockedReason: '开赛封盘保护 (固化终盘)',
+            };
+          }
+          return item;
+        })
+      );
+    }
 
     return count;
   };
