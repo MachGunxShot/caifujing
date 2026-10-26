@@ -1,4 +1,4 @@
-import { FullMatchData } from '../types/fortuneActuary';
+import { FullMatchData, AsianHandicapData, EuroOddsData, OverUnderData } from '../types/fortuneActuary';
 import { calculateSalesDate, extractDocumentGlobalDate, extractKickoffTime, hasExplicitKickoffDate, matchTeamsFuzzy } from './salesDayUtils';
 
 /**
@@ -78,9 +78,10 @@ export function extractLeagueFromText(text: string): string | null {
     { pattern: /(?:土耳其超级联赛|土超)/i, name: '土超' },
     { pattern: /(?:瑞士超级联赛|瑞士超)/i, name: '瑞士超' },
     { pattern: /(?:奥地利甲级联赛|奥甲)/i, name: '奥甲' },
-    { pattern: /(?:丹麦超级联赛|丹麦超)/i, name: '丹麦超' },
-    { pattern: /(?:挪威超级联赛|挪超)/i, name: '挪超' },
-    { pattern: /(?:瑞典超级联赛|瑞典超)/i, name: '瑞典超' },
+    { pattern: /(?:丹麦超级联赛|丹麦超级|丹麦超)/i, name: '丹麦超' },
+    { pattern: /(?:挪威超级联赛|挪威超级|挪威超联|挪威超|挪超)/i, name: '挪超' },
+    { pattern: /(?:挪威甲级联赛|挪威甲级|挪威甲|挪甲)/i, name: '挪甲' },
+    { pattern: /(?:瑞典超级联赛|瑞典超级|瑞典超)/i, name: '瑞典超' },
 
     // Asia & Domestic
     { pattern: /(?:日本职业联赛|日职联|日职|J1)/i, name: '日职联' },
@@ -125,6 +126,16 @@ export function extractLeagueFromText(text: string): string | null {
     { pattern: /(?:科里蒂巴|哥里迪巴|甘美奥|格雷米奥|累西腓体育|塞阿拉)/, name: '巴西乙' },
     { pattern: /(?:博卡青年|河床|拉普拉塔大学生|学生队|竞技俱乐部|独立队|圣塔菲联|科尔多瓦学院|利斯特雷|瑞斯塔)/, name: '阿甲' },
     { pattern: /(?:阿尔艾因|阿尔艾利吉达|吉达国民|阿尔萨德|卡达西亚|瓜达席亚|伊蒂哈德吉达|吉达联合|阿尔葛拉法|加拉法|帕克塔科|塔什干棉农|巴格达空军|费尔干纳夫兹|泰拉克托)/, name: '亚冠' },
+    { pattern: /(?:博德闪耀|莫尔德|罗森博格|汉坎|布兰|维京|桑德菲杰|特罗姆瑟|萨普斯堡|利勒斯特罗姆|海于格松|腓特烈斯塔|奥德|克里斯蒂安松|KFUM奥斯陆|斯特罗姆加斯特|斯达|瓦勒伦加)/, name: '挪超' },
+    { pattern: /(?:斯塔贝克|康斯文格|兰赫姆|莫斯|劳福斯|松达尔|布莱尼|埃格尔森德|姆延达伦|阿萨纳|勒旺厄尔)/, name: '挪甲' },
+    { pattern: /(?:马尔默|埃尔夫斯堡|佐加顿斯|哈马比|索尔纳|赫根|北雪平|米亚尔比|天狼星|哈尔姆斯塔德|哥德堡|韦斯特罗斯|卡尔马|盖斯|布鲁马波卡纳|韦纳穆)/, name: '瑞典超' },
+    { pattern: /(?:埃因霍温|费耶诺德|阿贾克斯|阿尔克马尔|特温特|乌德勒支|前进之鹰|奈梅亨|海伦芬|福图纳锡塔德|兹沃勒|阿尔梅勒城|瓦尔韦克|鹿特丹斯巴达|威廉二世|格罗宁根|布雷达|赫拉克勒斯)/, name: '荷甲' },
+    { pattern: /(?:布鲁日|圣吉罗斯|安德莱赫特|亨克|根特|安特卫普|色格拉布鲁日|标准列日|韦斯特洛|圣图尔登|梅赫伦|沙勒罗瓦|奥哈瓦里|科特赖克|比尔肖特|登德尔)/, name: '比甲' },
+    { pattern: /(?:哥本哈根|中日德兰|布隆德比|诺西兰|奥胡斯|锡尔克堡|维堡|兰讷斯|瓦埃勒|奥尔堡|桑德捷斯基|灵比)/, name: '丹麦超' },
+    { pattern: /(?:凯尔特人|格拉斯哥流浪者|流浪者|哈茨|阿伯丁|希伯尼安|基尔马诺克|圣米伦|马瑟韦尔|邓迪联|邓迪FC)/, name: '苏超' },
+    { pattern: /(?:利兹联|伯恩利|谢菲尔德联|谢菲联|卢顿|桑德兰|西布罗姆维奇|西布朗|米德尔斯堡|诺维奇|考文垂|沃特福德|斯托克城|布里斯托尔城|斯旺西|普雷斯顿|布莱克本|赫尔城|女王公园巡游者|加的夫城|朴茨茅斯|德比郡|牛津联|谢周三|普利茅斯)/, name: '英冠' },
+    { pattern: /(?:神户胜利船|广岛三箭|町田泽维亚|町田|鹿岛鹿角|大阪钢巴|东京绿茵|大阪樱花|FC东京|横滨水手|名古屋鲸八|名古屋鲸|福冈黄蜂|川崎前锋|浦和红钻|京都不死鸟|湘南丽海|柏太阳神|鸟栖砂岩|磐田喜悦|札幌冈萨多|清水心跳)/, name: '日职联' },
+    { pattern: /(?:蔚山HD|蔚山现代|浦项铁人|光州FC|全北现代|首尔FC|金泉尚武|江原FC|水原FC|济州联|大田市民|大邱FC|仁川联)/, name: '韩K联' },
   ];
 
   for (const item of CLUB_LEAGUE_MAP) {
@@ -136,24 +147,261 @@ export function extractLeagueFromText(text: string): string | null {
   return null;
 }
 
-function normalizeLeagueName(name: string): string {
+export function normalizeLeagueName(name: string): string {
+  if (!name) return '常规联赛';
   const n = name.trim();
+  // 挪威系列：只要包含“超级”或“挪超”，严格归一为“挪超”，阻断误判为“挪甲”
+  if (n.includes('挪威超级') || n.includes('挪威超') || n.includes('挪超') || n.includes('挪威足球超级')) return '挪超';
+  if (n.includes('挪威甲') || n.includes('挪甲') || n.includes('挪威足球甲级')) return '挪甲';
+  // 瑞典/丹麦/芬兰
+  if (n.includes('瑞典超级') || n.includes('瑞典超')) return '瑞典超';
+  if (n.includes('瑞典甲') || n.includes('瑞典超甲') || n.includes('超甲')) return '瑞典甲';
+  if (n.includes('丹麦超级') || n.includes('丹麦超')) return '丹麦超';
+  if (n.includes('丹麦甲')) return '丹麦甲';
+  if (n.includes('芬兰超级') || n.includes('芬超')) return '芬超';
+  // 巴西
   if (n.includes('巴西甲') || n.includes('巴甲') || n.includes('巴西A')) return '巴西甲';
   if (n.includes('巴西乙') || n.includes('巴乙') || n.includes('巴西B')) return '巴西乙';
+  // 阿根廷
   if (n.includes('阿根廷') || n.includes('阿甲')) return '阿甲';
-  if (n.includes('英超')) return '英超';
-  if (n.includes('西甲') && !n.includes('巴西甲') && !n.includes('巴甲') && !n.includes('巴西')) return '西甲';
-  if (n.includes('西乙') && !n.includes('巴西乙') && !n.includes('巴乙') && !n.includes('巴西')) return '西乙';
-  if (n.includes('德甲')) return '德甲';
-  if (n.includes('意甲')) return '意甲';
-  if (n.includes('法甲')) return '法甲';
-  if (n.includes('日职')) return '日职联';
-  if (n.includes('韩K')) return '韩K联';
-  if (n.includes('美职')) return '美职联';
-  if (n.includes('中超')) return '中超';
-  if (n.includes('欧冠')) return '欧冠';
-  if (n.includes('欧国联')) return '欧国联';
+  // 五大联赛及次级
+  if (n.includes('英格兰超级') || n.includes('英超')) return '英超';
+  if (n.includes('英格兰冠军') || n.includes('英冠')) return '英冠';
+  if (n.includes('英甲')) return '英甲';
+  if ((n.includes('西甲') || n.includes('西班牙甲')) && !n.includes('巴西')) return '西甲';
+  if ((n.includes('西乙') || n.includes('西班牙乙')) && !n.includes('巴西')) return '西乙';
+  if (n.includes('德甲') || n.includes('德国甲')) return '德甲';
+  if (n.includes('德乙') || n.includes('德国乙')) return '德乙';
+  if (n.includes('意甲') || n.includes('意大利甲')) return '意甲';
+  if (n.includes('意乙') || n.includes('意大利乙')) return '意乙';
+  if (n.includes('法甲') || n.includes('法国甲')) return '法甲';
+  if (n.includes('法乙') || n.includes('法国乙')) return '法乙';
+  // 欧洲其他主流
+  if (n.includes('葡超') || n.includes('葡萄牙超级')) return '葡超';
+  if (n.includes('葡甲') || n.includes('葡萄牙甲')) return '葡甲';
+  if (n.includes('荷甲') || n.includes('荷兰甲')) return '荷甲';
+  if (n.includes('荷乙') || n.includes('荷兰乙')) return '荷乙';
+  if (n.includes('比甲') || n.includes('比利时甲')) return '比甲';
+  if (n.includes('比乙') || n.includes('比利时乙')) return '比乙';
+  if (n.includes('苏超') || n.includes('苏格兰超级')) return '苏超';
+  if (n.includes('苏冠') || n.includes('苏格兰冠军')) return '苏冠';
+  if (n.includes('俄超') || n.includes('俄罗斯超级')) return '俄超';
+  if (n.includes('土超') || n.includes('土耳其超级')) return '土超';
+  if (n.includes('瑞士超') || n.includes('瑞士超级')) return '瑞士超';
+  if (n.includes('奥甲') || n.includes('奥地利甲')) return '奥甲';
+  // 欧战及国际
+  if (n.includes('欧冠') || n.includes('欧洲冠军')) return '欧冠';
+  if (n.includes('欧联') || n.includes('欧罗巴')) return '欧联杯';
+  if (n.includes('欧协')) return '欧协联';
+  if (n.includes('欧国联') || n.includes('欧洲国家联赛')) return '欧国联';
+  // 亚洲/美洲/澳洲
+  if (n.includes('日职联') || n.includes('日职') || n.includes('J1') || n.includes('日本职业')) return '日职联';
+  if (n.includes('日职乙') || n.includes('J2') || n.includes('日本乙级')) return '日职乙';
+  if (n.includes('韩K') || n.includes('韩国K')) return '韩K联';
+  if (n.includes('澳超') || n.includes('澳洲甲') || n.includes('澳大利亚超级')) return '澳超';
+  if (n.includes('沙特联') || n.includes('沙特超')) return '沙特联';
+  if (n.includes('中超') || n.includes('中国超级')) return '中超';
+  if (n.includes('中甲') || n.includes('中国甲级')) return '中甲';
+  if (n.includes('美职') || n.includes('MLS')) return '美职联';
+  if (n.includes('墨超') || n.includes('墨西哥超') || n.includes('墨西哥联')) return '墨超';
+  if (n.includes('解放者杯')) return '解放者杯';
+  if (n.includes('南美杯')) return '南美杯';
   return n;
+}
+
+function parseColOdds(col: string): { home: number; handicap: string; away: number } | null {
+  if (!col) return null;
+  const parts = col.split(/[/|]/).map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 3) return null;
+  const home = parseFloat(parts[0]);
+  const away = parseFloat(parts[parts.length - 1]);
+  const middle = parts.slice(1, parts.length - 1).join('/');
+  if (isNaN(home) || isNaN(away) || !middle) return null;
+  return { home, handicap: middle, away };
+}
+
+/**
+ * Parses structured company detail tables (### 亚让, ### 大小球, ### 欧指)
+ * typically produced by professional crawler captures (球探 / Titan007 / 500网).
+ */
+export function parseSectionOddsTables(sectionText: string): {
+  asianHandicap?: Partial<FullMatchData['asianHandicap']>;
+  euroOdds?: Partial<FullMatchData['euroOdds']>;
+  overUnder?: Partial<FullMatchData['overUnder']>;
+} {
+  const lines = sectionText.split('\n').map((l) => l.trim());
+  let currentSub = '';
+
+  const asianLines: Array<{
+    company: string;
+    earlyHome: number;
+    earlyHandicap: string;
+    earlyAway: number;
+    lateHome: number;
+    lateHandicap: string;
+    lateAway: number;
+  }> = [];
+
+  const ouLines: Array<{
+    company: string;
+    earlyOver: number;
+    earlyLine: string;
+    earlyUnder: number;
+    lateOver: number;
+    lateLine: string;
+    lateUnder: number;
+  }> = [];
+
+  const euroLines: Array<{
+    company: string;
+    earlyWin: number;
+    earlyDraw: number;
+    earlyLoss: number;
+    lateWin: number;
+    lateDraw: number;
+    lateLoss: number;
+  }> = [];
+
+  for (const line of lines) {
+    if (line.includes('### 亚让') || line.includes('### 亚盘') || line.includes('### 让球')) {
+      currentSub = 'asian';
+      continue;
+    }
+    if (line.includes('### 大小球') || line.includes('### 大小')) {
+      currentSub = 'ou';
+      continue;
+    }
+    if (line.includes('### 欧指') || line.includes('### 欧赔') || line.includes('### 1x2')) {
+      currentSub = 'euro';
+      continue;
+    }
+    if (line.startsWith('## ') && currentSub) break;
+
+    if (!line.includes('|') || line.includes('---|') || line.includes('公司ID') || line.includes('来源')) continue;
+
+    const cols = line.split('|').map((c) => c.trim()).filter(Boolean);
+    if (cols.length < 4) continue;
+
+    const companyName = cols[1] || '';
+    const lineRank = cols[2] || '';
+    const earlyCol = cols[cols.length - 2];
+    const lateCol = cols[cols.length - 1];
+
+    if (currentSub === 'asian') {
+      const isMain = lineRank === '1' || lineRank === '主';
+      if (isMain) {
+        const early = parseColOdds(earlyCol);
+        const late = parseColOdds(lateCol);
+        if (early && late) {
+          asianLines.push({
+            company: companyName,
+            earlyHome: early.home,
+            earlyHandicap: early.handicap,
+            earlyAway: early.away,
+            lateHome: late.home,
+            lateHandicap: late.handicap,
+            lateAway: late.away,
+          });
+        }
+      }
+    } else if (currentSub === 'ou') {
+      const isMain = lineRank === '1' || lineRank === '主';
+      if (isMain) {
+        const early = parseColOdds(earlyCol);
+        const late = parseColOdds(lateCol);
+        if (early && late) {
+          ouLines.push({
+            company: companyName,
+            earlyOver: early.home,
+            earlyLine: early.handicap,
+            earlyUnder: early.away,
+            lateOver: late.home,
+            lateLine: late.handicap,
+            lateUnder: late.away,
+          });
+        }
+      }
+    } else if (currentSub === 'euro') {
+      const partsEarly = earlyCol.split(/[/|]/).map((p) => parseFloat(p.trim())).filter((n) => !isNaN(n));
+      const partsLate = lateCol.split(/[/|]/).map((p) => parseFloat(p.trim())).filter((n) => !isNaN(n));
+      if (partsEarly.length >= 3 && partsLate.length >= 3) {
+        euroLines.push({
+          company: companyName,
+          earlyWin: partsEarly[0],
+          earlyDraw: partsEarly[1],
+          earlyLoss: partsEarly[2],
+          lateWin: partsLate[0],
+          lateDraw: partsLate[1],
+          lateLoss: partsLate[2],
+        });
+      }
+    }
+  }
+
+  const result: {
+    asianHandicap?: Partial<FullMatchData['asianHandicap']>;
+    euroOdds?: Partial<FullMatchData['euroOdds']>;
+    overUnder?: Partial<FullMatchData['overUnder']>;
+  } = {};
+
+  if (asianLines.length > 0) {
+    // Prefer authoritative industry benchmark (澳彩 Macauslot or Crown or Bet365)
+    const benchmark =
+      asianLines.find((a) => a.company.includes('澳')) ||
+      asianLines.find((a) => a.company.includes('Crow')) ||
+      asianLines.find((a) => a.company.includes('36')) ||
+      asianLines[0];
+
+    const avgEarlyHome = asianLines.reduce((acc, a) => acc + a.earlyHome, 0) / asianLines.length;
+    const avgEarlyAway = asianLines.reduce((acc, a) => acc + a.earlyAway, 0) / asianLines.length;
+    const avgLateHome = asianLines.reduce((acc, a) => acc + a.lateHome, 0) / asianLines.length;
+    const avgLateAway = asianLines.reduce((acc, a) => acc + a.lateAway, 0) / asianLines.length;
+
+    result.asianHandicap = {
+      earlyHandicap: benchmark.earlyHandicap,
+      earlyHomeOdds: normalizeWaterOdds(benchmark.earlyHome || avgEarlyHome),
+      earlyAwayOdds: normalizeWaterOdds(benchmark.earlyAway || avgEarlyAway),
+      lateHandicap: benchmark.lateHandicap,
+      lateHomeOdds: normalizeWaterOdds(benchmark.lateHome || avgLateHome),
+      lateAwayOdds: normalizeWaterOdds(benchmark.lateAway || avgLateAway),
+    };
+  }
+
+  if (ouLines.length > 0) {
+    const benchmark =
+      ouLines.find((o) => o.company.includes('澳')) ||
+      ouLines.find((o) => o.company.includes('Crow')) ||
+      ouLines.find((o) => o.company.includes('36')) ||
+      ouLines[0];
+
+    result.overUnder = {
+      earlyLine: benchmark.earlyLine,
+      earlyOverOdds: normalizeWaterOdds(benchmark.earlyOver),
+      earlyUnderOdds: normalizeWaterOdds(benchmark.earlyUnder),
+      lateLine: benchmark.lateLine,
+      lateOverOdds: normalizeWaterOdds(benchmark.lateOver),
+      lateUnderOdds: normalizeWaterOdds(benchmark.lateUnder),
+    };
+  }
+
+  if (euroLines.length > 0) {
+    const benchmark =
+      euroLines.find((e) => e.company.includes('Macau') || e.company.includes('澳')) ||
+      euroLines.find((e) => e.company.includes('365') || e.company.includes('Bet 365')) ||
+      euroLines.find((e) => e.company.includes('William') || e.company.includes('威')) ||
+      euroLines[0];
+
+    result.euroOdds = {
+      earlyWin: benchmark.earlyWin,
+      earlyDraw: benchmark.earlyDraw,
+      earlyLoss: benchmark.earlyLoss,
+      lateWin: benchmark.lateWin,
+      lateDraw: benchmark.lateDraw,
+      lateLoss: benchmark.lateLoss,
+    };
+  }
+
+  return result;
 }
 
 /**
@@ -168,6 +416,18 @@ export function parseNaturalTextOdds(text: string, currentData: FullMatchData): 
   };
 
   const fullText = text;
+
+  // 0. Primary pass: Parse structured detail tables if present (### 亚让, ### 大小球, ### 欧指)
+  const tables = parseSectionOddsTables(fullText);
+  if (tables.asianHandicap && result.asianHandicap) {
+    result.asianHandicap = { ...result.asianHandicap, ...tables.asianHandicap } as AsianHandicapData;
+  }
+  if (tables.euroOdds && result.euroOdds) {
+    result.euroOdds = { ...result.euroOdds, ...tables.euroOdds } as EuroOddsData;
+  }
+  if (tables.overUnder && result.overUnder) {
+    result.overUnder = { ...result.overUnder, ...tables.overUnder } as OverUnderData;
+  }
 
   // Blacklisted non-team words
   const INVALID_WORDS = [
@@ -208,138 +468,152 @@ export function parseNaturalTextOdds(text: string, currentData: FullMatchData): 
     result.matchInfo.matchTime = extractedTime;
   }
 
-  // 2. Euro odds extraction
-  // Check for explicit dual / transition syntax:
-  // e.g. "欧初1.36/4.40/7.50即1.30/4.60/9.50", "1.45 4.50 7.00 -> 1.30 5.00 9.00", "初盘 1.45/4.50/7.00 临场 1.30/5.00/9.00"
-  const euroTransitionMatch = fullText.match(
-    /(?:欧初|初盘|初指|初赔)?\s*(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})\s*(?:即|->|➔|转|至|即时|临场)\s*(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})/
-  );
-  const euroGroups = [
-    ...fullText.matchAll(/(\d+\.\d{1,3})[\s/]+(\d+\.\d{1,3})[\s/]+(\d+\.\d{1,3})/g),
-  ];
-  if (euroTransitionMatch && result.euroOdds) {
-    result.euroOdds.earlyWin = parseFloat(euroTransitionMatch[1]);
-    result.euroOdds.earlyDraw = parseFloat(euroTransitionMatch[2]);
-    result.euroOdds.earlyLoss = parseFloat(euroTransitionMatch[3]);
-    result.euroOdds.lateWin = parseFloat(euroTransitionMatch[4]);
-    result.euroOdds.lateDraw = parseFloat(euroTransitionMatch[5]);
-    result.euroOdds.lateLoss = parseFloat(euroTransitionMatch[6]);
-  } else if (euroGroups.length > 0 && result.euroOdds) {
-    // Single snapshot: apply the extracted Euro odds to BOTH early and late baseline
-    const targetGroup = euroGroups[euroGroups.length - 1]; // use the most relevant/latest group
-    const w = parseFloat(targetGroup[1]);
-    const d = parseFloat(targetGroup[2]);
-    const l = parseFloat(targetGroup[3]);
-    result.euroOdds.earlyWin = w;
-    result.euroOdds.earlyDraw = d;
-    result.euroOdds.earlyLoss = l;
-    result.euroOdds.lateWin = w;
-    result.euroOdds.lateDraw = d;
-    result.euroOdds.lateLoss = l;
+  let euroTransitionMatch: RegExpMatchArray | null = null;
+  let asianDualMatch: RegExpMatchArray | null = null;
+  let ouDualMatch: RegExpMatchArray | null = null;
+
+  // 2. Euro odds extraction (fallback only if not already provided by tables)
+  if (!tables.euroOdds) {
+    euroTransitionMatch = fullText.match(
+      /(?:欧初|初盘|初指|初赔)?\s*(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})\s*(?:即|->|➔|转|至|即时|临场)\s*(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})[/ ]+(\d+\.\d{1,3})/
+    );
+    const euroGroups = [
+      ...fullText.matchAll(/(\d+\.\d{1,3})[\s/]+(\d+\.\d{1,3})[\s/]+(\d+\.\d{1,3})/g),
+    ];
+    if (euroTransitionMatch && result.euroOdds) {
+      result.euroOdds.earlyWin = parseFloat(euroTransitionMatch[1]);
+      result.euroOdds.earlyDraw = parseFloat(euroTransitionMatch[2]);
+      result.euroOdds.earlyLoss = parseFloat(euroTransitionMatch[3]);
+      result.euroOdds.lateWin = parseFloat(euroTransitionMatch[4]);
+      result.euroOdds.lateDraw = parseFloat(euroTransitionMatch[5]);
+      result.euroOdds.lateLoss = parseFloat(euroTransitionMatch[6]);
+    } else if (euroGroups.length > 0 && result.euroOdds) {
+      // Single snapshot: apply the extracted Euro odds to BOTH early and late baseline
+      const targetGroup = euroGroups[euroGroups.length - 1]; // use the most relevant/latest group
+      const w = parseFloat(targetGroup[1]);
+      const d = parseFloat(targetGroup[2]);
+      const l = parseFloat(targetGroup[3]);
+      result.euroOdds.earlyWin = w;
+      result.euroOdds.earlyDraw = d;
+      result.euroOdds.earlyLoss = l;
+      result.euroOdds.lateWin = w;
+      result.euroOdds.lateDraw = d;
+      result.euroOdds.lateLoss = l;
+    }
   }
 
-  // 3. Asian Handicap extraction
-  // Check for dual match: 亚初一球/球半[0.910/0.800]即球半[1.060/0.780] or 一球[0.85/1.05] -> 一球/球半[1.02/0.88]
-  const asianDualMatch = fullText.match(
-    /(?:亚初|初盘|初指)?\s*([^\s\[\]]+)\[([\d.]+)[/ ]+([\d.]+)\]\s*(?:即|->|➔|转|至|即时|临场)\s*([^\s\[\]]+)\[([\d.]+)[/ ]+([\d.]+)\]/
-  );
-  if (asianDualMatch && result.asianHandicap) {
-    result.asianHandicap.earlyHandicap = asianDualMatch[1];
-    result.asianHandicap.earlyHomeOdds = normalizeWaterOdds(parseFloat(asianDualMatch[2]));
-    result.asianHandicap.earlyAwayOdds = normalizeWaterOdds(parseFloat(asianDualMatch[3]));
-    result.asianHandicap.lateHandicap = asianDualMatch[4];
-    result.asianHandicap.lateHomeOdds = normalizeWaterOdds(parseFloat(asianDualMatch[5]));
-    result.asianHandicap.lateAwayOdds = normalizeWaterOdds(parseFloat(asianDualMatch[6]));
-  } else {
-    // 3.1 Check crawler snapshot format:
-    // "盘口分布 受半球/一球×12" or "盘口分布 一球×14"
-    const distMatch = fullText.match(/盘口分布\s*([^\s×·,，()（）\d]+(?:[^\s×·,，()（）]+)?)/);
-    // "让球线 -1（主队让1球）" or "让球线 1（主队受让1球（客队让1球））" or "让球线 0（不让球）"
-    const lineWithDescMatch = fullText.match(/让球线\s*[:：\-*]*\s*([+\-]?\d+(?:\.\d+)?)\s*（([^）]+)）/);
-
-    if (distMatch && result.asianHandicap) {
-      result.asianHandicap.lateHandicap = distMatch[1].trim();
-      if (lineWithDescMatch && result.matchInfo) {
-        result.matchInfo.marketStory = `北单/竞彩让球线: ${lineWithDescMatch[0]}`;
-      }
-    } else if (lineWithDescMatch && result.asianHandicap) {
-      const lineVal = parseFloat(lineWithDescMatch[1]);
-      if (lineVal === 0) {
-        result.asianHandicap.lateHandicap = '平手 (0)';
-      } else if (lineVal < 0) {
-        result.asianHandicap.lateHandicap = `主让${Math.abs(lineVal)}球 (${lineVal})`;
-      } else {
-        result.asianHandicap.lateHandicap = `客让${lineVal}球 (+${lineVal})`;
-      }
+  // 3. Asian Handicap extraction (fallback only if not already provided by tables)
+  if (!tables.asianHandicap) {
+    // Check for dual match: 亚初一球/球半[0.910/0.800]即球半[1.060/0.780] or 一球[0.85/1.05] -> 一球/球半[1.02/0.88]
+    asianDualMatch = fullText.match(
+      /(?:亚初|初盘|初指)?\s*([^\s\[\]]+)\[([\d.]+)[/ ]+([\d.]+)\]\s*(?:即|->|➔|转|至|即时|临场)\s*([^\s\[\]]+)\[([\d.]+)[/ ]+([\d.]+)\]/
+    );
+    if (asianDualMatch && result.asianHandicap) {
+      result.asianHandicap.earlyHandicap = asianDualMatch[1];
+      result.asianHandicap.earlyHomeOdds = normalizeWaterOdds(parseFloat(asianDualMatch[2]));
+      result.asianHandicap.earlyAwayOdds = normalizeWaterOdds(parseFloat(asianDualMatch[3]));
+      result.asianHandicap.lateHandicap = asianDualMatch[4];
+      result.asianHandicap.lateHomeOdds = normalizeWaterOdds(parseFloat(asianDualMatch[5]));
+      result.asianHandicap.lateAwayOdds = normalizeWaterOdds(parseFloat(asianDualMatch[6]));
     } else {
-      // Longest keywords first so "受半球/一球" and "受一球" match before "一球"!
-      const handicapKeywords = [
-        '两球半/三球', '两球/两球半', '球半/两球', '受半球/一球', '一球/球半',
-        '两球半', '受两球', '两球', '受球半', '球半', '受一球', '一球',
-        '受半一', '半一', '受半球', '半球', '受平半', '平半', '平手',
-        '-3.0', '-2.75', '-2.5', '-2.25', '-2.0',
-        '-1.75', '-1.5', '-1.25', '-1.0',
-        '-0.75', '-0.5', '-0.25', '0', '+0.25', '+0.5', '+0.75', '+1.0'
-      ];
+      // 3.1 Check crawler snapshot format:
+      // "盘口分布 受半球/一球×12" or "盘口分布 一球×14"
+      const distMatch = fullText.match(/盘口分布\s*([^\s×·,，()（）\d]+(?:[^\s×·,，()（）]+)?)/);
+      // "让球线 -1（主队让1球）" or "让球线 1（主队受让1球（客队让1球））" or "让球线 0（不让球）"
+      const lineWithDescMatch = fullText.match(/让球线\s*[:：\-*]*\s*([+\-]?\d+(?:\.\d+)?)\s*（([^）]+)）/);
 
-      for (const hk of handicapKeywords) {
-        if (fullText.includes(hk) && result.asianHandicap) {
-          result.asianHandicap.lateHandicap = hk;
-          break;
+      if (distMatch && result.asianHandicap) {
+        result.asianHandicap.lateHandicap = distMatch[1].trim();
+        if (lineWithDescMatch && result.matchInfo) {
+          result.matchInfo.marketStory = `北单/竞彩让球线: ${lineWithDescMatch[0]}`;
+        }
+      } else if (lineWithDescMatch && result.asianHandicap) {
+        const lineVal = parseFloat(lineWithDescMatch[1]);
+        if (lineVal === 0) {
+          result.asianHandicap.lateHandicap = '平手 (0)';
+        } else if (lineVal < 0) {
+          result.asianHandicap.lateHandicap = `主让${Math.abs(lineVal)}球 (${lineVal})`;
+        } else {
+          result.asianHandicap.lateHandicap = `客让${lineVal}球 (+${lineVal})`;
+        }
+      } else {
+        // Crucial: ALL "受" prefixes MUST precede their non-"受" counterparts to prevent stripping!
+        const handicapKeywords = [
+          // 1. Compound/split lines with "受" (MUST come before non-"受"!)
+          '受两球半/三球', '受两球/两球半', '受球半/两球', '受一球半/两球',
+          '受一球/球半', '受半球/一球', '受平手/半球', '受平/半', '受半/一',
+          // 2. Single lines with "受" (MUST come before non-"受"!)
+          '受三球半', '受三球', '受两球半', '受两球', '受球半', '受一球', '受半球', '受半一', '受平半',
+          // 3. Compound/split lines without "受"
+          '两球半/三球', '两球/两球半', '球半/两球', '一球半/两球',
+          '一球/球半', '半球/一球', '平手/半球', '半一', '平半',
+          // 4. Single lines without "受"
+          '三球半', '三球', '两球半', '两球', '球半', '一球', '半球', '平手',
+          // 5. Signed numeric lines
+          '+3.5', '+3.0', '+2.75', '+2.5', '+2.25', '+2.0', '+1.75', '+1.5', '+1.25', '+1.0', '+0.75', '+0.5', '+0.25',
+          '-3.5', '-3.0', '-2.75', '-2.5', '-2.25', '-2.0', '-1.75', '-1.5', '-1.25', '-1.0', '-0.75', '-0.5', '-0.25', '0'
+        ];
+
+        for (const hk of handicapKeywords) {
+          if (fullText.includes(hk) && result.asianHandicap) {
+            result.asianHandicap.lateHandicap = hk;
+            break;
+          }
         }
       }
-    }
 
-    // Water level extraction
-    const waterMatch = fullText.match(/(?:即时主水均|主水均|水位|水|盘水|主水)[\s:：]*(\d\.\d{2,3})/);
-    if (waterMatch && result.asianHandicap) {
-      result.asianHandicap.lateHomeOdds = normalizeWaterOdds(parseFloat(waterMatch[1]));
-    }
-    const guestWaterMatch = fullText.match(/(?:即时客水均|客水均|客水)[\s:：]*(\d\.\d{2,3})/);
-    if (guestWaterMatch && result.asianHandicap) {
-      result.asianHandicap.lateAwayOdds = normalizeWaterOdds(parseFloat(guestWaterMatch[1]));
+      // Water level extraction
+      const waterMatch = fullText.match(/(?:即时主水均|主水均|水位|水|盘水|主水)[\s:：]*(\d\.\d{2,3})/);
+      if (waterMatch && result.asianHandicap) {
+        result.asianHandicap.lateHomeOdds = normalizeWaterOdds(parseFloat(waterMatch[1]));
+      }
+      const guestWaterMatch = fullText.match(/(?:即时客水均|客水均|客水)[\s:：]*(\d\.\d{2,3})/);
+      if (guestWaterMatch && result.asianHandicap) {
+        result.asianHandicap.lateAwayOdds = normalizeWaterOdds(parseFloat(guestWaterMatch[1]));
+      }
     }
   }
 
-  // 4. Over/Under extraction
-  // Format: 大初2.5[0.70/1.05]即2.5[0.80/0.91]
-  const ouDualMatch = fullText.match(/大初\s*([\d./]+)\[([\d.]+)[/ ]+([\d.]+)\]\s*即\s*([\d./]+)\[([\d.]+)[/ ]+([\d.]+)\]/);
-  if (ouDualMatch && result.overUnder) {
-    result.overUnder.earlyLine = ouDualMatch[1];
-    result.overUnder.earlyOverOdds = normalizeWaterOdds(parseFloat(ouDualMatch[2]));
-    result.overUnder.earlyUnderOdds = normalizeWaterOdds(parseFloat(ouDualMatch[3]));
-    result.overUnder.lateLine = ouDualMatch[4];
-    result.overUnder.lateOverOdds = normalizeWaterOdds(parseFloat(ouDualMatch[5]));
-    result.overUnder.lateUnderOdds = normalizeWaterOdds(parseFloat(ouDualMatch[6]));
-  } else {
-    const ouMatch = fullText.match(/(?:大小球|大小|总进球|进球数|O\/U|盘口分布)[\s:：]*(\d(?:\.\d{1,2})?(?:\/\d(?:\.\d{1,2})?)?)/i);
-    if (ouMatch && result.overUnder) {
-      result.overUnder.lateLine = ouMatch[1];
-    }
-    const bigWaterMatch = fullText.match(/(?:大球水均|大球水|大水)[\s:：]*(\d\.\d{2,3})/);
-    if (bigWaterMatch && result.overUnder) {
-      result.overUnder.lateOverOdds = normalizeWaterOdds(parseFloat(bigWaterMatch[1]));
-    }
-    const smallWaterMatch = fullText.match(/(?:小球水均|小球水|小水)[\s:：]*(\d\.\d{2,3})/);
-    if (smallWaterMatch && result.overUnder) {
-      result.overUnder.lateUnderOdds = normalizeWaterOdds(parseFloat(smallWaterMatch[1]));
+  // 4. Over/Under extraction (fallback only if not already provided by tables)
+  if (!tables.overUnder) {
+    ouDualMatch = fullText.match(/大初\s*([\d./]+)\[([\d.]+)[/ ]+([\d.]+)\]\s*即\s*([\d./]+)\[([\d.]+)[/ ]+([\d.]+)\]/);
+    if (ouDualMatch && result.overUnder) {
+      result.overUnder.earlyLine = ouDualMatch[1];
+      result.overUnder.earlyOverOdds = normalizeWaterOdds(parseFloat(ouDualMatch[2]));
+      result.overUnder.earlyUnderOdds = normalizeWaterOdds(parseFloat(ouDualMatch[3]));
+      result.overUnder.lateLine = ouDualMatch[4];
+      result.overUnder.lateOverOdds = normalizeWaterOdds(parseFloat(ouDualMatch[5]));
+      result.overUnder.lateUnderOdds = normalizeWaterOdds(parseFloat(ouDualMatch[6]));
+    } else {
+      const ouMatch = fullText.match(/(?:大小球|大小|总进球|进球数|O\/U|盘口分布)[\s:：]*(\d(?:\.\d{1,2})?(?:\/\d(?:\.\d{1,2})?)?)/i);
+      if (ouMatch && result.overUnder) {
+        result.overUnder.lateLine = ouMatch[1];
+      }
+      const bigWaterMatch = fullText.match(/(?:大球水均|大球水|大水)[\s:：]*(\d\.\d{2,3})/);
+      if (bigWaterMatch && result.overUnder) {
+        result.overUnder.lateOverOdds = normalizeWaterOdds(parseFloat(bigWaterMatch[1]));
+      }
+      const smallWaterMatch = fullText.match(/(?:小球水均|小球水|小水)[\s:：]*(\d\.\d{2,3})/);
+      if (smallWaterMatch && result.overUnder) {
+        result.overUnder.lateUnderOdds = normalizeWaterOdds(parseFloat(smallWaterMatch[1]));
+      }
     }
   }
 
-  // When only a single snapshot is provided (not explicit dual transition),
+  // When only a single snapshot is provided (not explicit dual transition and not tables),
   // synchronize early baseline to match the parsed single snapshot so we don't
   // compare against hardcoded initial placeholders!
-  if (!asianDualMatch && result.asianHandicap) {
+  if (!tables.asianHandicap && !asianDualMatch && result.asianHandicap) {
     result.asianHandicap.earlyHandicap = result.asianHandicap.lateHandicap;
     result.asianHandicap.earlyHomeOdds = result.asianHandicap.lateHomeOdds;
     result.asianHandicap.earlyAwayOdds = result.asianHandicap.lateAwayOdds;
   }
-  if (!euroTransitionMatch && result.euroOdds) {
+  if (!tables.euroOdds && !euroTransitionMatch && result.euroOdds) {
     result.euroOdds.earlyWin = result.euroOdds.lateWin;
     result.euroOdds.earlyDraw = result.euroOdds.lateDraw;
     result.euroOdds.earlyLoss = result.euroOdds.lateLoss;
   }
-  if (!ouDualMatch && result.overUnder) {
+  if (!tables.overUnder && !ouDualMatch && result.overUnder) {
     result.overUnder.earlyLine = result.overUnder.lateLine;
     result.overUnder.earlyOverOdds = result.overUnder.lateOverOdds;
     result.overUnder.earlyUnderOdds = result.overUnder.lateUnderOdds;
@@ -554,14 +828,56 @@ export function parseBatchMatchesFromText(rawText: string): FullMatchData[] {
     for (const section of sections) {
       // Find team heading strictly on the FIRST line of the section (prevents newline bleed)
       const firstLine = section.split('\n')[0].trim();
-      const headingMatch = firstLine.match(
-        /##+\s*(?:【?\s*(\d+)\s*】?\.?\s*)?([^\d\s\n#【】（(]{2,10})[^\S\r\n]*(?:\bvs\b|\bVS\b|对阵)[^\S\r\n]*([^\d\s\n#【】（(]{2,10})/i
-      );
-      if (!headingMatch) continue;
+      let sectionIndex: number | undefined;
+      let home = '';
+      let away = '';
+      let headingLeagueHint: string | undefined;
 
-      const sectionIndex = headingMatch[1] ? parseInt(headingMatch[1], 10) : undefined;
-      const home = headingMatch[2].trim();
-      const away = headingMatch[3].trim();
+      const idxMatch = firstLine.match(/^##+\s*【?(\d+)】?[.、\s]*/);
+      if (idxMatch) {
+        sectionIndex = parseInt(idxMatch[1], 10);
+      }
+      const lineContent = firstLine.replace(/^##+\s*(?:【?\s*\d+\s*】?\.?\s*)?/, '').trim();
+      const vsParts = lineContent.split(/[^\S\r\n]*(?:\bvs\b|\bVS\b|对阵)[^\S\r\n]*/i);
+
+      if (vsParts.length >= 2) {
+        let left = vsParts[0].trim();
+        let right = vsParts[1].trim();
+
+        // Check bracketed league prefix on left
+        const bMatch = left.match(/^[【\[\(]([^】\]\)]+)[】\]\)]\s*(.+)$/);
+        if (bMatch) {
+          headingLeagueHint = bMatch[1].trim();
+          left = bMatch[2].trim();
+        } else {
+          const tokens = left.split(/\s+/);
+          if (tokens.length >= 2 && isValidTeamName(tokens[tokens.length - 1])) {
+            headingLeagueHint = tokens.slice(0, tokens.length - 1).join(' ');
+            left = tokens[tokens.length - 1];
+          }
+        }
+
+        // Right side: strip bracketed suffix or notes
+        const rightBMatch = right.match(/^([^\s（(【\[]+)\s*[（(【\[]([^）)】\]]+)[）)】\]]$/);
+        if (rightBMatch) {
+          right = rightBMatch[1].trim();
+          if (!headingLeagueHint) headingLeagueHint = rightBMatch[2].trim();
+        } else {
+          const rTokens = right.split(/\s+/);
+          right = rTokens[0];
+        }
+
+        home = left;
+        away = right;
+      } else {
+        const headingMatch = firstLine.match(
+          /##+\s*(?:【?\s*(\d+)\s*】?\.?\s*)?([^\d\s\n#【】（(]{2,10})[^\S\r\n]*(?:\bvs\b|\bVS\b|对阵)[^\S\r\n]*([^\d\s\n#【】（(]{2,10})/i
+        );
+        if (!headingMatch) continue;
+        sectionIndex = headingMatch[1] ? parseInt(headingMatch[1], 10) : undefined;
+        home = headingMatch[2].trim();
+        away = headingMatch[3].trim();
+      }
 
       if (!isValidTeamName(home) || !isValidTeamName(away)) continue;
 
@@ -603,12 +919,46 @@ export function parseBatchMatchesFromText(rawText: string): FullMatchData[] {
         matchTime = matchedMeta.kickoffTime;
       }
 
-      // Extract league from section or overview table
-      const league =
-        extractLeagueFromText(section) ||
+      // Extract league from headingLeagueHint, firstLine, section or overview table
+      let league =
+        (headingLeagueHint ? normalizeLeagueName(headingLeagueHint) : undefined) ||
         extractLeagueFromText(firstLine) ||
+        extractLeagueFromText(section) ||
         matchedMeta?.league ||
         '常规联赛';
+
+      // If team name accidentally captured the league prefix (e.g. "挪威超级 汉坎" or "挪超博德闪耀")
+      const LEAGUE_PREFIX_PAIRS: Array<[RegExp, string]> = [
+        [/^(?:挪威超级联赛|挪威超级|挪威超联|挪威超|挪超)\s*/i, '挪超'],
+        [/^(?:挪威甲级联赛|挪威甲级|挪威甲|挪甲)\s*/i, '挪甲'],
+        [/^(?:西班牙甲级联赛|西班牙甲|西甲)\s*/i, '西甲'],
+        [/^(?:西班牙乙级联赛|西班牙乙|西乙)\s*/i, '西乙'],
+        [/^(?:英格兰超级联赛|英超)\s*/i, '英超'],
+        [/^(?:英格兰冠军联赛|英冠)\s*/i, '英冠'],
+        [/^(?:德国甲级联赛|德甲)\s*/i, '德甲'],
+        [/^(?:意大利甲级联赛|意甲)\s*/i, '意甲'],
+        [/^(?:法国甲级联赛|法甲)\s*/i, '法甲'],
+        [/^(?:葡萄牙超级联赛|葡超)\s*/i, '葡超'],
+        [/^(?:荷兰甲级联赛|荷甲)\s*/i, '荷甲'],
+        [/^(?:比利时甲级联赛|比甲)\s*/i, '比甲'],
+        [/^(?:瑞典超级联赛|瑞典超)\s*/i, '瑞典超'],
+        [/^(?:丹麦超级联赛|丹麦超)\s*/i, '丹麦超'],
+        [/^(?:巴西甲级联赛|巴西甲|巴甲)\s*/i, '巴西甲'],
+        [/^(?:巴西乙级联赛|巴西乙|巴乙)\s*/i, '巴西乙'],
+        [/^(?:阿根廷甲级联赛|阿甲)\s*/i, '阿甲'],
+        [/^(?:欧洲冠军联赛|欧冠)\s*/i, '欧冠'],
+        [/^(?:亚冠精英联赛|亚冠)\s*/i, '亚冠'],
+      ];
+
+      for (const [p, lName] of LEAGUE_PREFIX_PAIRS) {
+        if (p.test(home) && home.replace(p, '').trim().length >= 2) {
+          if (league === '常规联赛' || !league) {
+            league = lName;
+          }
+          home = home.replace(p, '').trim();
+          break;
+        }
+      }
 
       const matchItem: FullMatchData = {
         matchInfo: {
