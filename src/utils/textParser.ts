@@ -113,6 +113,26 @@ export function extractLeagueFromText(text: string): string | null {
     }
   }
 
+  // 4. Well-known iconic club recognition when document leaves league unstated
+  const CLUB_LEAGUE_MAP: Array<{ pattern: RegExp; name: string }> = [
+    { pattern: /(?:巴黎圣日耳曼|里昂|摩纳哥|马赛|里尔|朗斯|雷恩)/, name: '法甲' },
+    { pattern: /(?:皇家马德里|巴塞罗那|马德里竞技|塞维利亚|奥萨苏纳|赫塔菲|毕尔巴鄂|比利亚雷亚尔|皇家社会|巴伦西亚|赫罗纳)/, name: '西甲' },
+    { pattern: /(?:本菲卡|波尔图|葡萄牙体育|圣塔克莱拉|布拉加|吉马良斯|法马利康)/, name: '葡超' },
+    { pattern: /(?:曼彻斯特城|阿森纳|利物浦|切尔西|托特纳姆热刺|曼联|纽卡斯尔|阿斯顿维拉|布莱顿|埃弗顿)/, name: '英超' },
+    { pattern: /(?:拜仁慕尼黑|多特蒙德|勒沃库森|莱比锡|法兰克福|波鸿|斯图加特)/, name: '德甲' },
+    { pattern: /(?:国际米兰|AC米兰|尤文图斯|那不勒斯|罗马|拉齐奥|佛罗伦萨|亚特兰大)/, name: '意甲' },
+    { pattern: /(?:法林明高|弗拉门戈|帕尔梅拉斯|圣保罗|米内罗竞技|科林蒂安|巴拉纳竞技|福塔雷萨|克鲁塞罗)/, name: '巴西甲' },
+    { pattern: /(?:科里蒂巴|哥里迪巴|甘美奥|格雷米奥|累西腓体育|塞阿拉)/, name: '巴西乙' },
+    { pattern: /(?:博卡青年|河床|拉普拉塔大学生|学生队|竞技俱乐部|独立队|圣塔菲联|科尔多瓦学院|利斯特雷|瑞斯塔)/, name: '阿甲' },
+    { pattern: /(?:阿尔艾因|阿尔艾利吉达|吉达国民|阿尔萨德|卡达西亚|瓜达席亚|伊蒂哈德吉达|吉达联合|阿尔葛拉法|加拉法|帕克塔科|塔什干棉农|巴格达空军|费尔干纳夫兹|泰拉克托)/, name: '亚冠' },
+  ];
+
+  for (const item of CLUB_LEAGUE_MAP) {
+    if (item.pattern.test(text)) {
+      return item.name;
+    }
+  }
+
   return null;
 }
 
@@ -328,6 +348,163 @@ export function parseNaturalTextOdds(text: string, currentData: FullMatchData): 
   return result;
 }
 
+export interface OverviewMatchMetadata {
+  index?: number;
+  home: string;
+  away: string;
+  aliasHome?: string;
+  aliasAway?: string;
+  kickoffTime?: string;
+  league?: string;
+}
+
+/**
+ * Accurately extracts metadata (kickoff time, league, team aliases, match index)
+ * from document overview tables (such as 球探抓取快照 top table) or overview lists.
+ */
+export function extractOverviewMetadata(rawText: string): OverviewMatchMetadata[] {
+  if (!rawText) return [];
+  const results: OverviewMatchMetadata[] = [];
+  const lines = rawText.split('\n').map((l) => l.trim());
+
+  let inTable = false;
+  let indexCol = -1;
+  let timeCol = -1;
+  let leagueCol = -1;
+  let homeCol = -1;
+  let awayCol = -1;
+  let matchCols: number[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line) continue;
+
+    // Detect markdown table rows
+    if (line.includes('|')) {
+      const parts = line.split('|').map((p) => p.trim());
+      // remove leading/trailing empty string from outer pipes
+      const cols = parts.slice(1, parts.length - 1);
+
+      // Check if this is a header row
+      const isHeader =
+        cols.some((c) => /(?:对阵|比赛|球队|主队|客队|名称)/i.test(c)) &&
+        cols.some((c) => /(?:开赛|时间|时刻|日期|序号|场次|编号)/i.test(c));
+
+      if (isHeader) {
+        inTable = true;
+        indexCol = cols.findIndex((c) => /^(?:序号|场次|编号|ID|#)$/i.test(c));
+        timeCol = cols.findIndex((c) => /(?:开赛|比赛时间|开赛时间|时刻|时间|日期)/i.test(c));
+        leagueCol = cols.findIndex((c) => /(?:联赛|赛事|级别)/i.test(c));
+        homeCol = cols.findIndex((c) => /(?:主队)/i.test(c));
+        awayCol = cols.findIndex((c) => /(?:客队)/i.test(c));
+        matchCols = cols
+          .map((c, idx) => (/(?:对阵|比赛|名称|截图|球队)/i.test(c) ? idx : -1))
+          .filter((idx) => idx >= 0);
+        continue;
+      }
+
+      // Divider row
+      if (inTable && cols.every((c) => /^[:\-\s]+$/.test(c))) {
+        continue;
+      }
+
+      // Table data row
+      if (inTable) {
+        // If line has stopped being a table (e.g. section starts or empty)
+        if (line.startsWith('#') || cols.length < 2) {
+          inTable = false;
+        } else {
+          let rawTime = timeCol >= 0 && cols[timeCol] ? cols[timeCol] : '';
+          if (!rawTime || rawTime === '临场') {
+            rawTime = cols.find((c) => /\d{1,2}[:：]\d{2}/.test(c) || /20\d{2}[-/.]/.test(c)) || '';
+          }
+          const kickoffTime = rawTime ? extractKickoffTime(rawTime, rawText) : undefined;
+
+          let index: number | undefined;
+          if (indexCol >= 0 && /^\d+$/.test(cols[indexCol])) {
+            index = parseInt(cols[indexCol], 10);
+          } else if (/^\d+$/.test(cols[0])) {
+            index = parseInt(cols[0], 10);
+          }
+
+          let home = '';
+          let away = '';
+          let aliasHome: string | undefined;
+          let aliasAway: string | undefined;
+
+          if (homeCol >= 0 && awayCol >= 0 && cols[homeCol] && cols[awayCol]) {
+            home = cols[homeCol];
+            away = cols[awayCol];
+          } else {
+            const candidateCols =
+              matchCols.length > 0 ? matchCols.map((idx) => cols[idx]).filter(Boolean) : cols;
+            for (const colVal of candidateCols) {
+              const vs = colVal.match(
+                /([^\d\s\n#【】（(]{2,12})[^\S\r\n]*(?:vs|VS|对阵|对|\-)[^\S\r\n]*([^\d\s\n#【】（(]{2,12})/i
+              );
+              if (vs) {
+                const h = vs[1].trim();
+                const a = vs[2].trim();
+                if (!home) {
+                  home = h;
+                  away = a;
+                } else if (!aliasHome && (h !== home || a !== away)) {
+                  aliasHome = h;
+                  aliasAway = a;
+                }
+              }
+            }
+          }
+
+          let league =
+            leagueCol >= 0 && cols[leagueCol] ? normalizeLeagueName(cols[leagueCol]) : undefined;
+          if (!league) {
+            league = extractLeagueFromText(line) || undefined;
+          }
+
+          if (home && away) {
+            results.push({
+              index,
+              home,
+              away,
+              aliasHome,
+              aliasAway,
+              kickoffTime: kickoffTime && kickoffTime !== '临场' ? kickoffTime : undefined,
+              league,
+            });
+          }
+        }
+      }
+    } else {
+      // Non-table line
+      inTable = false;
+      // Also check if line is an overview list entry like "1. 费尔干纳夫兹 vs 伊蒂哈德吉达 2026-10-26 21:45"
+      if (!line.startsWith('#') && (line.includes('vs') || line.includes('VS') || line.includes('对阵'))) {
+        const vsMatch = line.match(
+          /(?:(?:【?(\d+)】?|[#\d]+)[.、\s]+)?([^\d\s\n#【】（(]{2,12})[^\S\r\n]*(?:vs|VS|对阵|对)[^\S\r\n]*([^\d\s\n#【】（(]{2,12})/i
+        );
+        if (vsMatch) {
+          const index = vsMatch[1] ? parseInt(vsMatch[1], 10) : undefined;
+          const home = vsMatch[2].trim();
+          const away = vsMatch[3].trim();
+          const rawTime = extractKickoffTime(line, rawText);
+          if (rawTime && rawTime !== '临场' && home && away) {
+            results.push({
+              index,
+              home,
+              away,
+              kickoffTime: rawTime,
+              league: extractLeagueFromText(line) || undefined,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
 /**
  * Intelligent Multi-Match Batch Parser:
  * Capable of handling complex Markdown snapshot documents (like 500比分抓取快照 with details),
@@ -338,6 +515,7 @@ export function parseBatchMatchesFromText(rawText: string): FullMatchData[] {
 
   const matches: FullMatchData[] = [];
   const text = rawText.trim();
+  const overviewList = extractOverviewMetadata(rawText);
 
   const INVALID_WORDS = [
     '时点', '核对', '快照', '验证', '明细', '公司', '总结', '对阵',
@@ -377,23 +555,60 @@ export function parseBatchMatchesFromText(rawText: string): FullMatchData[] {
       // Find team heading strictly on the FIRST line of the section (prevents newline bleed)
       const firstLine = section.split('\n')[0].trim();
       const headingMatch = firstLine.match(
-        /##+\s*(?:【?\s*\d+\s*】?\.?\s*)?([^\d\s\n#【】（(]{2,10})[^\S\r\n]*(?:\bvs\b|\bVS\b|对阵)[^\S\r\n]*([^\d\s\n#【】（(]{2,10})/i
+        /##+\s*(?:【?\s*(\d+)\s*】?\.?\s*)?([^\d\s\n#【】（(]{2,10})[^\S\r\n]*(?:\bvs\b|\bVS\b|对阵)[^\S\r\n]*([^\d\s\n#【】（(]{2,10})/i
       );
       if (!headingMatch) continue;
 
-      const home = headingMatch[1].trim();
-      const away = headingMatch[2].trim();
+      const sectionIndex = headingMatch[1] ? parseInt(headingMatch[1], 10) : undefined;
+      const home = headingMatch[2].trim();
+      const away = headingMatch[3].trim();
 
       if (!isValidTeamName(home) || !isValidTeamName(away)) continue;
 
-      // Extract league from section
+      // Correlate with overview table metadata if available
+      let matchedMeta: OverviewMatchMetadata | undefined;
+      if (sectionIndex !== undefined) {
+        matchedMeta = overviewList.find((item) =>
+          item.index === sectionIndex &&
+          (matchTeamsFuzzy(home, item.home) ||
+           matchTeamsFuzzy(away, item.away) ||
+           matchTeamsFuzzy(home, item.aliasHome || '') ||
+           matchTeamsFuzzy(away, item.aliasAway || ''))
+        );
+        if (!matchedMeta) {
+          matchedMeta = overviewList.find((item) => item.index === sectionIndex);
+        }
+      }
+      if (!matchedMeta) {
+        matchedMeta = overviewList.find((item) =>
+          (matchTeamsFuzzy(home, item.home) && matchTeamsFuzzy(away, item.away)) ||
+          (item.aliasHome && item.aliasAway && matchTeamsFuzzy(home, item.aliasHome) && matchTeamsFuzzy(away, item.aliasAway))
+        );
+      }
+      if (!matchedMeta) {
+        const candidates = overviewList.filter((item) =>
+          matchTeamsFuzzy(home, item.home) ||
+          matchTeamsFuzzy(away, item.away) ||
+          matchTeamsFuzzy(home, item.aliasHome || '') ||
+          matchTeamsFuzzy(away, item.aliasAway || '')
+        );
+        if (candidates.length === 1) {
+          matchedMeta = candidates[0];
+        }
+      }
+
+      // Extract match time (intelligent recognition of Markdown datetime formats)
+      let matchTime = extractKickoffTime(section, rawText);
+      if ((!matchTime || matchTime === '临场') && matchedMeta?.kickoffTime && matchedMeta.kickoffTime !== '临场') {
+        matchTime = matchedMeta.kickoffTime;
+      }
+
+      // Extract league from section or overview table
       const league =
         extractLeagueFromText(section) ||
         extractLeagueFromText(firstLine) ||
+        matchedMeta?.league ||
         '常规联赛';
-
-      // Extract match time (intelligent recognition of Markdown datetime formats)
-      const matchTime = extractKickoffTime(section, rawText);
 
       const matchItem: FullMatchData = {
         matchInfo: {
@@ -490,7 +705,16 @@ export function parseBatchMatchesFromText(rawText: string): FullMatchData[] {
       ? line.split(',').map(c => c.trim().replace(/^["']|["']$/g, ''))
       : [];
 
-    const rowMatchTime = extractKickoffTime(line, rawText);
+    let rowMatchTime = extractKickoffTime(line, rawText);
+    if ((!rowMatchTime || rowMatchTime === '临场') && overviewList.length > 0) {
+      const meta = overviewList.find((item) =>
+        (matchTeamsFuzzy(home, item.home) && matchTeamsFuzzy(away, item.away)) ||
+        (item.aliasHome && item.aliasAway && matchTeamsFuzzy(home, item.aliasHome) && matchTeamsFuzzy(away, item.aliasAway))
+      );
+      if (meta?.kickoffTime) {
+        rowMatchTime = meta.kickoffTime;
+      }
+    }
 
     if (cols.length >= 7 && !line.includes('家')) {
       // Full CSV / Markdown row with odds

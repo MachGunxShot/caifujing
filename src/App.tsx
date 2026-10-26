@@ -22,6 +22,8 @@ import {
   hasExplicitKickoffDate,
   parseKickoffDetails,
   isMatchBeforeOrAtCutoff,
+  matchTeamsFuzzy,
+  extractKickoffTime,
 } from './utils/salesDayUtils';
 import {
   getActiveExperiencePromptText,
@@ -52,27 +54,39 @@ const LEGACY_STORAGE_KEYS = [
  */
 function sanitizeAndRecalibrateQueue(queue: BatchMatchItem[]): BatchMatchItem[] {
   return queue.map((item) => {
-    const rep = generateActuarialRuleReport(item.data);
+    // If kickoff time was lost or left as '临场', see if marketStory has the time
+    let matchTime = item.data.matchInfo.matchTime;
+    if (!matchTime || matchTime === '临场') {
+      const storyTime = extractKickoffTime(item.data.matchInfo.marketStory || '');
+      if (storyTime && storyTime !== '临场') {
+        matchTime = storyTime;
+      }
+    }
+    const currentData = matchTime !== item.data.matchInfo.matchTime
+      ? { ...item.data, matchInfo: { ...item.data.matchInfo, matchTime } }
+      : item.data;
+
+    const rep = generateActuarialRuleReport(currentData);
 
     // Check if match has genuine dual-odds evidence (either intra-text early vs late, or genuine update from early snapshot)
     const hasDualOdds = Boolean(
-      (item.data.asianHandicap?.earlyHandicap &&
-       item.data.asianHandicap?.lateHandicap &&
-       item.data.asianHandicap.earlyHandicap !== item.data.asianHandicap.lateHandicap) ||
-      Math.abs((item.data.asianHandicap?.earlyHomeOdds || 0) - (item.data.asianHandicap?.lateHomeOdds || 0)) > 0.02 ||
-      Math.abs((item.data.euroOdds?.earlyWin || 0) - (item.data.euroOdds?.lateWin || 0)) > 0.02 ||
+      (currentData.asianHandicap?.earlyHandicap &&
+       currentData.asianHandicap?.lateHandicap &&
+       currentData.asianHandicap.earlyHandicap !== currentData.asianHandicap.lateHandicap) ||
+      Math.abs((currentData.asianHandicap?.earlyHomeOdds || 0) - (currentData.asianHandicap?.lateHomeOdds || 0)) > 0.02 ||
+      Math.abs((currentData.euroOdds?.earlyWin || 0) - (currentData.euroOdds?.lateWin || 0)) > 0.02 ||
       (item.earlyDataSnapshot && (
         (item.earlyDataSnapshot.asianHandicap?.lateHandicap &&
-         item.data.asianHandicap?.lateHandicap &&
-         item.earlyDataSnapshot.asianHandicap.lateHandicap !== item.data.asianHandicap.lateHandicap) ||
-        Math.abs((item.earlyDataSnapshot.asianHandicap?.lateHomeOdds || 0) - (item.data.asianHandicap?.lateHomeOdds || 0)) > 0.02 ||
-        Math.abs((item.earlyDataSnapshot.euroOdds?.lateWin || 0) - (item.data.euroOdds?.lateWin || 0)) > 0.02
+         currentData.asianHandicap?.lateHandicap &&
+         item.earlyDataSnapshot.asianHandicap.lateHandicap !== currentData.asianHandicap.lateHandicap) ||
+        Math.abs((item.earlyDataSnapshot.asianHandicap?.lateHomeOdds || 0) - (currentData.asianHandicap?.lateHomeOdds || 0)) > 0.02 ||
+        Math.abs((item.earlyDataSnapshot.euroOdds?.lateWin || 0) - (currentData.euroOdds?.lateWin || 0)) > 0.02
       ))
     );
 
     let confidenceShift = hasDualOdds
       ? compareEarlyVsLateConfidence(
-          item.data,
+          currentData,
           item.earlyReportSnapshot,
           rep,
           item.earlyDataSnapshot
@@ -90,6 +104,7 @@ function sanitizeAndRecalibrateQueue(queue: BatchMatchItem[]): BatchMatchItem[] 
 
     return {
       ...item,
+      data: currentData,
       report: rep,
       confidenceShift,
     };
@@ -540,14 +555,34 @@ export default function App() {
         const away = m.matchInfo.awayTeam.trim();
         const existingIndex = updatedQueue.findIndex(
           (item) =>
-            item.data.matchInfo.homeTeam.trim() === home &&
-            item.data.matchInfo.awayTeam.trim() === away &&
+            ((item.data.matchInfo.homeTeam.trim() === home && item.data.matchInfo.awayTeam.trim() === away) ||
+             (matchTeamsFuzzy(item.data.matchInfo.homeTeam, home) && matchTeamsFuzzy(item.data.matchInfo.awayTeam, away))) &&
             !(hasExplicitKickoffDate(m.matchInfo.matchTime) && hasExplicitKickoffDate(item.data.matchInfo.matchTime) &&
               calculateSalesDate(m.matchInfo.matchTime).salesDate !== calculateSalesDate(item.data.matchInfo.matchTime, item.timestamp).salesDate)
         );
 
         if (existingIndex >= 0) {
           const existing = updatedQueue[existingIndex];
+          if (existing.isLocked) {
+            protectedCount++;
+            // Lock Protection: preserve locked odds and predictions.
+            // If matchTime was previously '临场' or missing, update matchTime from new data!
+            if ((!existing.data.matchInfo.matchTime || existing.data.matchInfo.matchTime === '临场') &&
+                m.matchInfo.matchTime && m.matchInfo.matchTime !== '临场') {
+              updatedQueue[existingIndex] = {
+                ...existing,
+                data: {
+                  ...existing.data,
+                  matchInfo: {
+                    ...existing.data.matchInfo,
+                    matchTime: m.matchInfo.matchTime,
+                  },
+                },
+              };
+            }
+            continue;
+          }
+
           // Smart Early-vs-Late Merge: Even if the match was previously analyzed or reviewed in the morning,
           // late market data must update the actuarial report so the 2串1 parlay recommendation reflects late market shifts!
           updatedCount++;
@@ -561,7 +596,9 @@ export default function App() {
             ...m,
             matchInfo: {
               ...m.matchInfo,
-              matchTime: m.matchInfo.matchTime || prevData.matchInfo.matchTime,
+              matchTime: (m.matchInfo.matchTime && !/临场|已完场/.test(m.matchInfo.matchTime))
+                ? m.matchInfo.matchTime
+                : (prevData.matchInfo.matchTime || m.matchInfo.matchTime || '临场'),
               marketStory: m.matchInfo.marketStory || prevData.matchInfo.marketStory,
             },
             euroOdds: {
