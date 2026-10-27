@@ -114,18 +114,71 @@ export function extractLeagueFromText(text: string): string | null {
     }
   }
 
-  // 4. Well-known iconic club recognition when document leaves league unstated
+  // 4. Cross-national & continental tournament inference
+  // Asian regions for cross-league detection (AFC Champions League / 亚冠)
+  const ASIAN_REGIONS: Record<string, RegExp> = {
+    korea: /(?:蔚山HD|蔚山现代|浦项铁人|光州FC|全北现代|首尔FC|金泉尚武|江原FC|水原FC|济州联|大田韩亚市民|大田市民|大邱FC|仁川联)/,
+    japan: /(?:神户胜利船|广岛三箭|町田泽维亚|町田|鹿岛鹿角|大阪钢巴|东京绿茵|大阪樱花|FC东京|横滨水手|名古屋鲸八|名古屋鲸|福冈黄蜂|川崎前锋|浦和红钻|京都不死鸟|湘南丽海|柏太阳神|鸟栖砂岩|磐田喜悦|札幌冈萨多|清水心跳|甲府风林)/,
+    china: /(?:上海海港|上海申花|山东泰山|浙江队|武汉三镇|北京国安|成都蓉城|天津津门虎|长春亚泰|河南队)/,
+    australia: /(?:中央海岸水手|悉尼FC|墨尔本城|墨尔本胜利|纽卡斯尔喷气机|麦克阿瑟FC|麦克阿瑟|西悉尼流浪者|阿德莱德联|布里斯班狮吼)/,
+    southeastAsia: /(?:柔佛达罗塔晋|柔佛新山|柔佛|狮子港|武里南联|曼谷联|河内公安|南定|宿务|卡雅|狮城水手|东方|杰志|理文|万隆)/,
+    westAsia: /(?:阿尔艾因|阿尔艾利吉达|吉达国民|阿尔萨德|卡达西亚|瓜达席亚|伊蒂哈德吉达|吉达联合|阿尔葛拉法|加拉法|帕克塔科|塔什干棉农|巴格达空军|费尔干纳夫兹|泰拉克托|德黑兰独立|波斯波利斯|利雅得胜利|利雅得新月)/,
+  };
+
+  // If text mentions teams from two different Asian nations/regions, it is definitively AFC Champions League (亚冠)
+  const matchedAsianRegions = Object.entries(ASIAN_REGIONS)
+    .filter(([_, reg]) => reg.test(text))
+    .map(([key]) => key);
+  if (matchedAsianRegions.length >= 2) {
+    return '亚冠';
+  }
+
+  // If text mentions signature continental AFC clubs that appear primarily in Asian cups
+  if (/(?:柔佛达罗塔晋|柔佛新山|狮子港|河内公安|南定|宿务|卡雅|狮城水手|武里南联|曼谷联|帕克塔科|塔什干棉农|巴格达空军|费尔干纳夫兹|泰拉克托|阿尔萨德|阿尔葛拉法|阿尔艾因|瓜达席亚)/.test(text)) {
+    return '亚冠';
+  }
+
+  // European cross-national match detection (UEFA Champions League / 欧冠)
+  const EURO_REGIONS: Record<string, RegExp> = {
+    england: /(?:曼彻斯特城|阿森纳|利物浦|切尔西|托特纳姆热刺|曼联|纽卡斯尔联|纽卡斯尔(?!喷气机)|阿斯顿维拉|布莱顿|埃弗顿)/,
+    spain: /(?:皇家马德里|巴塞罗那|马德里竞技|塞维利亚|奥萨苏纳|赫塔菲|毕尔巴鄂|比利亚雷亚尔|皇家社会|巴伦西亚|赫罗纳)/,
+    germany: /(?:拜仁慕尼黑|多特蒙德|勒沃库森|莱比锡|法兰克福|波鸿|斯图加特)/,
+    italy: /(?:国际米兰|AC米兰|尤文图斯|那不勒斯|罗马|拉齐奥|佛罗伦萨|亚特兰大)/,
+    france: /(?:巴黎圣日耳曼|里昂|摩纳哥|马赛|里尔|朗斯|雷恩)/,
+    portugal: /(?:本菲卡|波尔图|葡萄牙体育|圣塔克莱拉|布拉加)/,
+    netherlands: /(?:埃因霍温|费耶诺德|阿贾克斯|阿尔克马尔|特温特)/,
+    belgium: /(?:布鲁日|圣吉罗斯|安德莱赫特|亨克|根特)/,
+  };
+  const matchedEuroRegions = Object.entries(EURO_REGIONS)
+    .filter(([_, reg]) => reg.test(text))
+    .map(([key]) => key);
+  if (matchedEuroRegions.length >= 2) {
+    return '欧冠';
+  }
+
+  // South American cross-national match detection (Copa Libertadores / 解放者杯)
+  const isBrazilClub = /(?:法林明高|弗拉门戈|帕尔梅拉斯|圣保罗|米内罗竞技|科林蒂安|巴拉纳竞技|福塔雷萨|克鲁塞罗|格雷米奥|甘美奥)/.test(text);
+  const isArgentinaClub = /(?:博卡青年|河床|拉普拉塔大学生|学生队|竞技俱乐部|独立队|圣塔菲联|利斯特雷|瑞斯塔)/.test(text);
+  if (isBrazilClub && isArgentinaClub) {
+    return '解放者杯';
+  }
+
+  // 5. Well-known iconic club recognition when document leaves league unstated
   const CLUB_LEAGUE_MAP: Array<{ pattern: RegExp; name: string }> = [
     { pattern: /(?:巴黎圣日耳曼|里昂|摩纳哥|马赛|里尔|朗斯|雷恩)/, name: '法甲' },
     { pattern: /(?:皇家马德里|巴塞罗那|马德里竞技|塞维利亚|奥萨苏纳|赫塔菲|毕尔巴鄂|比利亚雷亚尔|皇家社会|巴伦西亚|赫罗纳)/, name: '西甲' },
     { pattern: /(?:本菲卡|波尔图|葡萄牙体育|圣塔克莱拉|布拉加|吉马良斯|法马利康)/, name: '葡超' },
-    { pattern: /(?:曼彻斯特城|阿森纳|利物浦|切尔西|托特纳姆热刺|曼联|纽卡斯尔|阿斯顿维拉|布莱顿|埃弗顿)/, name: '英超' },
+    { pattern: /(?:曼彻斯特城|阿森纳|利物浦|切尔西|托特纳姆热刺|曼联|纽卡斯尔联|纽卡斯尔(?!喷气机)|阿斯顿维拉|布莱顿|埃弗顿)/, name: '英超' },
     { pattern: /(?:拜仁慕尼黑|多特蒙德|勒沃库森|莱比锡|法兰克福|波鸿|斯图加特)/, name: '德甲' },
     { pattern: /(?:国际米兰|AC米兰|尤文图斯|那不勒斯|罗马|拉齐奥|佛罗伦萨|亚特兰大)/, name: '意甲' },
     { pattern: /(?:法林明高|弗拉门戈|帕尔梅拉斯|圣保罗|米内罗竞技|科林蒂安|巴拉纳竞技|福塔雷萨|克鲁塞罗)/, name: '巴西甲' },
     { pattern: /(?:科里蒂巴|哥里迪巴|甘美奥|格雷米奥|累西腓体育|塞阿拉)/, name: '巴西乙' },
     { pattern: /(?:博卡青年|河床|拉普拉塔大学生|学生队|竞技俱乐部|独立队|圣塔菲联|科尔多瓦学院|利斯特雷|瑞斯塔)/, name: '阿甲' },
-    { pattern: /(?:阿尔艾因|阿尔艾利吉达|吉达国民|阿尔萨德|卡达西亚|瓜达席亚|伊蒂哈德吉达|吉达联合|阿尔葛拉法|加拉法|帕克塔科|塔什干棉农|巴格达空军|费尔干纳夫兹|泰拉克托)/, name: '亚冠' },
+    { pattern: /(?:阿尔艾因|阿尔艾利吉达|吉达国民|阿尔萨德|卡达西亚|瓜达席亚|伊蒂哈德吉达|吉达联合|阿尔葛拉法|加拉法|帕克塔科|塔什干棉农|巴格达空军|费尔干纳夫兹|泰拉克托|柔佛达罗塔晋|柔佛新山|柔佛|狮子港|河内公安|南定|宿务|卡雅|狮城水手|武里南联|曼谷联)/, name: '亚冠' },
+    { pattern: /(?:中央海岸水手|悉尼FC|墨尔本城|墨尔本胜利|纽卡斯尔喷气机|麦克阿瑟FC|麦克阿瑟|西悉尼流浪者)/, name: '澳超' },
+    { pattern: /(?:上海海港|上海申花|山东泰山|浙江队|武汉三镇|北京国安|成都蓉城)/, name: '中超' },
+    { pattern: /(?:神户胜利船|广岛三箭|町田泽维亚|町田|鹿岛鹿角|大阪钢巴|东京绿茵|大阪樱花|FC东京|横滨水手|名古屋鲸八|名古屋鲸|福冈黄蜂|川崎前锋|浦和红钻|京都不死鸟|湘南丽海|柏太阳神|鸟栖砂岩|磐田喜悦|札幌冈萨多|清水心跳|甲府风林)/, name: '日职联' },
+    { pattern: /(?:蔚山HD|蔚山现代|浦项铁人|光州FC|全北现代|首尔FC|金泉尚武|江原FC|水原FC|济州联|大田韩亚市民|大田市民|大邱FC|仁川联)/, name: '韩K联' },
     { pattern: /(?:博德闪耀|莫尔德|罗森博格|汉坎|布兰|维京|桑德菲杰|特罗姆瑟|萨普斯堡|利勒斯特罗姆|海于格松|腓特烈斯塔|奥德|克里斯蒂安松|KFUM奥斯陆|斯特罗姆加斯特|斯达|瓦勒伦加)/, name: '挪超' },
     { pattern: /(?:斯塔贝克|康斯文格|兰赫姆|莫斯|劳福斯|松达尔|布莱尼|埃格尔森德|姆延达伦|阿萨纳|勒旺厄尔)/, name: '挪甲' },
     { pattern: /(?:马尔默|埃尔夫斯堡|佐加顿斯|哈马比|索尔纳|赫根|北雪平|米亚尔比|天狼星|哈尔姆斯塔德|哥德堡|韦斯特罗斯|卡尔马|盖斯|布鲁马波卡纳|韦纳穆)/, name: '瑞典超' },
@@ -134,8 +187,6 @@ export function extractLeagueFromText(text: string): string | null {
     { pattern: /(?:哥本哈根|中日德兰|布隆德比|诺西兰|奥胡斯|锡尔克堡|维堡|兰讷斯|瓦埃勒|奥尔堡|桑德捷斯基|灵比)/, name: '丹麦超' },
     { pattern: /(?:凯尔特人|格拉斯哥流浪者|流浪者|哈茨|阿伯丁|希伯尼安|基尔马诺克|圣米伦|马瑟韦尔|邓迪联|邓迪FC)/, name: '苏超' },
     { pattern: /(?:利兹联|伯恩利|谢菲尔德联|谢菲联|卢顿|桑德兰|西布罗姆维奇|西布朗|米德尔斯堡|诺维奇|考文垂|沃特福德|斯托克城|布里斯托尔城|斯旺西|普雷斯顿|布莱克本|赫尔城|女王公园巡游者|加的夫城|朴茨茅斯|德比郡|牛津联|谢周三|普利茅斯)/, name: '英冠' },
-    { pattern: /(?:神户胜利船|广岛三箭|町田泽维亚|町田|鹿岛鹿角|大阪钢巴|东京绿茵|大阪樱花|FC东京|横滨水手|名古屋鲸八|名古屋鲸|福冈黄蜂|川崎前锋|浦和红钻|京都不死鸟|湘南丽海|柏太阳神|鸟栖砂岩|磐田喜悦|札幌冈萨多|清水心跳)/, name: '日职联' },
-    { pattern: /(?:蔚山HD|蔚山现代|浦项铁人|光州FC|全北现代|首尔FC|金泉尚武|江原FC|水原FC|济州联|大田市民|大邱FC|仁川联)/, name: '韩K联' },
   ];
 
   for (const item of CLUB_LEAGUE_MAP) {
@@ -150,6 +201,8 @@ export function extractLeagueFromText(text: string): string | null {
 export function normalizeLeagueName(name: string): string {
   if (!name) return '常规联赛';
   const n = name.trim();
+  // 亚冠及亚洲赛事归一
+  if (n.includes('亚冠') || n.includes('亚联杯') || n.includes('亚洲冠军')) return '亚冠';
   // 挪威系列：只要包含“超级”或“挪超”，严格归一为“挪超”，阻断误判为“挪甲”
   if (n.includes('挪威超级') || n.includes('挪威超') || n.includes('挪超') || n.includes('挪威足球超级')) return '挪超';
   if (n.includes('挪威甲') || n.includes('挪甲') || n.includes('挪威足球甲级')) return '挪甲';
@@ -919,13 +972,20 @@ export function parseBatchMatchesFromText(rawText: string): FullMatchData[] {
         matchTime = matchedMeta.kickoffTime;
       }
 
-      // Extract league from headingLeagueHint, firstLine, section or overview table
+      // Extract league from headingLeagueHint, firstLine, match pair, section or overview table
       let league =
         (headingLeagueHint ? normalizeLeagueName(headingLeagueHint) : undefined) ||
+        extractLeagueFromText(`${home} vs ${away}`) ||
         extractLeagueFromText(firstLine) ||
         extractLeagueFromText(section) ||
         matchedMeta?.league ||
         '常规联赛';
+
+      // Cross-league validation: If Home vs Away is an international Asian match (e.g. Korea vs Japan, Japan vs Australia, China vs Vietnam, Malaysia vs Thailand), enforce '亚冠'
+      const pairLeague = extractLeagueFromText(`${home} vs ${away}`);
+      if (pairLeague && (pairLeague === '亚冠' || pairLeague === '欧冠' || pairLeague === '解放者杯')) {
+        league = pairLeague;
+      }
 
       // If team name accidentally captured the league prefix (e.g. "挪威超级 汉坎" or "挪超博德闪耀")
       const LEAGUE_PREFIX_PAIRS: Array<[RegExp, string]> = [
