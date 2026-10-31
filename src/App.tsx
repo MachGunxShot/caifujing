@@ -48,6 +48,8 @@ const LEGACY_STORAGE_KEYS = [
   'fortune_actuary_matches',
 ];
 
+import { extractLeagueFromText } from './utils/textParser';
+
 /**
  * Sanitizes and recalibrates queue items against current actuarial rules,
  * clearing false shifts from first-time single uploads and fixing inverted confidence states.
@@ -62,9 +64,26 @@ function sanitizeAndRecalibrateQueue(queue: BatchMatchItem[]): BatchMatchItem[] 
         matchTime = storyTime;
       }
     }
-    const currentData = matchTime !== item.data.matchInfo.matchTime
-      ? { ...item.data, matchInfo: { ...item.data.matchInfo, matchTime } }
-      : item.data;
+
+    // Recalibrate league if it was left unstated or defaulted to generic fallback ('常规联赛' / '常规赛事')
+    let league = item.data.matchInfo.league;
+    if (!league || league === '常规联赛' || league === '常规赛事') {
+      const calibratedLeague =
+        extractLeagueFromText(`${item.data.matchInfo.homeTeam} vs ${item.data.matchInfo.awayTeam}`) ||
+        extractLeagueFromText(item.data.matchInfo.marketStory || '');
+      if (calibratedLeague) {
+        league = calibratedLeague;
+      }
+    }
+
+    const currentData: FullMatchData = {
+      ...item.data,
+      matchInfo: {
+        ...item.data.matchInfo,
+        matchTime,
+        league: league || item.data.matchInfo.league || '常规联赛',
+      },
+    };
 
     const rep = generateActuarialRuleReport(currentData);
 
