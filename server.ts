@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import { generateActuarialRuleReport } from './src/utils/actuaryEngine.ts';
 import { parseBatchMatchScoresFromText } from './src/utils/textParser.ts';
+import { matchTeamsFuzzy, normalizeTeamName } from './src/utils/salesDayUtils.ts';
 
 dotenv.config();
 
@@ -29,6 +30,69 @@ function isRetryableModelError(err: any): boolean {
   return /UNAVAILABLE|RESOURCE_EXHAUSTED|overloaded|high demand|fetch failed/i.test(message);
 }
 
+// Without a timeout one hung request can stall a handler through every fallback model.
+const GEMINI_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GEMINI_TIMEOUT_MS || '60000', 10) || 60000);
+
+// Loopback by default: the API spends the owner's Gemini quota and has no auth,
+// so exposing it to the LAN must be an explicit choice (HOST=0.0.0.0).
+const HOST = process.env.HOST || '127.0.0.1';
+const IS_PRODUCTION = process.env.NODE_ENV === 'production' || process.argv.includes('--prod');
+
+const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif', 'image/heic', 'image/heif']);
+
+function normalizeImageInput(imageBase64: unknown, mimeType: unknown): { data: string; mimeType: string } | null {
+  if (typeof imageBase64 !== 'string' || !imageBase64) return null;
+  const dataUrl = imageBase64.match(/^data:([^;,]+);base64,/);
+  const type = String(dataUrl?.[1] || mimeType || 'image/png').toLowerCase();
+  if (!ALLOWED_IMAGE_TYPES.has(type)) return null;
+  const data = dataUrl ? imageBase64.slice(dataUrl[0].length) : imageBase64;
+  return data ? { data, mimeType: type === 'image/jpg' ? 'image/jpeg' : type } : null;
+}
+
+// An unreadable score must never be stored as 0, or it silently corrupts hit-rate stats.
+function parseScore(value: unknown): number | null {
+  const n = typeof value === 'number' ? value : typeof value === 'string' && /^\s*\d{1,2}\s*$/.test(value) ? Number(value) : NaN;
+  return Number.isInteger(n) && n >= 0 && n <= 30 ? n : null;
+}
+
+const FORTUNE_SYSTEM_PRINCIPLES = `你是一位精通《财富经》足彩盘赔分析与博弈论的顶级精算师与风险控制专家。你的职责是依据《财富经》的底线逻辑与研判公式，剥离球队名气与市场虚火，直击博彩机构（大庄）的真实风控底牌。
+核心研判原则：
+1. 早盘看意图，晚盘看真实风控：临场 1-2 小时资金注入后的盘水变轨才是机构为了不赔钱而做出的最终避险调仓。
+2. 永远学会“证伪”而非“自我证明”：用晚盘的剧烈变水与反向变盘去证伪早盘逻辑。
+3. 天上不会掉无缘无故的馅饼：买得太舒服、回报率过高的盘面，99% 为机构诱导陷阱。`;
+
+const ANALYZE_SYSTEM_INSTRUCTION = `${FORTUNE_SYSTEM_PRINCIPLES.replace('研判公式，', '研判公式，结合系统持续沉淀的实战复盘经验法则库，')}
+4. 深度吸纳实战进化经验法则：随时对照知识库中已被历史赛果证实的特定联赛与模型避险法则。
+输出格式严格包含：
+1. 【盘面第一印象】
+2. 【三维联动测谎】
+3. 【财富经最终判定】（包含推荐方向与避坑风险提示）
+语言风格：犀利、严密、精算数学透彻、穿透操盘心理，坚决剥离名气虚火。`;
+
+// Used inside catch blocks, so it must never throw: an exception there escapes the
+// handler and takes the whole server process down (e.g. a payload missing odds fields).
+function buildRuleEngineText(matchData: any): string {
+  let fallback: ReturnType<typeof generateActuarialRuleReport>;
+  try {
+    fallback = generateActuarialRuleReport(matchData);
+  } catch (err: any) {
+    console.warn('Rule engine could not evaluate this payload:', err?.message);
+    return '1. 【盘面第一印象】\n盘赔数据不完整，无法完成精算。\n\n2. 【三维联动测谎】\n请补全亚盘、欧指与大小球的早晚盘数据后重试。\n\n3. 【财富经最终判定】\n【推荐方向】：暂无\n【避坑风险提示】：数据缺失时不做任何判定。';
+  }
+  return `1. 【盘面第一印象】\n${fallback.firstImpression}\n\n2. 【三维联动测谎】\n${fallback.threeDimLieDetection}\n\n3. 【财富经最终判定】\n${fallback.finalVerdict.direction}\n${fallback.finalVerdict.directionDetail}\n【避坑风险提示】：${fallback.finalVerdict.riskWarning}`;
+}
+
+function extractJsonBlock(text: string): any {
+  const match = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[1]);
+  } catch (e) {
+    console.warn('Failed to parse JSON block from model response:', e);
+    return null;
+  }
+}
+
 async function generateWithFallback(params: { contents: any; config?: any }) {
   let lastError: any;
   for (const model of GEMINI_MODELS) {
@@ -46,6 +110,7 @@ async function generateWithFallback(params: { contents: any; config?: any }) {
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || '',
   httpOptions: {
+    timeout: GEMINI_TIMEOUT_MS,
     headers: {
       'User-Agent': 'aistudio-build',
     },
@@ -56,10 +121,11 @@ async function startServer() {
   const app = express();
   const port = parseInt(process.env.PORT || '3000', 10);
 
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ limit: '50mb', extended: true }));
+  // Base64 screenshots are ~1.33x the file size; 15mb covers a ~10MB image.
+  app.use(express.json({ limit: '15mb' }));
+  app.use(express.urlencoded({ limit: '15mb', extended: true }));
 
-  // Deep Actuarial Analysis API with Gemini 3.8 Flash
+  // Deep Actuarial Analysis API (Gemini, with deterministic rule-engine fallback)
   app.post('/api/analyze', async (req, res) => {
     try {
       const matchData = req.body;
@@ -102,41 +168,29 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
         const response = await generateWithFallback({
           contents: promptText,
           config: {
-            systemInstruction: `你是一位精通《财富经》足彩盘赔分析与博弈论的顶级精算师与风险控制专家。你的职责是依据《财富经》的底线逻辑与研判公式，结合系统持续沉淀的实战复盘经验法则库，剥离球队名气与市场虚火，直击博彩机构（大庄）的真实风控底牌。
-核心研判原则：
-1. 早盘看意图，晚盘看真实风控：临场 1-2 小时资金注入后的盘水变轨才是机构为了不赔钱而做出的最终避险调仓。
-2. 永远学会“证伪”而非“自我证明”：用晚盘的剧烈变水与反向变盘去证伪早盘逻辑。
-3. 天上不会掉无缘无故的馅饼：买得太舒服、回报率过高的盘面，99% 为机构诱导陷阱。
-4. 深度吸纳实战进化经验法则：随时对照知识库中已被历史赛果证实的特定联赛与模型避险法则。
-输出格式严格包含：
-1. 【盘面第一印象】
-2. 【三维联动测谎】
-3. 【财富经最终判定】（包含推荐方向与避坑风险提示）
-语言风格：犀利、严密、精算数学透彻、穿透操盘心理，坚决剥离名气虚火。`,
+            systemInstruction: ANALYZE_SYSTEM_INSTRUCTION,
             temperature: 0.2,
           },
         });
         aiResponseText = response.text || '';
       }
 
-      if (!aiResponseText) {
-        const fallback = generateActuarialRuleReport(matchData);
-        aiResponseText = `1. 【盘面第一印象】\n${fallback.firstImpression}\n\n2. 【三维联动测谎】\n${fallback.threeDimLieDetection}\n\n3. 【财富经最终判定】\n${fallback.finalVerdict.direction}\n${fallback.finalVerdict.directionDetail}\n【避坑风险提示】：${fallback.finalVerdict.riskWarning}`;
-      }
-
+      // Report where the text really came from, so the UI never labels engine output as AI.
+      const fromAi = !!aiResponseText;
       res.json({
         success: true,
-        aiAnalysis: aiResponseText,
-        source: aiResponseText.includes('【定性：') && !process.env.GEMINI_API_KEY ? 'RULE_ENGINE_FALLBACK' : 'GEMINI_AI',
+        aiAnalysis: fromAi ? aiResponseText : buildRuleEngineText(matchData),
+        source: fromAi ? 'GEMINI_AI' : 'RULE_ENGINE_FALLBACK',
+        degraded: !fromAi,
+        ...(fromAi ? {} : { note: process.env.GEMINI_API_KEY ? '大模型未返回内容，已切换至《财富经》底线精算引擎' : '未配置 GEMINI_API_KEY，使用《财富经》底线精算引擎' }),
       });
     } catch (err: any) {
       console.warn('Gemini API call temporarily unavailable, gracefully returning rule engine fallback:', err?.message);
-      const fallback = generateActuarialRuleReport(req.body);
-      const fallbackText = `1. 【盘面第一印象】\n${fallback.firstImpression}\n\n2. 【三维联动测谎】\n${fallback.threeDimLieDetection}\n\n3. 【财富经最终判定】\n${fallback.finalVerdict.direction}\n${fallback.finalVerdict.directionDetail}\n【避坑风险提示】：${fallback.finalVerdict.riskWarning}`;
       res.json({
         success: true,
-        aiAnalysis: fallbackText,
+        aiAnalysis: buildRuleEngineText(req.body),
         source: 'RULE_ENGINE_FALLBACK',
+        degraded: true,
         note: '大模型并发激增，系统已秒级无缝切换至《财富经》底线精算引擎',
       });
     }
@@ -145,7 +199,12 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
   // Post-Match Review & AI Experience Evolution API
   app.post('/api/review', async (req, res) => {
     try {
-      const { matchData, priorReport, actualHomeScore, actualAwayScore, matchIncidents } = req.body;
+      const { matchData, priorReport, matchIncidents } = req.body;
+      const actualHomeScore = parseScore(req.body?.actualHomeScore);
+      const actualAwayScore = parseScore(req.body?.actualAwayScore);
+      if (actualHomeScore === null || actualAwayScore === null) {
+        return res.status(400).json({ success: false, error: '缺少有效的完场比分（需为 0-30 的整数）' });
+      }
       const actualScore = `${actualHomeScore}-${actualAwayScore}`;
 
       const promptText = `
@@ -180,7 +239,7 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
 \`\`\`
 `;
 
-      let dissectionData = null;
+      let dissectionData: any = null;
       if (process.env.GEMINI_API_KEY) {
         try {
           const response = await generateWithFallback({
@@ -191,20 +250,14 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
             },
           });
 
-          const text = response.text || '';
-          const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-          if (jsonMatch) {
-            try {
-              dissectionData = JSON.parse(jsonMatch[1]);
-            } catch (e) {
-              console.error('Failed to parse AI review json:', e);
-            }
-          }
+          const parsed = extractJsonBlock(response.text || '');
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) dissectionData = parsed;
         } catch (apiErr: any) {
           console.warn('Gemini review temporary spike, switching to deterministic review:', apiErr?.message);
         }
       }
 
+      const fromAi = !!dissectionData;
       if (!dissectionData) {
         const home = matchData?.matchInfo?.homeTeam || '主队';
         const away = matchData?.matchInfo?.awayTeam || '客队';
@@ -221,15 +274,19 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
       res.json({
         success: true,
         aiDissection: dissectionData,
+        source: fromAi ? 'GEMINI_AI' : 'RULE_ENGINE_FALLBACK',
+        degraded: !fromAi,
       });
     } catch (err: any) {
       console.warn('Review API general error:', err?.message);
       const home = req.body?.matchData?.matchInfo?.homeTeam || '主队';
       const away = req.body?.matchData?.matchInfo?.awayTeam || '客队';
       const league = req.body?.matchData?.matchInfo?.league || '常规联赛';
-      const actualScore = `${req.body?.actualHomeScore ?? 0}-${req.body?.actualAwayScore ?? 0}`;
+      const actualScore = `${parseScore(req.body?.actualHomeScore) ?? '?'}-${parseScore(req.body?.actualAwayScore) ?? '?'}`;
       res.json({
         success: true,
+        source: 'RULE_ENGINE_FALLBACK',
+        degraded: true,
         aiDissection: {
           summaryNote: `《财富经》赛事复盘已就绪，实际比分 ${actualScore}。`,
           dissectionText: `【精算复盘归因】${league} ${home} vs ${away} 完场 ${actualScore}，已自动比对欧亚水差并沉淀新法则。`,
@@ -240,16 +297,17 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
     }
   });
 
-  // Multimodal Image / Screenshot Recognition & Diagnosis with Gemini 3.8 Flash
+  // Multimodal Image / Screenshot Recognition & Diagnosis
   app.post('/api/analyze-image', async (req, res) => {
     try {
-      const { imageBase64, mimeType = 'image/png', note = '' } = req.body;
+      const { imageBase64, mimeType, note = '' } = req.body;
       if (!imageBase64) {
         return res.status(400).json({ success: false, error: 'No image data provided' });
       }
-
-      // Clean base64 string
-      const cleanBase64 = imageBase64.replace(/^data:image\/[a-zA-Z]+;base64,/, '');
+      const image = normalizeImageInput(imageBase64, mimeType);
+      if (!image) {
+        return res.status(400).json({ success: false, error: '不支持的图片格式，请上传 PNG / JPG / WebP 截图' });
+      }
 
       const promptText = `
 请仔细识别这张赛事盘口截图（包含欧指胜平负、亚盘让球水位、大小球界线、早盘初盘与临场晚盘即时盘水，或比分网即时赔率），并以《财富经》足彩盘赔分析与博弈论顶级精算师的身份完成识别与深度测谎：
@@ -300,44 +358,26 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
 
       let aiResponseText = '';
       if (process.env.GEMINI_API_KEY) {
-        const imagePart = {
-          inlineData: {
-            mimeType: mimeType,
-            data: cleanBase64,
-          },
-        };
+        const imagePart = { inlineData: image };
 
         const response = await generateWithFallback({
           contents: {
             parts: [imagePart, { text: promptText }],
           },
           config: {
-            systemInstruction: `你是一位精通《财富经》足彩盘赔分析与博弈论的顶级精算师与风险控制专家。你的职责是依据《财富经》的底线逻辑与研判公式，剥离球队名气与市场虚火，直击博彩机构（大庄）的真实风控底牌。
-核心研判原则：
-1. 早盘看意图，晚盘看真实风控：临场 1-2 小时资金注入后的盘水变轨才是机构为了不赔钱而做出的最终避险调仓。
-2. 永远学会“证伪”而非“自我证明”：用晚盘的剧烈变水与反向变盘去证伪早盘逻辑。
-3. 天上不会掉无缘无故的馅饼：买得太舒服、回报率过高的盘面，99% 为机构诱导陷阱。`,
+            systemInstruction: FORTUNE_SYSTEM_PRINCIPLES,
             temperature: 0.2,
           },
         });
         aiResponseText = response.text || '';
       }
 
-      // Try parsing JSON block out
-      let extractedData = null;
-      if (aiResponseText) {
-        const jsonMatch = aiResponseText.match(/```json\s*([\s\S]*?)\s*```/);
-        if (jsonMatch) {
-          try {
-            extractedData = JSON.parse(jsonMatch[1]);
-          } catch (e) {
-            console.warn('Could not parse JSON block from image response:', e);
-          }
-        }
-      }
+      const fromAi = !!aiResponseText;
+      const parsedImage = fromAi ? extractJsonBlock(aiResponseText) : null;
+      const extractedData = parsedImage && typeof parsedImage === 'object' && !Array.isArray(parsedImage) ? parsedImage : null;
 
       // If AI unavailable or failed, fallback
-      if (!aiResponseText) {
+      if (!fromAi) {
         aiResponseText = `已接收并解析盘赔截图。\n1. 【盘面第一印象】\n已提取截图中的赔率分布。\n\n2. 【三维联动测谎】\n交叉比对完成。\n\n3. 【财富经最终判定】\n【推荐方向】：请结合临场最后变水做最终判定\n【避坑风险提示】：截图数据已自动填入精算台，建议复核晚盘即时水。`;
       }
 
@@ -345,7 +385,8 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
         success: true,
         aiAnalysis: aiResponseText,
         extractedData,
-        source: 'GEMINI_AI',
+        source: fromAi ? 'GEMINI_AI' : 'RULE_ENGINE_FALLBACK',
+        degraded: !fromAi,
       });
     } catch (err: any) {
       console.warn('API /api/analyze-image error:', err?.message);
@@ -354,6 +395,7 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
         aiAnalysis: `1. 【盘面第一印象】\n截图已接收。由于当前大模型访问并发较大，已将识别数据导入精算队列。\n\n2. 【三维联动测谎】\n欧亚盘型与大小球测谎矩阵已就绪。\n\n3. 【财富经最终判定】\n【推荐方向】：请使用左侧控制台进行微调测算\n【避坑风险提示】：遵循天上没有免费馅饼原则，防高水诱盘。`,
         extractedData: null,
         source: 'RULE_ENGINE_FALLBACK',
+        degraded: true,
       });
     }
   });
@@ -361,13 +403,22 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
   // Batch Match Results Recognition (Image OCR + Text/Markdown/Table parser)
   app.post('/api/recognize-scores', async (req, res) => {
     try {
-      const { imageBase64, mimeType = 'image/png', rawText = '', candidates = [] } = req.body;
+      const { imageBase64, mimeType, rawText = '' } = req.body;
+      // Drop malformed candidates up front: one entry without names used to throw
+      // inside the matching loop and discard the whole OCR result.
+      const candidates: { id: string; home: string; away: string; [key: string]: any }[] = (Array.isArray(req.body?.candidates) ? req.body.candidates : [])
+        .filter((c: any) => c && typeof c.home === 'string' && typeof c.away === 'string' && c.home.trim() && c.away.trim());
       let parsedScores: any[] = [];
+      let skippedUnreadable = 0;
+      let usedVision = false;
 
-      // 1. If Image is provided and GEMINI_API_KEY is present, use Gemini 3.8 Flash multimodal vision
-      if (imageBase64 && process.env.GEMINI_API_KEY) {
-        const cleanBase64 = imageBase64.replace(/^data:image\/[a-zA-Z]+;base64,/, '');
-        const candidateListStr = candidates.map((c: any) => `${c.home} vs ${c.away}`).join('、');
+      // 1. If Image is provided and GEMINI_API_KEY is present, use Gemini multimodal vision
+      const image = imageBase64 ? normalizeImageInput(imageBase64, mimeType) : null;
+      if (imageBase64 && !image) {
+        return res.status(400).json({ success: false, scores: [], error: '不支持的图片格式，请上传 PNG / JPG / WebP 截图' });
+      }
+      if (image && process.env.GEMINI_API_KEY) {
+        const candidateListStr = candidates.map((c) => `${c.home} vs ${c.away}`).join('、');
 
         const promptText = `
 请仔细识别这张比分网/足彩赛果截图（例如雷速体育、懂球帝、捷报比分、LiveScore、新浪彩票等赛事的赛果列表），提取出图中所有赛事的【主队名称】、【客队名称】和【最终全场比分】。
@@ -391,64 +442,46 @@ ${candidateListStr ? `【待匹配的目标赛事参考列表】：${candidateLi
 
         try {
           const response = await generateWithFallback({
-            contents: [
-              { text: promptText },
-              {
-                inlineData: {
-                  mimeType,
-                  data: cleanBase64,
-                },
-              },
-            ],
+            contents: [{ text: promptText }, { inlineData: image }],
             config: {
               systemInstruction: '你是一位精通各类足球比分网与彩票APP截图排版的高精度多模态 OCR 专家。能够准确提取主队、客队、比分，并自动校准球队别名。',
               temperature: 0.1,
             },
           });
 
-          const text = response.text || '';
-          const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
-          if (jsonMatch) {
-            try {
-              const list = JSON.parse(jsonMatch[1]);
-              if (Array.isArray(list)) {
-                // Map and align with candidate matches
-                parsedScores = list.map((item: any, idx: number) => {
-                  const h = item.homeTeam || item.home || '主队';
-                  const a = item.awayTeam || item.away || '客队';
-                  const hs = typeof item.homeScore === 'number' ? item.homeScore : parseInt(item.homeScore, 10) || 0;
-                  const as = typeof item.awayScore === 'number' ? item.awayScore : parseInt(item.awayScore, 10) || 0;
-
-                  // Find match candidate
-                  let matchedId: string | undefined;
-                  let matchedName: string | undefined;
-                  for (const cand of candidates) {
-                    if (
-                      (cand.home.includes(h) || h.includes(cand.home)) &&
-                      (cand.away.includes(a) || a.includes(cand.away))
-                    ) {
-                      matchedId = cand.id;
-                      matchedName = `${cand.home} vs ${cand.away}`;
-                      break;
-                    }
-                  }
-
-                  return {
-                    id: `ocr-${Date.now()}-${idx}`,
-                    homeTeam: h,
-                    awayTeam: a,
-                    homeScore: hs,
-                    awayScore: as,
-                    incidents: item.incidents || '',
-                    matchedId,
-                    matchedName,
-                    confidence: matchedId ? 'HIGH' : 'MEDIUM',
-                  };
-                });
+          const list = extractJsonBlock(response.text || '');
+          if (Array.isArray(list)) {
+            usedVision = true;
+            list.forEach((item: any, idx: number) => {
+              const h = String(item?.homeTeam || item?.home || '').trim();
+              const a = String(item?.awayTeam || item?.away || '').trim();
+              const hs = parseScore(item?.homeScore);
+              const as = parseScore(item?.awayScore);
+              if (!h || !a || hs === null || as === null) {
+                skippedUnreadable++;
+                return;
               }
-            } catch (e) {
-              console.warn('Failed to parse OCR scores json:', e);
-            }
+
+              // Prefer an exact (normalized) name match; fall back to fuzzy/alias matching only
+              // when no exact pair exists, so "国际" does not grab "国际米兰" over "巴西国际".
+              const nh = normalizeTeamName(h);
+              const na = normalizeTeamName(a);
+              const cand =
+                candidates.find((c) => normalizeTeamName(c.home) === nh && normalizeTeamName(c.away) === na) ||
+                candidates.find((c) => matchTeamsFuzzy(h, c.home) && matchTeamsFuzzy(a, c.away));
+
+              parsedScores.push({
+                id: `ocr-${Date.now()}-${idx}`,
+                homeTeam: h,
+                awayTeam: a,
+                homeScore: hs,
+                awayScore: as,
+                incidents: typeof item?.incidents === 'string' ? item.incidents : '',
+                matchedId: cand?.id,
+                matchedName: cand ? `${cand.home} vs ${cand.away}` : undefined,
+                confidence: cand ? 'HIGH' : 'MEDIUM',
+              });
+            });
           }
         } catch (visionErr: any) {
           console.warn('Gemini vision score recognition error:', visionErr?.message);
@@ -456,18 +489,13 @@ ${candidateListStr ? `【待匹配的目标赛事参考列表】：${candidateLi
       }
 
       // 2. If rawText is provided (or if OCR didn't catch or offline)
-      if (rawText && rawText.trim().length > 0) {
+      let usedText = false;
+      if (typeof rawText === 'string' && rawText.trim().length > 0) {
         const textResults = parseBatchMatchScoresFromText(rawText, candidates);
-        if (textResults.length > 0) {
-          if (parsedScores.length === 0) {
-            parsedScores = textResults;
-          } else {
-            // Merge results
-            for (const tr of textResults) {
-              if (!parsedScores.some((p) => p.homeTeam === tr.homeTeam && p.awayTeam === tr.awayTeam)) {
-                parsedScores.push(tr);
-              }
-            }
+        for (const tr of textResults) {
+          if (!parsedScores.some((p) => p.homeTeam === tr.homeTeam && p.awayTeam === tr.awayTeam)) {
+            parsedScores.push(tr);
+            usedText = true;
           }
         }
       }
@@ -475,7 +503,8 @@ ${candidateListStr ? `【待匹配的目标赛事参考列表】：${candidateLi
       res.json({
         success: true,
         scores: parsedScores,
-        source: imageBase64 && process.env.GEMINI_API_KEY ? 'GEMINI_VISION_OCR' : 'TEXT_PARSER',
+        skippedUnreadable,
+        source: usedVision ? (usedText ? 'GEMINI_VISION_OCR+TEXT_PARSER' : 'GEMINI_VISION_OCR') : 'TEXT_PARSER',
       });
     } catch (err: any) {
       console.warn('/api/recognize-scores error:', err?.message);
@@ -497,8 +526,17 @@ ${candidateListStr ? `【待匹配的目标赛事参考列表】：${candidateLi
     });
   });
 
+  // Last-resort guard so one bad request answers 500 instead of crashing the process.
+  app.use('/api', (err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error('Unhandled API error:', err?.message || err);
+    if (res.headersSent) return;
+    if (err?.status === 413) return res.status(413).json({ success: false, error: '上传内容过大（上限 15MB）' });
+    if (err?.type === 'entity.parse.failed') return res.status(400).json({ success: false, error: '请求格式错误（JSON 解析失败）' });
+    res.status(500).json({ success: false, error: '服务器处理请求失败' });
+  });
+
   // Dev vs Prod middleware
-  if (process.env.NODE_ENV === 'production') {
+  if (IS_PRODUCTION) {
     app.use(express.static(path.join(__dirname, 'dist')));
     app.get('*', (req, res) => {
       res.sendFile(path.join(__dirname, 'dist', 'index.html'));
@@ -511,10 +549,16 @@ ${candidateListStr ? `【待匹配的目标赛事参考列表】：${candidateLi
     app.use(vite.middlewares);
   }
 
-  app.listen(port, '0.0.0.0', () => {
-    console.log(`Server started on http://0.0.0.0:${port}`);
+  app.listen(port, HOST, () => {
+    console.log(`Server started on http://${HOST}:${port} (${IS_PRODUCTION ? 'production' : 'development'})`);
   });
 }
+
+// Express 4 does not route rejected async handlers to the error middleware; log them
+// instead of letting Node terminate the server for every user on an unexpected bug.
+process.on('unhandledRejection', (reason: any) => {
+  console.error('Unhandled promise rejection:', reason?.message || reason);
+});
 
 startServer().catch((err) => {
   console.error('Failed to start server:', err);

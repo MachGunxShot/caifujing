@@ -1,21 +1,23 @@
 {
-  "name": "react-example",
+  "name": "fortune-actuary",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
-    "start": "tsx server.ts",
+    "start": "vite build && tsx server.ts --prod",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "tsx --test scripts/*.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-react": "^6.1.1",
     "d3": "^7.9.0",
+    "dompurify": "^3.4.17",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "lucide-react": "^0.546.0",

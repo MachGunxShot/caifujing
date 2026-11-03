@@ -300,6 +300,11 @@ export function consolidateRulesToCoreMaster(rules: EvolvedExperienceRule[]): Ev
 /**
  * Retrieve evolved experience rules from localStorage with automatic deduplication & consolidation
  */
+// Consolidation is expensive and runs on every read; cache the result per stored string.
+// Any write (here or a direct setItem elsewhere) changes the string and invalidates it.
+// Callers mutate the returned objects, so every hit hands out a fresh parse.
+let rulesReadCache: { raw: string; json: string } | null = null;
+
 export function getExperienceRules(): EvolvedExperienceRule[] {
   try {
     if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
@@ -309,6 +314,9 @@ export function getExperienceRules(): EvolvedExperienceRule[] {
     if (!raw) {
       localStorage.setItem(RULES_STORAGE_KEY, JSON.stringify(SEED_RULES));
       return SEED_RULES;
+    }
+    if (rulesReadCache && rulesReadCache.raw === raw) {
+      return JSON.parse(rulesReadCache.json);
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
@@ -328,7 +336,10 @@ export function getExperienceRules(): EvolvedExperienceRule[] {
       ) {
         saveExperienceRules(consolidated);
       }
-      return consolidated;
+      const json = JSON.stringify(consolidated);
+      const stored = localStorage.getItem(RULES_STORAGE_KEY);
+      if (stored) rulesReadCache = { raw: stored, json };
+      return JSON.parse(json);
     }
     return SEED_RULES;
   } catch (e) {
@@ -1459,11 +1470,34 @@ ${activeRules
 /**
  * Retrieve saved post-match reviews with automatic deduplication
  */
+// Same idea as rulesReadCache: recalibrating every review on each of the dozens of
+// reads per interaction is wasted work once the stored archive is already calibrated.
+let reviewsReadCache: { raw: string; json: string } | null = null;
+
+/** Score of a stored review, or null when it cannot be read (never guess 0-0). */
+function readStoredScore(rev: PostMatchReview): { home: number; away: number } | null {
+  if (typeof rev.actualHomeScore === 'number' && typeof rev.actualAwayScore === 'number') {
+    return { home: rev.actualHomeScore, away: rev.actualAwayScore };
+  }
+  const m = (rev.actualScore || '').match(/^\s*(\d{1,2})\s*[-:：]\s*(\d{1,2})\s*$/);
+  return m ? { home: Number(m[1]), away: Number(m[2]) } : null;
+}
+
+/** One match per sales day: the score is deliberately not part of the key, so a corrected score replaces the old entry. */
+function reviewMatchKey(r: PostMatchReview): string {
+  const home = (r.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').trim();
+  const away = (r.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').trim();
+  return home && away ? `${home}_vs_${away}_${r.salesDate || ''}` : `id:${r.id}`;
+}
+
 export function getPostMatchReviews(): PostMatchReview[] {
   try {
     if (typeof localStorage === 'undefined') return [];
     const raw = localStorage.getItem(REVIEWS_STORAGE_KEY);
     if (!raw) return [];
+    if (reviewsReadCache && reviewsReadCache.raw === raw) {
+      return JSON.parse(reviewsReadCache.json);
+    }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
       const seen = new Set<string>();
@@ -1483,9 +1517,10 @@ export function getPostMatchReviews(): PostMatchReview[] {
         }
 
         // Re-evaluate euroHit, handicapHit, overUnderHit, and modelVerified with latest precise actuarial logic
-        if (cal.matchData && cal.priorReport && cal.outcomeEvaluation) {
-          const hScore = typeof cal.actualHomeScore === 'number' ? cal.actualHomeScore : parseInt((cal.actualScore || '0-0').split('-')[0], 10) || 0;
-          const aScore = typeof cal.actualAwayScore === 'number' ? cal.actualAwayScore : parseInt((cal.actualScore || '0-0').split('-')[1], 10) || 0;
+        const storedScore = readStoredScore(cal);
+        if (cal.matchData && cal.priorReport && cal.outcomeEvaluation && storedScore) {
+          const hScore = storedScore.home;
+          const aScore = storedScore.away;
           const goalDiff = hScore - aScore;
           const actualEuroOutcome = goalDiff > 0 ? 'WIN' : goalDiff === 0 ? 'DRAW' : 'LOSS';
 
@@ -1525,11 +1560,8 @@ export function getPostMatchReviews(): PostMatchReview[] {
           cal.outcomeEvaluation.modelVerified = newModelVerified;
         }
 
-        // Deduplicate key: home vs away + salesDate + actual score
-        const home = (cal.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').trim();
-        const away = (cal.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').trim();
-        const score = (cal.actualScore || '').replace(/\s+/g, '').trim();
-        const key = home && away ? `${home}_vs_${away}_${cal.salesDate || ''}_${score}` : cal.id;
+        // Deduplicate key: home vs away + salesDate (newest entry wins, list is newest-first)
+        const key = reviewMatchKey(cal);
 
         if (!seen.has(key)) {
           seen.add(key);
@@ -1544,7 +1576,10 @@ export function getPostMatchReviews(): PostMatchReview[] {
         }
         localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(deduplicated));
       }
-      return deduplicated;
+      const json = JSON.stringify(deduplicated);
+      const stored = localStorage.getItem(REVIEWS_STORAGE_KEY);
+      if (stored) reviewsReadCache = { raw: stored, json };
+      return JSON.parse(json);
     }
     return [];
   } catch (e) {
@@ -1561,16 +1596,9 @@ export function savePostMatchReview(review: PostMatchReview): void {
     if (typeof localStorage === 'undefined') return;
     const calReview = calibrateReviewSalesDate(review);
     const reviews = getPostMatchReviews();
-    const getMatchKey = (r: PostMatchReview) => {
-      const home = (r.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').trim();
-      const away = (r.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').trim();
-      const score = (r.actualScore || '').replace(/\s+/g, '').trim();
-      return `${home}_vs_${away}_${r.salesDate || ''}_${score}`;
-    };
-
-    const targetKey = getMatchKey(calReview);
+    const targetKey = reviewMatchKey(calReview);
     const existingIdx = reviews.findIndex(
-      (r) => r.id === calReview.id || getMatchKey(r) === targetKey
+      (r) => r.id === calReview.id || reviewMatchKey(r) === targetKey
     );
 
     const currentRaw = localStorage.getItem(REVIEWS_STORAGE_KEY);

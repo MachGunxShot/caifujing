@@ -587,7 +587,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
             (home && away && iHome && iAway &&
               salesDatesCompatible(item.data?.matchInfo?.matchTime, item.timestamp, undefined,
                 targetReview.matchData?.matchInfo?.matchTime, targetReview.reviewTimestamp, targetReview.salesDateOverride || targetReview.salesDate) &&
-              (home.includes(iHome) || iHome.includes(home)) && (away.includes(iAway) || iAway.includes(away)))
+              matchTeamsFuzzy(home, iHome) && matchTeamsFuzzy(away, iAway))
           ) {
             return {
               ...item,
@@ -615,7 +615,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         const { salesDate: rKey } = getReviewSalesInfo(r);
         return rKey !== dateKey;
       });
-      localStorage.setItem('fortune_actuary_reviews_v1', JSON.stringify(filtered));
+      replacePostMatchReviews(filtered);
       setReviews(filtered);
 
       const updatedQueue = queue.map((item) => {
@@ -623,11 +623,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           if (item.review) return r.id === item.review.id;
           if (!salesDatesCompatible(item.data?.matchInfo?.matchTime, item.timestamp, undefined,
             r.matchData?.matchInfo?.matchTime, r.reviewTimestamp, r.salesDateOverride || r.salesDate)) return false;
-          const rHome = (r.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
-          const rAway = (r.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
-          const iHome = (item.data?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
-          const iAway = (item.data?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
-          return rHome && rAway && iHome && iAway && (rHome.includes(iHome) || iHome.includes(rHome)) && (rAway.includes(iAway) || iAway.includes(rAway));
+          return matchTeamsFuzzy(r.matchData?.matchInfo?.homeTeam || '', item.data?.matchInfo?.homeTeam || '') &&
+            matchTeamsFuzzy(r.matchData?.matchInfo?.awayTeam || '', item.data?.matchInfo?.awayTeam || '');
         });
         if (isMatched) {
           return {
@@ -1097,12 +1094,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
             (q) =>
               existingQueueIds.has(q.id) &&
               scoreFitsQueueItem(q) &&
-              (matchTeamsFuzzy(q.data.matchInfo.homeTeam, item.homeTeam) ||
-                item.homeTeam.includes(q.data.matchInfo.homeTeam) ||
-                q.data.matchInfo.homeTeam.includes(item.homeTeam)) &&
-              (matchTeamsFuzzy(q.data.matchInfo.awayTeam, item.awayTeam) ||
-                item.awayTeam.includes(q.data.matchInfo.awayTeam) ||
-                q.data.matchInfo.awayTeam.includes(item.awayTeam))
+              matchTeamsFuzzy(q.data.matchInfo.homeTeam, item.homeTeam) &&
+              matchTeamsFuzzy(q.data.matchInfo.awayTeam, item.awayTeam)
           );
           if (queueIdx >= 0) {
             targetMatch = updatedQueue[queueIdx].data;
@@ -1114,12 +1107,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         if (!targetMatch) {
           if (
             salesDatesCompatible(currentMatch.matchInfo.matchTime, undefined, undefined, item.matchTime, undefined, item.salesDate) &&
-            (matchTeamsFuzzy(currentMatch.matchInfo.homeTeam, item.homeTeam) ||
-              item.homeTeam.includes(currentMatch.matchInfo.homeTeam) ||
-              currentMatch.matchInfo.homeTeam.includes(item.homeTeam)) &&
-            (matchTeamsFuzzy(currentMatch.matchInfo.awayTeam, item.awayTeam) ||
-              item.awayTeam.includes(currentMatch.matchInfo.awayTeam) ||
-              currentMatch.matchInfo.awayTeam.includes(item.awayTeam))
+            matchTeamsFuzzy(currentMatch.matchInfo.homeTeam, item.homeTeam) &&
+            matchTeamsFuzzy(currentMatch.matchInfo.awayTeam, item.awayTeam)
           ) {
             targetMatch = currentMatch;
             targetReport = currentReport;
@@ -1221,8 +1210,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
             const iHome = (item.homeTeam || '').replace(/\s+/g, '').toLowerCase();
             const iAway = (item.awayTeam || '').replace(/\s+/g, '').toLowerCase();
             return (
-              (matchTeamsFuzzy(qHome, iHome) || qHome.includes(iHome) || iHome.includes(qHome)) &&
-              (matchTeamsFuzzy(qAway, iAway) || qAway.includes(iAway) || iAway.includes(qAway))
+              matchTeamsFuzzy(qHome, iHome) &&
+              matchTeamsFuzzy(qAway, iAway)
             );
           });
         }

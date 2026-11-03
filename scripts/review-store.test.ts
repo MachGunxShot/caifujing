@@ -1,0 +1,79 @@
+import assert from 'node:assert/strict';
+import { beforeEach, test } from 'node:test';
+import type { FullMatchData } from '../src/types/fortuneActuary';
+import { generateActuarialRuleReport } from '../src/utils/actuaryEngine';
+import {
+  evaluateMatchOutcomeAndExtractLesson,
+  getPostMatchReviews,
+  savePostMatchReview,
+} from '../src/utils/experienceStore';
+import { PRESET_CASES } from '../src/utils/presetCases';
+
+// A disposable browser archive: these tests never touch the user's browser data.
+const archive = new Map<string, string>();
+const memoryStorage: Storage = {
+  get length() { return archive.size; },
+  clear: () => archive.clear(),
+  getItem: (key: string) => archive.get(key) ?? null,
+  key: (index: number) => [...archive.keys()][index] ?? null,
+  removeItem: (key: string) => { archive.delete(key); },
+  setItem: (key: string, value: string) => { archive.set(key, String(value)); },
+};
+Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: memoryStorage });
+Object.defineProperty(globalThis, 'window', { configurable: true, value: globalThis });
+
+const REVIEWS_KEY = 'fortune_actuary_reviews_v1';
+
+function matchData(): FullMatchData {
+  const base = structuredClone(PRESET_CASES[0].data);
+  base.matchInfo = { ...base.matchInfo, homeTeam: '测试主队', awayTeam: '测试客队', matchTime: '2026-10-12 20:00' };
+  return base;
+}
+
+function reviewWithScore(home: number, away: number, id?: string) {
+  const data = matchData();
+  const review = evaluateMatchOutcomeAndExtractLesson(data, generateActuarialRuleReport(data), home, away, '', false, undefined, Date.parse('2026-10-12T08:00:00Z'));
+  return id ? { ...review, id } : review;
+}
+
+beforeEach(() => archive.clear());
+
+test('correcting a mistyped score replaces the archived review instead of adding a duplicate', () => {
+  savePostMatchReview(reviewWithScore(1, 0, 'first-entry'));
+  const originalId = getPostMatchReviews()[0].id;
+  savePostMatchReview(reviewWithScore(2, 0, 'second-entry'));
+  const reviews = getPostMatchReviews();
+  assert.equal(reviews.length, 1);
+  assert.equal(reviews[0].actualScore, '2-0');
+  assert.equal(reviews[0].id, originalId, 'the archived record keeps its stable ID');
+});
+
+test('repeated reads return independent copies, so mutating one cannot corrupt the cache', () => {
+  savePostMatchReview(reviewWithScore(1, 1));
+  const first = getPostMatchReviews();
+  first[0].actualScore = 'mutated';
+  assert.equal(getPostMatchReviews()[0].actualScore, '1-1');
+});
+
+test('a direct write to storage invalidates the read cache', () => {
+  savePostMatchReview(reviewWithScore(3, 1));
+  assert.equal(getPostMatchReviews().length, 1);
+  localStorage.setItem(REVIEWS_KEY, '[]');
+  assert.equal(getPostMatchReviews().length, 0);
+});
+
+test('a review with an unreadable score keeps its stored evaluation instead of being re-graded as 0-0', () => {
+  const review = reviewWithScore(2, 1);
+  const stored = {
+    ...review,
+    actualScore: '?-?',
+    actualHomeScore: undefined,
+    actualAwayScore: undefined,
+    outcomeEvaluation: { ...review.outcomeEvaluation, euroHit: true, handicapHit: true, modelVerified: true },
+  };
+  localStorage.setItem(REVIEWS_KEY, JSON.stringify([stored]));
+  const [loaded] = getPostMatchReviews();
+  assert.equal(loaded.outcomeEvaluation.euroHit, true);
+  assert.equal(loaded.outcomeEvaluation.handicapHit, true);
+  assert.equal(loaded.outcomeEvaluation.modelVerified, true);
+});

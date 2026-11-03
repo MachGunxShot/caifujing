@@ -1,5 +1,9 @@
 import React, { useMemo } from 'react';
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
+
+// Configure once at module load instead of on every render.
+marked.setOptions({ gfm: true, breaks: true });
 
 interface MarkdownViewProps {
   content: string;
@@ -10,15 +14,12 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({ content, className =
   const htmlContent = useMemo(() => {
     if (!content) return '';
     try {
-      // Configure marked
-      marked.setOptions({
-        gfm: true,
-        breaks: true,
-      });
-      return marked.parse(content) as string;
+      // Content comes from the model (which reads user screenshots), so it can carry
+      // injected HTML such as <img onerror>. Always sanitize before innerHTML.
+      return DOMPurify.sanitize(marked.parse(content) as string);
     } catch (e) {
       console.error('Markdown parse error:', e);
-      return content;
+      return DOMPurify.sanitize(content);
     }
   }, [content]);
 

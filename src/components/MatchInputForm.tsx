@@ -589,7 +589,7 @@ export const MatchInputForm: React.FC<MatchInputFormProps> = ({
           {isLoading ? (
             <>
               <div className="w-5 h-5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
-              <span>精算师博弈论测谎中 (Gemini 3.8 Flash + 财富经五大模型)...</span>
+              <span>精算师博弈论测谎中 (Gemini 大模型 + 财富经五大模型)...</span>
             </>
           ) : (
             <>
