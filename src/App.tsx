@@ -3,15 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
 import { Header } from './components/Header';
 import { MatchInputForm } from './components/MatchInputForm';
 import { ActuarialReport } from './components/ActuarialReport';
 import { DataCalculations } from './components/DataCalculations';
-import { ModelKnowledgeBase } from './components/ModelKnowledgeBase';
 import { AttachmentUploadModal } from './components/AttachmentUploadModal';
-import { BatchMatrixDashboard } from './components/BatchMatrixDashboard';
-import { ReviewEvolutionView } from './components/ReviewEvolutionView';
 import { FullMatchData, AnalysisReportResult, BatchMatchItem } from './types/fortuneActuary';
 import { PRESET_CASES, PresetCase } from './utils/presetCases';
 import { generateActuarialRuleReport, compareEarlyVsLateConfidence } from './utils/actuaryEngine';
@@ -33,15 +30,26 @@ import {
 } from './utils/experienceStore';
 import { ShieldCheck, Sparkles, TrendingUp, AlertTriangle, HelpCircle, Layers, Brain } from 'lucide-react';
 
+// The full-width tabs are by far the largest components; load them on first visit
+// so the default report tab doesn't pay for them up front.
+const BatchMatrixDashboard = lazy(() => import('./components/BatchMatrixDashboard').then((m) => ({ default: m.BatchMatrixDashboard })));
+const ReviewEvolutionView = lazy(() => import('./components/ReviewEvolutionView').then((m) => ({ default: m.ReviewEvolutionView })));
+const ModelKnowledgeBase = lazy(() => import('./components/ModelKnowledgeBase').then((m) => ({ default: m.ModelKnowledgeBase })));
+
 const QUEUE_STORAGE_KEY = 'fortune_actuary_batch_queue_v2';
 const WORKSPACE_BACKUP_KEY = 'fortune_actuary_user_workspace';
 const MATCH_STORAGE_KEY = 'fortune_actuary_current_match_v2';
 const REPORT_STORAGE_KEY = 'fortune_actuary_current_report_v2';
 const ACTIVE_TAB_STORAGE_KEY = 'fortune_actuary_active_tab_v2';
 
+// The active queue key is authoritative; the workspace backup is written less often
+// and is only a recovery source when the active key is missing or unreadable.
+const BACKUP_INTERVAL_MS = 5 * 60 * 1000;
+const PERSIST_DEBOUNCE_MS = 400;
+
 const LEGACY_STORAGE_KEYS = [
-  'fortune_actuary_user_workspace',
   'fortune_actuary_batch_queue_v2',
+  'fortune_actuary_user_workspace',
   'fortune_actuary_batch_queue',
   'fortune_actuary_batch_queue_v1',
   'fortune_actuary_queue',
@@ -195,6 +203,8 @@ function loadUserSavedQueue(): BatchMatchItem[] {
       const saved = localStorage.getItem(key);
       if (saved) {
         const parsed = JSON.parse(saved);
+        // An intentionally emptied active queue must stay empty, not be refilled from older keys.
+        if (key === QUEUE_STORAGE_KEY && Array.isArray(parsed) && parsed.length === 0) return [];
         if (Array.isArray(parsed) && parsed.length > 0) {
           // Filter to user's real analyzed matches (exclude preset cases)
           const realMatches = parsed.filter(
@@ -266,6 +276,8 @@ export default function App() {
   const [batchQueue, setBatchQueue] = useState<BatchMatchItem[]>(() => {
     return loadUserSavedQueue();
   });
+  const [storageWarning, setStorageWarning] = useState<string | null>(null);
+  const lastBackupAtRef = useRef(0);
 
   // Persistent Match Data
   const [matchData, setMatchData] = useState<FullMatchData>(() => {
@@ -279,10 +291,9 @@ export default function App() {
           return parsed;
         }
       }
-      // If no single match, check if there's user's real saved match in queue
-      const savedQueue = loadUserSavedQueue();
-      if (savedQueue.length > 0 && savedQueue[0].data?.matchInfo?.homeTeam) {
-        return savedQueue[0].data;
+      // If no single match, reuse the queue already loaded above (loading again re-runs migrations)
+      if (batchQueue.length > 0 && batchQueue[0].data?.matchInfo?.homeTeam) {
+        return batchQueue[0].data;
       }
     } catch (e) {}
     return initialPreset.data;
@@ -300,6 +311,8 @@ export default function App() {
   });
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const analyzeAbortRef = useRef<AbortController | null>(null);
+  const analyzingDataRef = useRef<FullMatchData | null>(null);
   const [rawAiText, setRawAiText] = useState<string>('');
 
   // Persistent Report
@@ -333,15 +346,56 @@ export default function App() {
   const [reportMode, setReportMode] = useState<'single' | 'batch'>('single');
   const [calcMode, setCalcMode] = useState<'single' | 'batch'>('single');
 
-  // Auto-persist batchQueue to both active key and workspace backup key
+  // Auto-persist batchQueue (debounced). The workspace backup doubles storage use, so it is
+  // refreshed at most every few minutes; a failed write is surfaced instead of only logged.
   useEffect(() => {
-    try {
-      localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(batchQueue));
-      localStorage.setItem(WORKSPACE_BACKUP_KEY, JSON.stringify(batchQueue));
-    } catch (e) {
-      console.warn('Failed to persist batchQueue:', e);
-    }
+    const timer = window.setTimeout(() => {
+      try {
+        const json = JSON.stringify(batchQueue);
+        localStorage.setItem(QUEUE_STORAGE_KEY, json);
+        const now = Date.now();
+        if (now - lastBackupAtRef.current >= BACKUP_INTERVAL_MS) {
+          try {
+            localStorage.setItem(WORKSPACE_BACKUP_KEY, json);
+            lastBackupAtRef.current = now;
+          } catch {
+            // The backup is optional: drop it to free room for the authoritative copy.
+            localStorage.removeItem(WORKSPACE_BACKUP_KEY);
+          }
+        }
+        setStorageWarning(null);
+      } catch (e) {
+        console.warn('Failed to persist batchQueue:', e);
+        setStorageWarning('浏览器本地存储已满，最新的批量场次未能保存。请导出备份后清理历史场次或复盘记录，否则刷新页面会丢失本次修改。');
+      }
+    }, PERSIST_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
   }, [batchQueue]);
+
+  // Flush the debounced write when the tab is closed or hidden, so the last edit is never lost.
+  const latestQueueRef = useRef(batchQueue);
+  latestQueueRef.current = batchQueue;
+  useEffect(() => {
+    const flush = () => {
+      try {
+        localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(latestQueueRef.current));
+      } catch {
+        // Quota errors are already surfaced by the debounced writer.
+      }
+    };
+    window.addEventListener('pagehide', flush);
+    return () => window.removeEventListener('pagehide', flush);
+  }, []);
+
+  // Switching to (or editing) another match makes a pending AI answer stale: cancel it.
+  useEffect(() => {
+    if (analyzeAbortRef.current && analyzingDataRef.current !== matchData) {
+      analyzeAbortRef.current.abort();
+      analyzeAbortRef.current = null;
+      analyzingDataRef.current = null;
+      setIsLoading(false);
+    }
+  }, [matchData]);
 
   // Auto-persist matchData
   useEffect(() => {
@@ -385,9 +439,17 @@ export default function App() {
     }
   };
 
-  // Analyze function calling server-side Gemini 3.8 Flash with actuarial rule engine fallback
+  // Analyze function calling server-side Gemini with actuarial rule engine fallback
   const handleAnalyze = async (dataToAnalyze: FullMatchData = matchData) => {
+    // Only the latest request may write results: a slow answer for match A must not
+    // overwrite the report of match B that the user switched to in the meantime.
+    analyzeAbortRef.current?.abort();
+    const controller = new AbortController();
+    analyzeAbortRef.current = controller;
+    analyzingDataRef.current = dataToAnalyze;
+
     setIsLoading(true);
+    setRawAiText('');
     // Instant local actuarial rule engine computation for immediate responsiveness
     const localReport = generateActuarialRuleReport(dataToAnalyze);
     setReport(localReport);
@@ -402,11 +464,14 @@ export default function App() {
           ...dataToAnalyze,
           experiencePrompt,
         }),
+        signal: controller.signal,
       });
 
       if (response.ok) {
         const data = await response.json();
-        if (data.aiAnalysis) {
+        if (controller.signal.aborted) return;
+        // Engine fallback text is the same content as localReport; keep it labelled as engine output.
+        if (data.aiAnalysis && data.source === 'GEMINI_AI') {
           setRawAiText(data.aiAnalysis);
 
           // If the AI response contains structured sections, we can enhance the report
@@ -450,10 +515,15 @@ export default function App() {
           });
         }
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return;
       console.warn('Backend Gemini API call skipped or errored, using deterministic actuarial engine:', err);
     } finally {
-      setIsLoading(false);
+      if (analyzeAbortRef.current === controller) {
+        analyzeAbortRef.current = null;
+        analyzingDataRef.current = null;
+        setIsLoading(false);
+      }
     }
   };
 
@@ -504,7 +574,13 @@ export default function App() {
   };
 
   // Image analysis callback
-  const handleImageAnalyzed = (extractedData: FullMatchData | null, aiAnalysis: string) => {
+  const handleImageAnalyzed = (extractedData: FullMatchData | null, aiAnalysis: string, source?: string) => {
+    // The offline placeholder text claims nothing real: don't show it as analysis or
+    // enqueue a copy of the current match as if it had been read from the screenshot.
+    if (source !== 'GEMINI_AI') {
+      alert('大模型暂不可用，截图未能识别。已保留当前盘口数据，可手动录入或稍后重试。');
+      return;
+    }
     const targetData = extractedData || matchData;
     setMatchData(targetData);
     setRawAiText(aiAnalysis);
@@ -975,11 +1051,19 @@ export default function App() {
         onSelectMatch={handleSelectMatchKeepTab}
       />
 
+      {storageWarning && (
+        <div role="alert" className="mx-4 mt-3 rounded-lg border border-red-500/50 bg-red-950/70 px-4 py-2.5 text-xs text-red-200 flex items-start justify-between gap-3">
+          <span>⚠️ {storageWarning}</span>
+          <button type="button" onClick={() => setStorageWarning(null)} className="shrink-0 text-red-300 hover:text-white">关闭</button>
+        </div>
+      )}
+
       {/* Main Terminal Body */}
       <main className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {/* SCENARIO 1: FULL-WIDTH WORKSPACE TABS (Batch Matrix, Post-Match Review, Model KB) */}
         {(activeTab === 'batch' || activeTab === 'review' || activeTab === 'models') && (
           <div className="w-full space-y-6">
+            <Suspense fallback={<div className="py-16 text-center text-xs text-slate-500">模块加载中…</div>}>
             {activeTab === 'batch' && (
               <BatchMatrixDashboard
                 queue={batchQueue}
@@ -1025,6 +1109,7 @@ export default function App() {
                 onNavigateToWorkbench={() => setActiveTab('report')}
               />
             )}
+            </Suspense>
           </div>
         )}
 

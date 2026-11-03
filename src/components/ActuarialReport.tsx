@@ -1082,7 +1082,7 @@ export const ActuarialReport: React.FC<ActuarialReportProps> = ({
             <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4">
               <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 mb-2">
                 <Brain className="w-4 h-4 text-emerald-400" />
-                <span>Gemini 3.8 Flash 精算师深度博弈论推演全景 (Markdown 原生渲染)</span>
+                <span>{report.source === 'GEMINI_AI' ? 'Gemini 大模型精算师深度博弈论推演全景' : '《财富经》规则引擎推演全景'} (Markdown 原生渲染)</span>
               </div>
               <div className="bg-slate-950 p-4 rounded-lg border border-slate-800/80">
                 <MarkdownView content={rawAiText} />

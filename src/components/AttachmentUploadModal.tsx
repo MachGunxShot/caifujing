@@ -19,7 +19,7 @@ import { parseBatchMatchesFromText, SAMPLE_BATCH_CSV, SAMPLE_BATCH_MARKDOWN } fr
 interface AttachmentUploadModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onImageAnalyzed: (extractedData: FullMatchData | null, aiAnalysis: string) => void;
+  onImageAnalyzed: (extractedData: FullMatchData | null, aiAnalysis: string, source?: string) => void;
   onBatchImported: (matches: FullMatchData[]) => void;
 }
 
@@ -92,7 +92,7 @@ export const AttachmentUploadModal: React.FC<AttachmentUploadModalProps> = ({
 
       const res = await response.json();
       if (res.success) {
-        onImageAnalyzed(res.extractedData, res.aiAnalysis);
+        onImageAnalyzed(res.extractedData, res.aiAnalysis, res.source);
         onClose();
       } else {
         alert(res.error || '截图识别失败，请重试');
@@ -459,7 +459,7 @@ export const AttachmentUploadModal: React.FC<AttachmentUploadModalProps> = ({
                     <span>3. 单场点对点穿透</span>
                   </div>
                   <p className="text-slate-400 leading-relaxed text-[11px]">
-                    在批量矩阵中，您只需点击任意感兴趣的场次，系统才会针对该特定场次调度 Gemini 3.8 Flash 进行纵深三维测谎，上下文消耗恒定在极小区间。
+                    在批量矩阵中，您只需点击任意感兴趣的场次，系统才会针对该特定场次调度 Gemini 大模型进行纵深三维测谎，上下文消耗恒定在极小区间。
                   </p>
                 </div>
               </div>
