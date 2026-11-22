@@ -13,13 +13,14 @@ import {
   Clipboard,
   Layers,
 } from 'lucide-react';
+import { parseImageMatch } from '../utils/importValidation';
 import { FullMatchData } from '../types/fortuneActuary';
 import { parseBatchMatchesFromText, SAMPLE_BATCH_CSV, SAMPLE_BATCH_MARKDOWN } from '../utils/textParser';
 
 interface AttachmentUploadModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onImageAnalyzed: (extractedData: FullMatchData | null, aiAnalysis: string, source?: string) => void;
+  onImageAnalyzed: (extractedData: FullMatchData, aiAnalysis: string) => void;
   onBatchImported: (matches: FullMatchData[]) => void;
 }
 
@@ -91,8 +92,15 @@ export const AttachmentUploadModal: React.FC<AttachmentUploadModalProps> = ({
       });
 
       const res = await response.json();
-      if (res.success) {
-        onImageAnalyzed(res.extractedData, res.aiAnalysis, res.source);
+      if (response.ok && res.success && res.source === 'GEMINI_AI') {
+        let match;
+        try {
+          match = parseImageMatch(res.extractedData);
+        } catch (error) {
+          alert(error instanceof Error ? error.message : '截图识别数据不完整');
+          return;
+        }
+        onImageAnalyzed(match, res.aiAnalysis);
         onClose();
       } else {
         alert(res.error || '截图识别失败，请重试');

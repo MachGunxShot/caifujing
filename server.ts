@@ -1,4 +1,6 @@
+import { V4_RED_LINES } from './src/utils/coreRulesV4.ts';
 import express from 'express';
+import { parseImageMatch } from './src/utils/importValidation.ts';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -59,7 +61,7 @@ const FORTUNE_SYSTEM_PRINCIPLES = `你是一位精通《财富经》足彩盘赔
 核心研判原则：
 1. 早盘看意图，晚盘看真实风控：临场 1-2 小时资金注入后的盘水变轨才是机构为了不赔钱而做出的最终避险调仓。
 2. 永远学会“证伪”而非“自我证明”：用晚盘的剧烈变水与反向变盘去证伪早盘逻辑。
-3. 天上不会掉无缘无故的馅饼：买得太舒服、回报率过高的盘面，99% 为机构诱导陷阱。`;
+3. 低赔与低水不能单独证明预测准确或回报为正。星级只表示规则吻合程度。\nv4 临场红线：${V4_RED_LINES.join('；')}`;
 
 const ANALYZE_SYSTEM_INSTRUCTION = `${FORTUNE_SYSTEM_PRINCIPLES.replace('研判公式，', '研判公式，结合系统持续沉淀的实战复盘经验法则库，')}
 4. 深度吸纳实战进化经验法则：随时对照知识库中已被历史赛果证实的特定联赛与模型避险法则。
@@ -131,6 +133,11 @@ async function startServer() {
       const matchData = req.body;
       const { matchInfo, asianHandicap, euroOdds, overUnder, additionalNotes, experiencePrompt } = matchData;
 
+      const localReport = generateActuarialRuleReport(matchData);
+      if (localReport.decision.v4Assessment) {
+        return res.json({ success: true, aiAnalysis: buildRuleEngineText(matchData),
+          source: 'RULE_ENGINE_FALLBACK', note: localReport.decision.v4Assessment });
+      }
       const promptText = `
 请以《财富经》足彩盘赔分析与博弈论顶级精算师与风险控制专家的身份，对以下比赛进行极其严苛、深入的盘赔测谎与风险解剖：
 
@@ -138,7 +145,7 @@ async function startServer() {
 - 联赛：${matchInfo?.league || '未知联赛'}
 - 对阵：${matchInfo?.homeTeam || '主队'} vs ${matchInfo?.awayTeam || '客队'}
 - 比赛时间：${matchInfo?.matchTime || '临场'}
-- 市场热度与题材：${matchInfo?.marketStory || '无特殊题材'}
+- 本地 v4 星级（规则符合度）：${localReport.decision.starRating}；核心组合资格：${localReport.decision.coreEligible ? '符合' : '不符合'}。遵守此结论。\n- 市场热度与题材：${matchInfo?.marketStory || '无特殊题材'}
 - 额外备注/伤停：${additionalNotes || '无'}
 
 【亚盘早晚盘数据】：
@@ -318,11 +325,13 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
 第一步：先输出提取到的结构化数据 JSON 代码块（必须使用 \`\`\`json 包裹），示例如下：
 \`\`\`json
 {
-  "league": "联赛名称",
-  "homeTeam": "主队",
-  "awayTeam": "客队",
-  "matchTime": "比赛时间或临场",
-  "marketStory": "从截图或对阵中可识别的题材与背景",
+  "matchInfo": {
+    "league": "联赛名称",
+    "homeTeam": "主队",
+    "awayTeam": "客队",
+    "matchTime": "比赛时间或临场",
+    "marketStory": "从截图或对阵中可识别的题材与背景"
+  },
   "asianHandicap": {
     "earlyHandicap": "-0.75",
     "earlyHomeOdds": 1.92,
@@ -372,31 +381,20 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
         aiResponseText = response.text || '';
       }
 
-      const fromAi = !!aiResponseText;
-      const parsedImage = fromAi ? extractJsonBlock(aiResponseText) : null;
-      const extractedData = parsedImage && typeof parsedImage === 'object' && !Array.isArray(parsedImage) ? parsedImage : null;
-
-      // If AI unavailable or failed, fallback
-      if (!fromAi) {
-        aiResponseText = `已接收并解析盘赔截图。\n1. 【盘面第一印象】\n已提取截图中的赔率分布。\n\n2. 【三维联动测谎】\n交叉比对完成。\n\n3. 【财富经最终判定】\n【推荐方向】：请结合临场最后变水做最终判定\n【避坑风险提示】：截图数据已自动填入精算台，建议复核晚盘即时水。`;
+      if (!aiResponseText) {
+        return res.status(503).json({ success: false, error: '截图识别暂不可用，请手动录入或稍后重试。' });
       }
-
-      res.json({
-        success: true,
-        aiAnalysis: aiResponseText,
-        extractedData,
-        source: fromAi ? 'GEMINI_AI' : 'RULE_ENGINE_FALLBACK',
-        degraded: !fromAi,
-      });
+      let extractedData;
+      try {
+        extractedData = parseImageMatch(extractJsonBlock(aiResponseText));
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : '赛事格式错误';
+        return res.status(422).json({ success: false, error: reason + '，请核对截图后重试。' });
+      }
+      return res.json({ success: true, aiAnalysis: aiResponseText, extractedData, source: 'GEMINI_AI' });
     } catch (err: any) {
       console.warn('API /api/analyze-image error:', err?.message);
-      res.json({
-        success: true,
-        aiAnalysis: `1. 【盘面第一印象】\n截图已接收。由于当前大模型访问并发较大，已将识别数据导入精算队列。\n\n2. 【三维联动测谎】\n欧亚盘型与大小球测谎矩阵已就绪。\n\n3. 【财富经最终判定】\n【推荐方向】：请使用左侧控制台进行微调测算\n【避坑风险提示】：遵循天上没有免费馅饼原则，防高水诱盘。`,
-        extractedData: null,
-        source: 'RULE_ENGINE_FALLBACK',
-        degraded: true,
-      });
+      return res.status(503).json({ success: false, error: '截图识别服务暂不可用，请稍后重试。' });
     }
   });
 

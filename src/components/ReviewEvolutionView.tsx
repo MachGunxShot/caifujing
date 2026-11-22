@@ -79,6 +79,7 @@ import {
   evaluateParlaySettlement,
   evaluateSingleHandicapOutcome,
 } from '../utils/experienceStore';
+import { displayRate, euroStatistics, settleEuroReview } from '../utils/euroStatistics';
 import { generateActuarialRuleReport } from '../utils/actuaryEngine';
 import { ParsedScoreItem, parseBatchMatchScoresFromText } from '../utils/textParser';
 import {
@@ -271,17 +272,10 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     const calcTier = (targetStars: number) => {
       const tierItems = reviews.filter((r) => (r.priorReport?.decision?.starRating || 3) === targetStars);
       const total = tierItems.length;
-      if (total === 0) return { total: 0, euroHitRate: 0, handicapHitRate: 0, ouHitRate: 0, scoreHitRate: 0 };
-      const euroHits = tierItems.filter((r) => r.outcomeEvaluation?.euroHit).length;
-      const handicapHits = tierItems.filter((r) => r.outcomeEvaluation?.handicapHit).length;
-      const ouHits = tierItems.filter((r) => r.outcomeEvaluation?.overUnderHit).length;
-      const scoreHits = tierItems.filter((r) => r.outcomeEvaluation?.scoreHit).length;
       return {
-        total,
-        euroHitRate: Math.round((euroHits / total) * 100),
-        handicapHitRate: Math.round((handicapHits / total) * 100),
-        ouHitRate: Math.round((ouHits / total) * 100),
-        scoreHitRate: Math.round((scoreHits / total) * 100),
+        total, ...euroStatistics(tierItems),
+        handicapRate: displayRate(tierItems.filter(r => r.outcomeEvaluation?.handicapHit).length, total),
+        ouRate: displayRate(tierItems.filter(r => r.outcomeEvaluation?.overUnderHit).length, total),
       };
     };
 
@@ -290,6 +284,17 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
       tier4: calcTier(4),
       tier3: calcTier(3),
     };
+  }, [reviews]);
+
+  const modelHistory = useMemo(() => {
+    const byModel = new Map<string, PostMatchReview[]>();
+    for (const review of reviews) {
+      const key = 'rule-model-' + review.priorReport.identifiedModel;
+      const group = byModel.get(key);
+      if (group) group.push(review);
+      else byModel.set(key, [review]);
+    }
+    return new Map(Array.from(byModel, ([key, group]) => [key, euroStatistics(group)]));
   }, [reviews]);
 
   // KPI statistics for 2-in-1 parlay historical battle reports
@@ -427,15 +432,15 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         items: PostMatchReview[];
         stats: {
           total: number;
-          euroHits: number;
+          euroHits: number; euroSettled: number;
           handicapHits: number;
           ouHits: number;
           scoreHits: number;
         };
         starStats: {
-          tier5: { total: number; euroHits: number; handicapHits: number; ouHits: number; scoreHits: number };
-          tier4: { total: number; euroHits: number; handicapHits: number; ouHits: number; scoreHits: number };
-          tier3: { total: number; euroHits: number; handicapHits: number; ouHits: number; scoreHits: number };
+          tier5: { total: number; euroHits: number; euroSettled: number; handicapHits: number; ouHits: number; scoreHits: number };
+          tier4: { total: number; euroHits: number; euroSettled: number; handicapHits: number; ouHits: number; scoreHits: number };
+          tier3: { total: number; euroHits: number; euroSettled: number; handicapHits: number; ouHits: number; scoreHits: number };
         };
       }
     >();
@@ -454,15 +459,15 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           items: [],
           stats: {
             total: 0,
-            euroHits: 0,
+            euroHits: 0, euroSettled: 0,
             handicapHits: 0,
             ouHits: 0,
             scoreHits: 0,
           },
           starStats: {
-            tier5: { total: 0, euroHits: 0, handicapHits: 0, ouHits: 0, scoreHits: 0 },
-            tier4: { total: 0, euroHits: 0, handicapHits: 0, ouHits: 0, scoreHits: 0 },
-            tier3: { total: 0, euroHits: 0, handicapHits: 0, ouHits: 0, scoreHits: 0 },
+            tier5: { total: 0, euroHits: 0, euroSettled: 0, handicapHits: 0, ouHits: 0, scoreHits: 0 },
+            tier4: { total: 0, euroHits: 0, euroSettled: 0, handicapHits: 0, ouHits: 0, scoreHits: 0 },
+            tier3: { total: 0, euroHits: 0, euroSettled: 0, handicapHits: 0, ouHits: 0, scoreHits: 0 },
           },
         });
       }
@@ -470,7 +475,9 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
       const g = groupsMap.get(salesDate)!;
       g.items.push(rev);
       g.stats.total += 1;
-      if (rev.outcomeEvaluation.euroHit) g.stats.euroHits += 1;
+      const euro = settleEuroReview(rev);
+      if (euro) g.stats.euroSettled++;
+      if (euro?.hit) g.stats.euroHits++;
       if (rev.outcomeEvaluation.handicapHit) g.stats.handicapHits += 1;
       if (rev.outcomeEvaluation.overUnderHit) g.stats.ouHits += 1;
       if (rev.outcomeEvaluation.scoreHit) g.stats.scoreHits += 1;
@@ -479,7 +486,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
       const stars = rev.priorReport?.decision?.starRating || 3;
       const targetTier = stars === 5 ? g.starStats.tier5 : stars === 4 ? g.starStats.tier4 : g.starStats.tier3;
       targetTier.total += 1;
-      if (rev.outcomeEvaluation.euroHit) targetTier.euroHits += 1;
+      if (euro) targetTier.euroSettled++;
+      if (euro?.hit) targetTier.euroHits++;
       if (rev.outcomeEvaluation.handicapHit) targetTier.handicapHits += 1;
       if (rev.outcomeEvaluation.overUnderHit) targetTier.ouHits += 1;
       if (rev.outcomeEvaluation.scoreHit) targetTier.scoreHits += 1;
@@ -778,7 +786,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     const tier3 = updatedReviews.filter((r) => (r.priorReport?.decision?.starRating || 3) === 3).length;
 
     setHealthNotification(
-      `⭐ 历史战报星级档位与命中率梯次智能重校准完成！共重算并更新 ${calibratedCount} 场（覆盖全量 ${updatedReviews.length} 场）。最新梯度分布：5星稳胆 ${tier5} 场、4星防冷 ${tier4} 场、3星博弈 ${tier3} 场，五星档位命中率与高置信度梯次全面恢复科学高位！`
+      `⭐ 历史战报星级档位与命中率梯次智能重校准完成！共重算并更新 ${calibratedCount} 场（覆盖全量 ${updatedReviews.length} 场）。最新梯度分布：5星稳胆 ${tier5} 场、4星防冷 ${tier4} 场、3星博弈 ${tier3} 场。`
     );
     setTimeout(() => setHealthNotification(null), 8000);
   };
@@ -1196,7 +1204,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         }
 
         // Persist review to authoritative storage
-        savePostMatchReview(review);
+        if (!savePostMatchReview(review)) return;
 
         // Update in queue - strictly mark isReviewed: true, finalScore, isLocked, and review!
         const finalScoreStr = `${item.homeScore}-${item.awayScore}`;
@@ -1350,7 +1358,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           aiDissectionData.summaryNote || localReview.outcomeEvaluation.summaryNote;
 
         // Persist the AI-enhanced review
-        savePostMatchReview(localReview);
+        if (!savePostMatchReview(localReview)) return;
 
         const safeHome = (activeReviewMatchData.matchInfo.homeTeam || 'Home').replace(/\s+/g, '_');
         const safeAway = (activeReviewMatchData.matchInfo.awayTeam || 'Away').replace(/\s+/g, '_');
@@ -1368,7 +1376,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           hitCount: localReview.outcomeEvaluation.modelVerified ? 1 : 0,
         });
       } else {
-        savePostMatchReview(localReview);
+        if (!savePostMatchReview(localReview)) return;
       }
 
       setLatestReviewResult(localReview);
@@ -1563,14 +1571,14 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
   // Stats calculation
   const totalReviews = reviews.length;
-  const euroHits = reviews.filter((r) => r.outcomeEvaluation.euroHit).length;
+  const overallEuro = useMemo(() => euroStatistics(reviews), [reviews]);
   const handicapHits = reviews.filter((r) => r.outcomeEvaluation.handicapHit).length;
   const ouHits = reviews.filter((r) => r.outcomeEvaluation.overUnderHit).length;
   const scoreHits = reviews.filter((r) => r.outcomeEvaluation.scoreHit).length;
-  const euroRate = totalReviews > 0 ? Math.round((euroHits / totalReviews) * 100) : 85;
-  const handicapRate = totalReviews > 0 ? Math.round((handicapHits / totalReviews) * 100) : 82;
-  const ouRate = totalReviews > 0 ? Math.round((ouHits / totalReviews) * 100) : 78;
-  const scoreRate = totalReviews > 0 ? Math.round((scoreHits / totalReviews) * 100) : 48;
+  const euroRate = displayRate(overallEuro.hits, overallEuro.settled);
+  const handicapRate = displayRate(handicapHits, totalReviews);
+  const ouRate = displayRate(ouHits, totalReviews);
+  const scoreRate = displayRate(scoreHits, totalReviews);
 
   return (
     <div className="space-y-5">
@@ -1623,27 +1631,27 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
             </div>
           </div>
           <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
-            <div className="text-[10px] text-slate-400">胜平负核准率</div>
+            <div className="text-[10px] text-slate-400">胜平负覆盖率（含双选）</div>
             <div className="font-black text-emerald-400 text-sm mt-0.5 font-mono">
-              {euroRate}%
+              {euroRate}
             </div>
           </div>
           <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
-            <div className="text-[10px] text-slate-400">让球赢盘胜率</div>
+            <div className="text-[10px] text-slate-400">让球不亏率（含走盘）</div>
             <div className="font-black text-cyan-400 text-sm mt-0.5 font-mono">
-              {handicapRate}%
+              {handicapRate}
             </div>
           </div>
           <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
             <div className="text-[10px] text-slate-400">大小球锁定率</div>
             <div className="font-black text-amber-400 text-sm mt-0.5 font-mono">
-              {ouRate}%
+              {ouRate}
             </div>
           </div>
           <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80 col-span-2 sm:col-span-1">
             <div className="text-[10px] text-slate-400">精准比分命中率</div>
             <div className="font-black text-teal-400 text-sm mt-0.5 font-mono">
-              {scoreRate}%
+              {scoreRate}
             </div>
           </div>
         </div>
@@ -3069,7 +3077,9 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
           {/* Rules List (Filtered) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {filteredRules.map((rule, idx) => (
+            {filteredRules.map((rule, idx) => {
+              const history = modelHistory.get(rule.id);
+              return (
               <div
                 key={rule.id}
                 className={`bg-slate-900 border rounded-xl p-4 transition-all relative space-y-2.5 ${
@@ -3125,12 +3135,20 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                   {rule.ruleContent}
                 </p>
 
+                {history && (
+                  <p className="text-xs text-slate-300">
+                    同模型历史记录（含旧版） · 单选 {history.single.hits}/{history.single.total} ·
+                    双选 {history.double.hits}/{history.double.total} ·
+                    等额模拟 ROI {displayRate(history.profit, history.priced)}（{history.priced} 场有效赔率）
+                  </p>
+                )}
                 <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono pt-1 border-t border-slate-800/60">
                   <span>来源：{rule.sourceMatch}</span>
                   <span>沉淀时间：{rule.createdAt}</span>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Add Manual Rule Modal */}
@@ -3581,7 +3599,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                   <div className="flex items-center gap-2">
                     <Award className="w-4 h-4 text-amber-400" />
                     <h4 className="text-xs font-black text-white">
-                      实战星级档位实现价值统计看板（辨析各档核心置信度）
+                      星级表现 · 胜平负命中与回报
                     </h4>
                   </div>
                   <span className="text-[11px] text-slate-400">
@@ -3589,141 +3607,50 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                   </span>
                 </div>
 
-                <div className="text-[10px] text-slate-400 bg-slate-950/70 rounded-lg px-2.5 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 border border-slate-800/80 font-mono">
-                  <span>
-                    <strong className="text-amber-400">★★★★★ 5星稳胆档</strong>: 极限榨水控赔 / 暴涨杀猪盘 / 极端胆平 (高置信92%+)
-                  </span>
-                  <span className="text-slate-600">|</span>
-                  <span>
-                    <strong className="text-cyan-400">★★★★☆ 4星防冷档</strong>: 浅盘满水 / 退盘示弱 / 次稳控赔 / 重点防冷 (高价值85%+)
-                  </span>
-                  <span className="text-slate-600">|</span>
-                  <span>
-                    <strong className="text-slate-300">★★★☆☆ 3星博弈档</strong>: 多空资金均势平衡盘 (80%)
-                  </span>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[740px] text-right text-xs tabular-nums">
+                    <thead className="text-slate-400 border-b border-slate-800">
+                      <tr>
+                        {['星级', '单选命中', '双选覆盖', '综合覆盖', '模拟 ROI', '净盈亏（单位）', '让球不亏', '大小球命中'].map((label, i) =>
+                          <th key={label} scope="col" className={i === 0 ? 'p-2 text-left' : 'p-2'}>{label}</th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {([5, 4, 3] as const).map(star => {
+                        const tier = starTierRealizationStats[('tier' + star) as keyof typeof starTierRealizationStats];
+                        const rateCell = (hits: number, count: number) => (
+                          <td className="p-2">
+                            <strong>{displayRate(hits, count)}</strong>
+                            <div className="text-[10px] text-slate-400">{hits} / {count}</div>
+                          </td>
+                        );
+                        return (
+                          <tr key={star} className="border-b border-slate-800/70">
+                            <th scope="row" className="p-2 text-left">
+                              <button type="button" aria-pressed={selectedStarFilter === star}
+                                onClick={() => setSelectedStarFilter(selectedStarFilter === star ? 'ALL' : star)}
+                                className="text-amber-300 hover:underline">{star} 星 · {tier.total} 场</button>
+                            </th>
+                            {rateCell(tier.single.hits, tier.single.total)}
+                            {rateCell(tier.double.hits, tier.double.total)}
+                            {rateCell(tier.hits, tier.settled)}
+                            <td className="p-2">
+                              <strong className={tier.profit < 0 ? 'text-rose-300' : 'text-slate-100'}>{displayRate(tier.profit, tier.priced)}</strong>
+                              <div className="text-[10px] text-slate-400">{tier.priced} 场可计</div>
+                            </td>
+                            <td className="p-2">{tier.priced ? tier.profit.toFixed(2) : '—'}</td>
+                            <td className="p-2">{tier.handicapRate}</td>
+                            <td className="p-2">{tier.ouRate}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {/* Tier 5 Card */}
-                  <div
-                    onClick={() => setSelectedStarFilter(selectedStarFilter === 5 ? 'ALL' : 5)}
-                    className={`p-3 rounded-lg border cursor-pointer transition-all ${
-                      selectedStarFilter === 5
-                        ? 'bg-amber-950/40 border-amber-500 text-amber-200 ring-1 ring-amber-500'
-                        : 'bg-slate-950/80 hover:bg-slate-950 border-amber-500/30 text-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-amber-400 font-black">★★★★★</span>
-                        <span className="text-xs font-black text-amber-300">5星稳胆档</span>
-                      </div>
-                      <span className="text-[11px] font-mono font-bold px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                        {starTierRealizationStats.tier5.total} 场
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-3 gap-1 mt-2 text-center text-[10px]">
-                      <div className="bg-slate-900/90 p-1 rounded">
-                        <span className="text-slate-500 block">胜平负</span>
-                        <span className="font-bold text-emerald-400 font-mono text-xs">
-                          {starTierRealizationStats.tier5.euroHitRate}%
-                        </span>
-                      </div>
-                      <div className="bg-slate-900/90 p-1 rounded">
-                        <span className="text-slate-500 block">让球赢盘</span>
-                        <span className="font-bold text-cyan-400 font-mono text-xs">
-                          {starTierRealizationStats.tier5.handicapHitRate}%
-                        </span>
-                      </div>
-                      <div className="bg-slate-900/90 p-1 rounded">
-                        <span className="text-slate-500 block">大小球</span>
-                        <span className="font-bold text-amber-400 font-mono text-xs">
-                          {starTierRealizationStats.tier5.ouHitRate}%
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Tier 4 Card */}
-                  <div
-                    onClick={() => setSelectedStarFilter(selectedStarFilter === 4 ? 'ALL' : 4)}
-                    className={`p-3 rounded-lg border cursor-pointer transition-all ${
-                      selectedStarFilter === 4
-                        ? 'bg-cyan-950/40 border-cyan-500 text-cyan-200 ring-1 ring-cyan-500'
-                        : 'bg-slate-950/80 hover:bg-slate-950 border-cyan-500/30 text-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-amber-400 font-black">★★★★☆</span>
-                        <span className="text-xs font-black text-cyan-300">4星防冷档</span>
-                      </div>
-                      <span className="text-[11px] font-mono font-bold px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
-                        {starTierRealizationStats.tier4.total} 场
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-3 gap-1 mt-2 text-center text-[10px]">
-                      <div className="bg-slate-900/90 p-1 rounded">
-                        <span className="text-slate-500 block">胜平负</span>
-                        <span className="font-bold text-emerald-400 font-mono text-xs">
-                          {starTierRealizationStats.tier4.euroHitRate}%
-                        </span>
-                      </div>
-                      <div className="bg-slate-900/90 p-1 rounded">
-                        <span className="text-slate-500 block">让球赢盘</span>
-                        <span className="font-bold text-cyan-400 font-mono text-xs">
-                          {starTierRealizationStats.tier4.handicapHitRate}%
-                        </span>
-                      </div>
-                      <div className="bg-slate-900/90 p-1 rounded">
-                        <span className="text-slate-500 block">大小球</span>
-                        <span className="font-bold text-amber-400 font-mono text-xs">
-                          {starTierRealizationStats.tier4.ouHitRate}%
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Tier 3 Card */}
-                  <div
-                    onClick={() => setSelectedStarFilter(selectedStarFilter === 3 ? 'ALL' : 3)}
-                    className={`p-3 rounded-lg border cursor-pointer transition-all ${
-                      selectedStarFilter === 3
-                        ? 'bg-slate-800 border-slate-500 text-white ring-1 ring-slate-500'
-                        : 'bg-slate-950/80 hover:bg-slate-950 border-slate-800 text-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-amber-400 font-black">★★★☆☆</span>
-                        <span className="text-xs font-black text-slate-300">3星博弈档</span>
-                      </div>
-                      <span className="text-[11px] font-mono font-bold px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                        {starTierRealizationStats.tier3.total} 场
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-3 gap-1 mt-2 text-center text-[10px]">
-                      <div className="bg-slate-900/90 p-1 rounded">
-                        <span className="text-slate-500 block">胜平负</span>
-                        <span className="font-bold text-emerald-400 font-mono text-xs">
-                          {starTierRealizationStats.tier3.euroHitRate}%
-                        </span>
-                      </div>
-                      <div className="bg-slate-900/90 p-1 rounded">
-                        <span className="text-slate-500 block">让球赢盘</span>
-                        <span className="font-bold text-cyan-400 font-mono text-xs">
-                          {starTierRealizationStats.tier3.handicapHitRate}%
-                        </span>
-                      </div>
-                      <div className="bg-slate-900/90 p-1 rounded">
-                        <span className="text-slate-500 block">大小球</span>
-                        <span className="font-bold text-amber-400 font-mono text-xs">
-                          {starTierRealizationStats.tier3.ouHitRate}%
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <p className="text-[11px] leading-relaxed text-slate-400">
+                  单选和双选分别统计，分数为命中场数 / 可判定场数。模拟每场投入 1 单位，双选两项各投 0.5。按存档晚盘欧赔结算，三项赔率均有效且大于 1 才计入 ROI。让球不亏含走盘和赢半。
+                </p>
               </div>
 
               {/* Quick Filter Pills (按星级与日期快速筛选) */}
@@ -3863,7 +3790,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                             {/* Summary Accuracy Stats for that date */}
                             <div className="flex items-center gap-1.5 text-[11px] font-mono bg-slate-900/90 px-2.5 py-1 rounded-lg border border-slate-800">
                               <span className="text-emerald-400">
-                                胜平负 {group.stats.euroHits}/{group.stats.total}
+                                胜平负覆盖 {group.stats.euroHits}/{group.stats.euroSettled}
                               </span>
                               <span className="text-slate-600">|</span>
                               <span className="text-cyan-400">
@@ -3940,7 +3867,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                                 {(() => {
                                   const effectiveDateFilter = dateGroupStarFilter[group.dateKey] || selectedStarFilter;
                                   const t5 = group.starStats.tier5;
-                                  const euroRate = t5.total > 0 ? Math.round((t5.euroHits / t5.total) * 100) : 0;
+                                  const euroRate = displayRate(t5.euroHits, t5.euroSettled);
                                   const hdcRate = t5.total > 0 ? Math.round((t5.handicapHits / t5.total) * 100) : 0;
                                   const ouRate = t5.total > 0 ? Math.round((t5.ouHits / t5.total) * 100) : 0;
                                   const isSelected = effectiveDateFilter === 5;
@@ -3970,8 +3897,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                                       </div>
                                       <div className="grid grid-cols-3 gap-1 mt-1.5 text-center text-[10px]">
                                         <div className="bg-slate-950/80 p-1 rounded">
-                                          <span className="text-slate-500 block text-[9px]">胜平负</span>
-                                          <span className="font-bold text-emerald-400 font-mono text-xs">{euroRate}%</span>
+                                          <span className="text-slate-500 block text-[9px]">胜平负覆盖</span>
+                                          <span className="font-bold text-emerald-400 font-mono text-xs">{euroRate}</span>
                                         </div>
                                         <div className="bg-slate-950/80 p-1 rounded">
                                           <span className="text-slate-500 block text-[9px]">让球赢盘</span>
@@ -3990,7 +3917,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                                 {(() => {
                                   const effectiveDateFilter = dateGroupStarFilter[group.dateKey] || selectedStarFilter;
                                   const t4 = group.starStats.tier4;
-                                  const euroRate = t4.total > 0 ? Math.round((t4.euroHits / t4.total) * 100) : 0;
+                                  const euroRate = displayRate(t4.euroHits, t4.euroSettled);
                                   const hdcRate = t4.total > 0 ? Math.round((t4.handicapHits / t4.total) * 100) : 0;
                                   const ouRate = t4.total > 0 ? Math.round((t4.ouHits / t4.total) * 100) : 0;
                                   const isSelected = effectiveDateFilter === 4;
@@ -4020,8 +3947,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                                       </div>
                                       <div className="grid grid-cols-3 gap-1 mt-1.5 text-center text-[10px]">
                                         <div className="bg-slate-950/80 p-1 rounded">
-                                          <span className="text-slate-500 block text-[9px]">胜平负</span>
-                                          <span className="font-bold text-emerald-400 font-mono text-xs">{euroRate}%</span>
+                                          <span className="text-slate-500 block text-[9px]">胜平负覆盖</span>
+                                          <span className="font-bold text-emerald-400 font-mono text-xs">{euroRate}</span>
                                         </div>
                                         <div className="bg-slate-950/80 p-1 rounded">
                                           <span className="text-slate-500 block text-[9px]">让球赢盘</span>
@@ -4040,7 +3967,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                                 {(() => {
                                   const effectiveDateFilter = dateGroupStarFilter[group.dateKey] || selectedStarFilter;
                                   const t3 = group.starStats.tier3;
-                                  const euroRate = t3.total > 0 ? Math.round((t3.euroHits / t3.total) * 100) : 0;
+                                  const euroRate = displayRate(t3.euroHits, t3.euroSettled);
                                   const hdcRate = t3.total > 0 ? Math.round((t3.handicapHits / t3.total) * 100) : 0;
                                   const ouRate = t3.total > 0 ? Math.round((t3.ouHits / t3.total) * 100) : 0;
                                   const isSelected = effectiveDateFilter === 3;
@@ -4070,8 +3997,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                                       </div>
                                       <div className="grid grid-cols-3 gap-1 mt-1.5 text-center text-[10px]">
                                         <div className="bg-slate-950/80 p-1 rounded">
-                                          <span className="text-slate-500 block text-[9px]">胜平负</span>
-                                          <span className="font-bold text-emerald-400 font-mono text-xs">{euroRate}%</span>
+                                          <span className="text-slate-500 block text-[9px]">胜平负覆盖</span>
+                                          <span className="font-bold text-emerald-400 font-mono text-xs">{euroRate}</span>
                                         </div>
                                         <div className="bg-slate-950/80 p-1 rounded">
                                           <span className="text-slate-500 block text-[9px]">让球赢盘</span>

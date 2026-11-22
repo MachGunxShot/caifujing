@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, Suspense, lazy } from 'react';
 import { Header } from './components/Header';
 import { MatchInputForm } from './components/MatchInputForm';
 import { ActuarialReport } from './components/ActuarialReport';
@@ -36,7 +36,7 @@ const BatchMatrixDashboard = lazy(() => import('./components/BatchMatrixDashboar
 const ReviewEvolutionView = lazy(() => import('./components/ReviewEvolutionView').then((m) => ({ default: m.ReviewEvolutionView })));
 const ModelKnowledgeBase = lazy(() => import('./components/ModelKnowledgeBase').then((m) => ({ default: m.ModelKnowledgeBase })));
 
-const QUEUE_STORAGE_KEY = 'fortune_actuary_batch_queue_v2';
+import { createQueueWriter, QUEUE_STORAGE_KEY } from './utils/queuePersistence';
 const WORKSPACE_BACKUP_KEY = 'fortune_actuary_user_workspace';
 const MATCH_STORAGE_KEY = 'fortune_actuary_current_match_v2';
 const REPORT_STORAGE_KEY = 'fortune_actuary_current_report_v2';
@@ -45,7 +45,6 @@ const ACTIVE_TAB_STORAGE_KEY = 'fortune_actuary_active_tab_v2';
 // The active queue key is authoritative; the workspace backup is written less often
 // and is only a recovery source when the active key is missing or unreadable.
 const BACKUP_INTERVAL_MS = 5 * 60 * 1000;
-const PERSIST_DEBOUNCE_MS = 400;
 
 const LEGACY_STORAGE_KEYS = [
   'fortune_actuary_batch_queue_v2',
@@ -64,6 +63,7 @@ import { extractLeagueFromText } from './utils/textParser';
  */
 function sanitizeAndRecalibrateQueue(queue: BatchMatchItem[]): BatchMatchItem[] {
   return queue.map((item) => {
+    if ((item.isLocked || item.isReviewed) && item.report) return item;
     // If kickoff time was lost or left as '临场', see if marketStory has the time
     let matchTime = item.data.matchInfo.matchTime;
     if (!matchTime || matchTime === '临场') {
@@ -197,10 +197,10 @@ function syncQueueWithSavedReviews(queue: BatchMatchItem[]): BatchMatchItem[] {
  * Robust loader that searches all historical storage keys to recover user's real analyzed matches,
  * while preventing teaching presets from polluting the user's authentic workspace.
  */
-function loadUserSavedQueue(): BatchMatchItem[] {
+function loadUserSavedQueue(activeRaw: string | null | undefined): BatchMatchItem[] {
   for (const key of LEGACY_STORAGE_KEYS) {
     try {
-      const saved = localStorage.getItem(key);
+      const saved = key === QUEUE_STORAGE_KEY ? activeRaw : localStorage.getItem(key);
       if (saved) {
         const parsed = JSON.parse(saved);
         // An intentionally emptied active queue must stay empty, not be refilled from older keys.
@@ -217,14 +217,7 @@ function loadUserSavedQueue(): BatchMatchItem[] {
               !PRESET_CASES.some((c) => c.id === item.id)
           );
           if (realMatches.length > 0) {
-            const synced = syncQueueWithSavedReviews(realMatches);
-            // Write sanitized state back to storage to clear historical poisoned cache
-            try {
-              localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(synced));
-            } catch (err) {
-              // ignore
-            }
-            return synced;
+            return syncQueueWithSavedReviews(realMatches);
           }
         }
       }
@@ -273,9 +266,13 @@ export default function App() {
   const initialPreset = PRESET_CASES[1]; // 【高息吸筹 / 名气诱导】
 
   // Persistent Batch Queue: load user's real analyzed matches from localStorage!
-  const [batchQueue, setBatchQueue] = useState<BatchMatchItem[]>(() => {
-    return loadUserSavedQueue();
+  const [initialWorkspace] = useState(() => {
+    let raw: string | null | undefined;
+    try { raw = localStorage.getItem(QUEUE_STORAGE_KEY); } catch { /* Storage is unavailable. */ }
+    const queue = loadUserSavedQueue(raw);
+    return { queue, writer: createQueueWriter(queue, raw) };
   });
+  const [batchQueue, setBatchQueue] = useState(initialWorkspace.queue);
   const [storageWarning, setStorageWarning] = useState<string | null>(null);
   const lastBackupAtRef = useRef(0);
 
@@ -346,45 +343,43 @@ export default function App() {
   const [reportMode, setReportMode] = useState<'single' | 'batch'>('single');
   const [calcMode, setCalcMode] = useState<'single' | 'batch'>('single');
 
-  // Auto-persist batchQueue (debounced). The workspace backup doubles storage use, so it is
-  // refreshed at most every few minutes; a failed write is surfaced instead of only logged.
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      try {
-        const json = JSON.stringify(batchQueue);
-        localStorage.setItem(QUEUE_STORAGE_KEY, json);
-        const now = Date.now();
-        if (now - lastBackupAtRef.current >= BACKUP_INTERVAL_MS) {
-          try {
-            localStorage.setItem(WORKSPACE_BACKUP_KEY, json);
-            lastBackupAtRef.current = now;
-          } catch {
-            // The backup is optional: drop it to free room for the authoritative copy.
-            localStorage.removeItem(WORKSPACE_BACKUP_KEY);
-          }
-        }
-        setStorageWarning(null);
-      } catch (e) {
-        console.warn('Failed to persist batchQueue:', e);
-        setStorageWarning('浏览器本地存储已满，最新的批量场次未能保存。请导出备份后清理历史场次或复盘记录，否则刷新页面会丢失本次修改。');
-      }
-    }, PERSIST_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
-  }, [batchQueue]);
-
-  // Flush the debounced write when the tab is closed or hidden, so the last edit is never lost.
   const latestQueueRef = useRef(batchQueue);
-  latestQueueRef.current = batchQueue;
-  useEffect(() => {
-    const flush = () => {
-      try {
-        localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(latestQueueRef.current));
-      } catch {
-        // Quota errors are already surfaced by the debounced writer.
+  useLayoutEffect(() => {
+    latestQueueRef.current = batchQueue;
+    const { writer } = initialWorkspace;
+    const persist = () => {
+      const json = writer.save(localStorage, latestQueueRef.current);
+      if (json === null) return;
+      setStorageWarning(null);
+      if (Date.now() - lastBackupAtRef.current >= BACKUP_INTERVAL_MS) {
+        try {
+          localStorage.setItem(WORKSPACE_BACKUP_KEY, json);
+          lastBackupAtRef.current = Date.now();
+        } catch {
+          localStorage.removeItem(WORKSPACE_BACKUP_KEY);
+        }
       }
     };
+    const flush = async () => {
+      if (!writer.isDirty(latestQueueRef.current)) return;
+      try {
+        // Serialize the version check and write across localhost tabs.
+        if (navigator.locks) await navigator.locks.request(QUEUE_STORAGE_KEY, persist);
+        else persist();
+      } catch (error) {
+        setStorageWarning(error instanceof Error && error.name === 'Error' ? error.message :
+          '队列未保存，请导出本页备份并检查浏览器存储空间。');
+      }
+    };
+    void flush();
     window.addEventListener('pagehide', flush);
     return () => window.removeEventListener('pagehide', flush);
+  }, [batchQueue, initialWorkspace]);
+
+  useEffect(() => {
+    const warn = () => setStorageWarning('复盘档案写入失败。请保留当前页面并检查浏览器存储空间和档案格式。');
+    window.addEventListener('fortune-review-save-error', warn);
+    return () => window.removeEventListener('fortune-review-save-error', warn);
   }, []);
 
   // Switching to (or editing) another match makes a pending AI answer stale: cancel it.
@@ -456,6 +451,7 @@ export default function App() {
     setActiveTab('report');
 
     try {
+      if (localReport.decision.v4Assessment) return;
       const experiencePrompt = getActiveExperiencePromptText();
       const response = await fetch('/api/analyze', {
         method: 'POST',
@@ -574,17 +570,11 @@ export default function App() {
   };
 
   // Image analysis callback
-  const handleImageAnalyzed = (extractedData: FullMatchData | null, aiAnalysis: string, source?: string) => {
-    // The offline placeholder text claims nothing real: don't show it as analysis or
-    // enqueue a copy of the current match as if it had been read from the screenshot.
-    if (source !== 'GEMINI_AI') {
-      alert('大模型暂不可用，截图未能识别。已保留当前盘口数据，可手动录入或稍后重试。');
-      return;
-    }
-    const targetData = extractedData || matchData;
-    setMatchData(targetData);
-    setRawAiText(aiAnalysis);
+  const handleImageAnalyzed = (targetData: FullMatchData, aiAnalysis: string) => {
     const updatedReport = generateActuarialRuleReport(targetData);
+    setMatchData(targetData);
+    const reportAiText = updatedReport.decision.v4Assessment ? '' : aiAnalysis;
+    setRawAiText(reportAiText);
     setReport(updatedReport);
     setActiveTab('report');
 
@@ -594,7 +584,7 @@ export default function App() {
       sourceName: `截图识盘_${targetData.matchInfo.homeTeam}vs${targetData.matchInfo.awayTeam}`,
       data: targetData,
       report: updatedReport,
-      rawAiText: aiAnalysis,
+      rawAiText: reportAiText,
       status: 'done',
       timestamp: Date.now(),
     };
@@ -620,11 +610,11 @@ export default function App() {
   // Explicit handler to import an entire batch queue backup (JSON)
   const handleImportQueue = (imported: BatchMatchItem[]) => {
     if (!Array.isArray(imported) || imported.length === 0) return;
+    const first = imported[0];
+    const firstReport = first.report || generateActuarialRuleReport(first.data);
     setBatchQueue(imported);
-    if (imported[0]?.data) {
-      setMatchData(imported[0].data);
-      setReport(imported[0].report || generateActuarialRuleReport(imported[0].data));
-    }
+    setMatchData(first.data);
+    setReport(firstReport);
   };
 
   // Batch imported callback (Smart Merge with Lock Protection: never overwrites locked/started matches!)
@@ -691,6 +681,8 @@ export default function App() {
             ...m,
             matchInfo: {
               ...m.matchInfo,
+              homeProfile: m.matchInfo.homeProfile ?? prevData.matchInfo.homeProfile,
+              awayProfile: m.matchInfo.awayProfile ?? prevData.matchInfo.awayProfile,
               matchTime: (m.matchInfo.matchTime && !/临场|已完场/.test(m.matchInfo.matchTime))
                 ? m.matchInfo.matchTime
                 : (prevData.matchInfo.matchTime || m.matchInfo.matchTime || '临场'),
@@ -763,7 +755,7 @@ export default function App() {
                 existing.timestamp,
                 existing.review
               );
-              savePostMatchReview(updatedReview);
+              if (!savePostMatchReview(updatedReview)) continue;
             }
           }
 
@@ -982,7 +974,7 @@ export default function App() {
             review = calibrateReviewSalesDate({ ...review, salesDateOverride: item.review.salesDateOverride });
           }
           // Persist into PostMatchReviews storage
-          savePostMatchReview(review);
+          if (!savePostMatchReview(review)) return item;
 
           return {
             ...item,
@@ -1024,12 +1016,6 @@ export default function App() {
     }));
 
     setBatchQueue(updatedQueue);
-    try {
-      localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(updatedQueue));
-    } catch (e) {
-      // ignore
-    }
-
     // Simulate minor async processing for smooth UI feedback
     await new Promise((r) => setTimeout(r, 400));
     setIsBatchAnalyzing(false);

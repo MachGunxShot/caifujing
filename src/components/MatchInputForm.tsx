@@ -55,6 +55,8 @@ export const MatchInputForm: React.FC<MatchInputFormProps> = ({
       ...parsed,
       matchInfo: {
         ...data.matchInfo,
+        ...(parsed.matchInfo?.homeTeam && parsed.matchInfo.homeTeam !== data.matchInfo.homeTeam ? { homeProfile: undefined } : {}),
+        ...(parsed.matchInfo?.awayTeam && parsed.matchInfo.awayTeam !== data.matchInfo.awayTeam ? { awayProfile: undefined } : {}),
         ...(parsed.matchInfo || {}),
       },
       asianHandicap: {
@@ -79,6 +81,7 @@ export const MatchInputForm: React.FC<MatchInputFormProps> = ({
       ...data,
       matchInfo: {
         ...data.matchInfo,
+        ...(field === 'homeTeam' ? {homeProfile: undefined} : field === 'awayTeam' ? {awayProfile: undefined} : {}),
         [field]: value,
       },
     });
@@ -229,6 +232,19 @@ export const MatchInputForm: React.FC<MatchInputFormProps> = ({
               className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-medium"
             />
           </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          {(['homeProfile', 'awayProfile'] as const).map(field => (
+            <label key={field} className="text-xs text-slate-400">
+              {field === 'homeProfile' ? '主队定位' : '客队定位'}
+              <select className="mt-1 w-full rounded bg-slate-950 p-1.5 text-slate-200"
+                value={data.matchInfo[field] || ''} onChange={e => updateMatchInfo(field, e.target.value)}>
+                <option value="">待核实</option><option value="dominant">统治级强队</option>
+                <option value="challenger">新贵 / 黑马</option><option value="ordinary">普通球队</option>
+              </select>
+            </label>
+          ))}
         </div>
 
         <div>

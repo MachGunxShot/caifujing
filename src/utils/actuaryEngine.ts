@@ -1,3 +1,5 @@
+import { assessV4 } from './coreRulesV4';
+import { parseEuroPick } from './euroStatistics';
 import {
   FullMatchData,
   ActuarialMetrics,
@@ -14,8 +16,8 @@ import {
  * Positive (> 0): Away gives handicap, Home receives (e.g. "受半球" -> +0.5, "受球半" -> +1.5)
  * Zero (=== 0): Even / Scratch (e.g. "平手" -> 0)
  */
-export function parseHandicapValue(line: string): number {
-  if (!line) return 0;
+export function parseHandicapValue(line: string, unknownValue = 0): number {
+  if (!line) return unknownValue;
   const cleaned = line.trim();
 
   // Common Chinese football handicap mappings
@@ -44,9 +46,8 @@ export function parseHandicapValue(line: string): number {
     else if (cleaned.includes('平手') || cleaned === '0' || cleaned === '-0' || cleaned === '+0') base = 0;
     else {
     const parsedNum = parseFloat(cleaned);
-    if (!isNaN(parsedNum)) {
-      base = Math.abs(parsedNum);
-    }
+    if (isNaN(parsedNum)) return unknownValue;
+    base = Math.abs(parsedNum);
   }
 
   if (isSuffer) {
@@ -64,8 +65,8 @@ export function parseHandicapValue(line: string): number {
   return -base;
 }
 
-export function parseOverUnderValue(line: string): number {
-  if (!line) return 2.5;
+export function parseOverUnderValue(line: string, unknownValue = 2.5): number {
+  if (!line) return unknownValue;
   const cleaned = line.trim();
 
   // Composite and split over/under lines MUST be parsed before naive parseFloat!
@@ -85,7 +86,7 @@ export function parseOverUnderValue(line: string): number {
   if (cleaned.includes('3')) return 3.0;
   if (cleaned.includes('2.5')) return 2.5;
   if (cleaned.includes('2')) return 2.0;
-  return 2.5;
+  return unknownValue;
 }
 
 export function computeActuarialMetrics(data: FullMatchData): ActuarialMetrics {
@@ -844,6 +845,28 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
     }
   }
 
+  const v4 = assessV4(data, parseHandicapValue(data.asianHandicap.earlyHandicap, NaN), parseHandicapValue(lateHandicap, NaN),
+    parseOverUnderValue(data.overUnder.earlyLine, NaN), parseOverUnderValue(data.overUnder.lateLine, NaN));
+  let v4Assessment: string | undefined;
+  if (v4.notes.length) {
+    starRating = Math.min(starRating, 3);
+    v4Assessment = 'v4 临场观察：' + v4.notes.join(' ');
+  } else if ((starRating === 5 || (starRating >= 4 && primaryModel.model === 'POSITIVE_CONTROL')) && !v4.confirmed) {
+    starRating = 4;
+    v4Assessment = 'v4 暂缓升五星：需让步方欧赔走低、亚盘同步支持且大小球未下调。单凭低赔不足以升档。';
+  }
+  if (v4Assessment) {
+    confidenceReason = v4Assessment;
+    firstImpression = primaryModel.title + '。' + v4Assessment;
+    threeDimLieDetection = '早晚亚盘 ' + data.asianHandicap.earlyHandicap + ' → ' + lateHandicap
+      + '，大小球 ' + data.overUnder.earlyLine + ' → ' + data.overUnder.lateLine + '。' + v4Assessment;
+    euroPick = euroPick.replace(/\s*[（(]稳[胆选][）)]/g, '');
+    finalDirection = '观察方向：' + euroPick;
+    finalDirectionDetail = '保留胜平负方向供赛后对照，本场不进入核心组合。';
+    riskWarning = v4Assessment;
+  }
+  const coreEligible = !v4Assessment && v4.confirmed && starRating >= 4 && primaryModel.model === 'POSITIVE_CONTROL';
+
   predictedScores = calculateConsistentPredictedScores(
     euroPick,
     handicapPick,
@@ -861,8 +884,11 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
       riskWarning,
     },
     decision: {
+      coreEligible,
+      v4Assessment,
       starRating,
       euroPick,
+      euroOutcomes: parseEuroPick(euroPick),
       handicapPick,
       overUnderPick,
       predictedScores:
@@ -1138,14 +1164,20 @@ export function compareEarlyVsLateConfidence(
       ? `欧赔坚挺维持 ${lateGivingEuro.toFixed(2)}`
       : `欧赔让步方不降反升 (+${givingEuroDiff.toFixed(2)})`;
 
-  const detailedExplanation =
+  let detailedExplanation =
     shiftType === 'INCREASED'
       ? lineStepDiff > 0
-        ? `【《财富经》临场升盘阻上穿盘解析】：本场比赛在早盘确认双方初始基石盘口后，临场晚盘大庄坚决采取“升盘阻上 + 官方砸盘防大胜”的主动风控策略。盘口由早盘 ${earlyHandicap} 连跨 ${lineStepDiff} 档强升至 ${data.asianHandicap.lateHandicap}，通过拔高赢盘门槛（净胜2球输一半甚至全输）有效过滤跟风筹码。水位重置在 ${lateGivingOdds.toFixed(2)} 健康中水区间（经换水补偿折算后实际压缩赔付空间），配套${euroDissectionText}，去水隐含胜率攀升至 ${lateReport.metrics.lateHomeProb.toFixed(1)}%。机构“宁可主动拔高门槛也不承担深盘穿盘高额赔付”的底牌彻底暴露，晚盘较早盘信心显著强化，推荐方向作为实战五星顶级核心稳胆！`
+        ? `【《财富经》临场升盘阻上穿盘解析】：本场比赛在早盘确认双方初始基石盘口后，临场晚盘大庄坚决采取“升盘阻上 + 官方砸盘防大胜”的主动风控策略。盘口由早盘 ${earlyHandicap} 连跨 ${lineStepDiff} 档强升至 ${data.asianHandicap.lateHandicap}，通过拔高赢盘门槛（净胜2球输一半甚至全输）有效过滤跟风筹码。水位重置在 ${lateGivingOdds.toFixed(2)} 健康中水区间（经换水补偿折算后实际压缩赔付空间），配套${euroDissectionText}，去水隐含胜率攀升至 ${lateReport.metrics.lateHomeProb.toFixed(1)}%。机构“宁可主动拔高门槛也不承担深盘穿盘高额赔付”的底牌彻底暴露，晚盘较早盘信心显著强化，当前记录评级为 ${lateStars} 星。`
         : `【《财富经》临场信心增加解析】：本场比赛在早盘确认双方初始实力盘后，临场晚盘资金真实注入阶段，机构并未通过升盘升水制造虚幻热度，而是欧亚联动持续向下封锁赔付空间。让步方水位由 ${earlyGivingOdds.toFixed(2)} 降至 ${lateGivingOdds.toFixed(2)}，${euroDissectionText}，去水隐含胜率提升至 ${lateReport.metrics.lateHomeProb.toFixed(1)}%。机构“宁可不赚钱也不承担高赔付风险”的底牌彻底暴露，临场信心较早盘显著提升，推荐方向可重点作为实战核心胆码。`
       : shiftType === 'DECREASED'
       ? `【《财富经》临场信心衰减避坑提示】：对比早盘初盘，晚盘临场出现明显背离。让步方在名气热度加持下，机构非但没有压低水位封锁赔付，反而在亚指端维持 ${lateGivingOdds.toFixed(2)} 高水甚至异常升水（水位差 +${rawGivingWaterDiff.toFixed(2)}），${euroDissectionText}。这完全违背了“降低赔付”的真实避险逻辑，属于典型的高息吸筹或让步乏力。早盘建立的信心在晚盘被彻底证伪，必须降低投资等级或果断反选下盘/设防平局！`
       : `【《财富经》临场盘面平稳自洽解析】：早盘初设基石盘口与晚盘临场变轨保持高度一致，欧赔三项与亚盘水位均在 ±0.03 的常规调仓容差范围内，未出现诱盘或急剧退热异动。早盘研判的五项核心决策依然成立，可按既定方案执行。`;
+
+  if (lateReport.decision.v4Assessment) {
+    summaryTitle = '临场复核 · ' + lateStars + ' 星观察';
+    detailedExplanation = lateReport.decision.v4Assessment;
+    keyReasons.unshift(detailedExplanation);
+  }
 
   return {
     shiftType,

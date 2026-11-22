@@ -77,3 +77,25 @@ test('a review with an unreadable score keeps its stored evaluation instead of b
   assert.equal(loaded.outcomeEvaluation.handicapHit, true);
   assert.equal(loaded.outcomeEvaluation.modelVerified, true);
 });
+
+test('one invalid archive row does not hide or overwrite valid history on the next save', () => {
+  const original = reviewWithScore(1, 0, 'original');
+  const next = reviewWithScore(2, 0, 'another');
+  next.matchData.matchInfo.homeTeam = '另一主队';
+  const broken = { id: 'legacy-incomplete', matchData: null };
+  memoryStorage.setItem(REVIEWS_KEY, JSON.stringify([null, original, broken]));
+  assert.deepEqual(getPostMatchReviews().map(r => r.id), ['original']);
+  assert.equal(savePostMatchReview(next), true);
+  assert.deepEqual(getPostMatchReviews().map(r => r.id), ['another', 'original']);
+  const rows = JSON.parse(memoryStorage.getItem(REVIEWS_KEY)!);
+  assert.deepEqual(rows.slice(-2), [null, broken]);
+});
+
+test('unreadable JSON or an unexpected root cannot be replaced by a normal save', () => {
+  const review = reviewWithScore(1, 0);
+  for (const raw of ['{', '{}', 'null', '']) {
+    memoryStorage.setItem(REVIEWS_KEY, raw);
+    assert.equal(savePostMatchReview(review), false);
+    assert.equal(memoryStorage.getItem(REVIEWS_KEY), raw);
+  }
+});

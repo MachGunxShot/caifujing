@@ -60,6 +60,7 @@ import { generateActuarialRuleReport, compareEarlyVsLateConfidence } from '../ut
 import { PRESET_CASES } from '../utils/presetCases';
 import { saveParlayReview, evaluateParlaySettlement, getPostMatchReviews } from '../utils/experienceStore';
 import { calculateSalesDate, parseKickoffDetails, isMatchBeforeOrAtCutoff, getSalesDayMinuteOffset } from '../utils/salesDayUtils';
+import { parseQueueBackup } from '../utils/importValidation';
 import { MarkdownView } from './MarkdownView';
 import { HandicapOddsDistributionChart } from './HandicapOddsDistributionChart';
 
@@ -794,7 +795,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
   const parlayRecommendation = useMemo(() => {
     // Select candidates from all processedItems (independent of table filter chips)
     // sorted by stars desc, model certainty rank, then kickoff time
-    const allCandidates = [...processedItems].filter((p) => p.stars >= 4);
+    const allCandidates = processedItems.filter(p => p.dec.coreEligible === true && !p.item.isReviewed && !p.item.finalScore);
     allCandidates.sort((a, b) => {
       const sDiff = b.stars - a.stars;
       if (sDiff !== 0) return sDiff;
@@ -821,7 +822,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
       match1: p1,
       match2: p2,
       title: '《财富经》今日核心稳胆 · 2串1 实战方案',
-      description: '基于【星级最高 + 机构正向控赔避险 + 胆平/受让稳盘】精选的双胆组合，兼顾高胜率与风控防守',
+      description: '两场均通过 v4 正向控赔复核，按星级排序。组合回报仍取决于实际赔率和赛果',
       comboText: `【2串1实战方案】${p1.item.data.matchInfo.homeTeam} (${p1.dec.handicapPick} / ${p1.dec.euroPick}) × ${p2.item.data.matchInfo.homeTeam} (${p2.dec.handicapPick} / ${p2.dec.euroPick})`,
     };
   }, [processedItems]);
@@ -1026,17 +1027,13 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
 
   const handleImportQueueJson = () => {
     const input = prompt('请粘贴先前备份导出的工作台赛事 JSON 数据：');
-    if (!input) return;
+    if (!input || !onImportQueue) return;
     try {
-      const parsed = JSON.parse(input);
-      if (Array.isArray(parsed) && parsed.length > 0 && onImportQueue) {
-        onImportQueue(parsed);
-        alert(`成功恢复导入 ${parsed.length} 场赛事！`);
-      } else {
-        alert('未能在输入的文本中解析出有效的赛事数组。');
-      }
-    } catch (e: any) {
-      alert(`JSON 解析失败: ${e?.message || '格式错误'}`);
+      const items = parseQueueBackup(input);
+      onImportQueue(items);
+      alert(`成功恢复导入 ${items.length} 场赛事！`);
+    } catch (error) {
+      alert('无法恢复备份：' + (error instanceof Error ? error.message : '格式错误'));
     }
   };
 
@@ -2176,7 +2173,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
             </div>
           </div>
           <p className="text-[11px] text-slate-400 leading-relaxed pt-1">
-            💡 <strong>风控心法</strong>：{parlayRecommendation.description}。两场赛事已独立精算测谎，有效规避诱上陷阱。
+            💡 <strong>风控心法</strong>：{parlayRecommendation.description}。
           </p>
         </div>
       )}

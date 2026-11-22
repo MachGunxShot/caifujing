@@ -1,3 +1,5 @@
+import { V4_RED_LINES } from './coreRulesV4';
+import { decisionOutcomes, parseEuroPick, readStoredScore } from './euroStatistics';
 import {
   FullMatchData,
   AnalysisReportResult,
@@ -18,135 +20,146 @@ const PARLAY_REVIEWS_STORAGE_KEY = 'fortune_actuary_parlay_reviews_v1';
 export const SEED_RULES: EvolvedExperienceRule[] = [
   {
     id: 'rule-model-POSITIVE_CONTROL',
-    title: '【极限榨水 / 正向控赔法则】（正路稳胆核心）',
+    title: '【极限榨水 / 正向控赔】',
     category: 'POSITIVE_CONTROL',
     leagueScope: '全联赛通用 / 欧冠 / 五大联赛',
     ruleContent:
-      '【操盘特征】：主流欧指胜赔持续下调；亚指维持原盘或强力升盘，同时将让球方（上盘）水位/贴水砸至极限低水区间（低于 1.80）。\n【大庄底牌】：机构极度看好让球方打出，为了防止巨量市场资金涌入造成毁灭性派彩，机构通过提高赢盘门槛（升盘）并将利润空间强力压缩到极限的“蚊子肉”极低水。这是机构真金白银的避险动作，实选让球正路打出，做 5 星稳胆核心。天上不会掉馅饼，超低水才是机构最诚实的投降书。',
+      '先确认同一让步方胜赔走低，再看亚盘升深或同盘降水，以及大小球有无下调。盘口变化互相支持时才保留五星资格。低赔率本身只能说明回本所需命中率高，不能证明有正回报。',
     sourceMatch: 'FC首尔 3-1 浦项制铁 / 罗森博格 4-0 腓特烈斯塔 / 曼城 2-0 埃弗顿 / 法国 4-1 比利时 (实盘验证)',
     createdAt: '2026-09-15',
     isActive: true,
-    hitCount: 26,
+    hitCount: 0,
   },
   {
     id: 'rule-model-HIGH_INTEREST_TRAP',
-    title: '【高息吸筹 / 名气诱导法则】（高危杀猪盘避坑防诱）',
+    title: '【高息吸筹 / 名气诱导】',
     category: 'HIGH_INTEREST_TRAP',
     leagueScope: '全联赛通用 / 豪门联赛 / 热门题材赛事',
     ruleContent:
-      '【操盘特征】：某队名气大或带有极强抢分题材（如连胜、争冠、保级等），机构顺应题材砸低欧赔或在亚指强行升盘制造让步坚挺假象，但升盘后让球方水位死死卡在 2.00 ~ 2.08 超高水/满水区间，公开派发高息福利。\n【大庄底牌】：机构明知强队有硬伤（如锋无力或对方有反击神锋），利用强队名气拉力强行做局，用高回报率勾引散户资金博上盘。大热必死，天上不会掉无缘无故的馅饼，买得太舒服必定是陷阱，坚决去下盘或受让防冷。',
+      '升盘后让步方持续处于高水，且胜赔同步走高，记录为热门方向的反证。升盘自然换水须与同盘口比较。防冷双选按覆盖两项记录，每项使用一半模拟投入。',
     sourceMatch: '江原FC 0-3 富川1995 / 巴西 1-2 挪威 / 皇家马德里 1-1 赫塔菲 (实盘验证)',
     createdAt: '2026-09-18',
     isActive: true,
-    hitCount: 23,
+    hitCount: 0,
   },
   {
     id: 'rule-model-AVALANCHE_RETREAT',
-    title: '【雪崩退盘 / 退热示弱法则】（真实利空 vs 暴力洗盘双轨辨析）',
+    title: '【雪崩退盘 / 退热示弱】',
     category: 'AVALANCHE_RETREAT',
     leagueScope: '主流透明联赛 / 杯赛',
     ruleContent:
-      '【操盘特征】：临场阶段盘口出现剧烈退阶（如半一退平半，平半退平手），让球方赔率暴涨、水位反弹。\n【大庄底牌】：双轨研判：\n1. 常规真实利空：透明联赛中，一致退盘 90% 以上是因为主力伤停、内讧或深度轮换等核心利空爆出，机构妥协退盘避险。跟退盘者生，盲抄底者亡，坚决去下盘客队不败。\n2. 极端暴力洗盘：若豪门主场无明显利空却反常退盘送高水，营造“强队不稳”恐慌感，则是机构洗盘赶筹码去下盘，强队反而低调打出。',
+      '区分退盘伴随升水与换盘后的自然调价；主力伤停或轮换需要独立信息确认。仅有盘口变化时将原因记为待核实，不能推定球队内幕。',
     sourceMatch: '浦项制铁 0-1 金泉尚武 / 光州FC 1-1 金泉尚武 / 利物浦 1-2 纽卡斯尔联 (实盘验证)',
     createdAt: '2026-09-20',
     isActive: true,
-    hitCount: 18,
+    hitCount: 0,
   },
   {
     id: 'rule-model-LOW_DRAW_DEFENSE',
-    title: '【平赔低洼 / 平赔排雷法则】（精准胆平与双平设防）',
+    title: '【平赔低洼 / 防平】',
     category: 'LOW_DRAW_DEFENSE',
     leagueScope: '欧国联 / 杯赛 / 均势联赛 / 国际赛',
     ruleContent:
-      '【操盘特征】：欧指胜平负赔率中，平局赔率被各大机构死死按在罕见超低洼区间（百家均平低于 3.00，竞彩官方甚至下杀至 2.58 ~ 2.75 极度防御区），胜负盘为平手或平半浅盘两头对冲。\n【大庄底牌】：机构放弃主客胜两头防守，用超低平赔封死平局退路。这绝非诱平，而是风控模型在严防平局打出的真实动作，平局打出通吃两头盘口。平赔破 3.00 为最高预警红线，实战首选精准胆平（1-1、0-0），次选双平防守。',
+      '平赔低于 3.00 且两队让步接近时，核对早晚平赔与进球线。赛前明确记录单挑平局或胜平、平负双选，复盘分别计算单选命中与双选覆盖。',
     sourceMatch: '普拉腾斯 1-1 科金博联合 / 赫塔费 1-1 维戈塞尔塔 / 拉齐奥 1-1 佛罗伦萨 (实盘验证)',
     createdAt: '2026-09-22',
     isActive: true,
-    hitCount: 21,
+    hitCount: 0,
   },
   {
     id: 'rule-model-SHALLOW_FULL_WATER',
-    title: '【浅盘满水死亡法则】（强队让步无力与下盘反杀）',
+    title: '【浅盘满水 / 让步不足】',
     category: 'SHALLOW_FULL_WATER',
     leagueScope: '常规联赛主客场 / 名气强队',
     ruleContent:
-      '【操盘特征】：传统强队在主场面对中下游球队仅能开出平手或平/半浅盘，且主队水位长期处于 2.00 以上满水高危区甚至临场退盘。\n【大庄底牌】：主力资金对强队赢球毫无信心，优势被机构完全无视，阻力几乎为零。机构利用满水制造“强队不败、赢半博全、高赔暴利”的虚假舒适感，实则是大门敞开收割接盘筹码。凡是买得太舒服的盘 99% 是送命题，下盘打出是大概率事件，坚决走下盘。',
+      '浅让步伴随持续高水可削弱对让步方的支持。核对早晚盘与两侧胜赔；方向分歧时保留观察。受让赢盘与胜平负不败分别结算。',
     sourceMatch: '安德莱赫特 3-1 哈马比 / 清水心跳 1-2 柏太阳神 / 多特蒙德 1-2 波鸿 (实盘验证)',
     createdAt: '2026-09-25',
     isActive: true,
-    hitCount: 19,
+    hitCount: 0,
   },
   {
     id: 'rule-goals-detector-1',
-    title: '【大小球联动测谎·一】：深让步（-1.25+）+ 浅大小球（<=2.25）卡盘小胜',
+    title: '【深让步与低进球线】',
     category: 'POSITIVE_CONTROL',
     leagueScope: '全部主流联赛',
     ruleContent:
-      '【盘面特征】：让步方让球深邃（-1.25、-1.5 或更深），但大小球进球数盘口反常压制在 2.25/2.5 极浅界线。\n【测谎判定】：强队破门乏力或战术重在控场小胜，大胜穿盘风险极低。机构严防强队控场小胜，强烈指向 1-0、2-0“经济型赢球”。大球为毒药诱饵，首选小球为稳胆，亚指警惕赢球输盘或卡盘走水。',
+      '让步达到 1.25 球且进球线不高于 2.25 时，区分赢球、小胜走盘与穿盘。记录两个市场各自的赛前方向和赔率。',
     sourceMatch: '巴黎圣日耳曼 2-0 朗斯 / 尤文图斯 1-0 恩波利 (实盘验证)',
     createdAt: '2026-09-28',
     isActive: true,
-    hitCount: 16,
+    hitCount: 0,
   },
   {
     id: 'rule-goals-detector-2',
-    title: '【大小球联动测谎·二】：浅让步（平手/平半）+ 深大小球（>=2.75）对攻互爆',
+    title: '【浅让步与高进球线】',
     category: 'GENERAL',
     leagueScope: '进球活跃型联赛 / 德甲 / 荷甲 / 英超',
     ruleContent:
-      '【盘面特征】：胜负盘让步虚无仅开平手或平半浅盘，但大小球被暴力拉深至 2.75 / 3.0 / 3.25 巨型高位。\n【测谎判定】：两队防线形同虚设，战术大开大合极度对攻。机构真实底牌引导对攻格局，不用纠结胜负两头归属，直接追大球（对捅互爆格局，警惕 2-2、2-3、3-1 赛果）！',
+      '平手或平半配合 2.75 及以上进球线时，记录可能的高进球环境。结合早晚进球线和大小两侧水位核实，单独复盘大小球。',
     sourceMatch: '布莱顿 2-3 托特纳姆热刺 / 霍芬海姆 3-2 不莱梅 (实盘验证)',
     createdAt: '2026-09-29',
     isActive: true,
-    hitCount: 15,
+    hitCount: 0,
   },
   {
     id: 'rule-goals-detector-3',
-    title: '【大小球联动测谎·三】：大球题材 + 死卡 2.5 仅降水不升盘双向收割',
+    title: '【大球降水未升线】',
     category: 'SPECIAL_SITUATION',
     leagueScope: '热门对攻赛事 / 杯赛淘汰赛',
     ruleContent:
-      '【盘面特征】：两队历史交锋频出大球题材拉满，但临场盘口纹丝不动死卡 2.5 浅盘不升 2.75，仅做微降水利诱。\n【测谎判定】：典型的假大球双向收割陷阱！机构用降水舒适感吸引大球资金，实则防线紧缩，大球与热门方必死，测谎判定反向防小球与冷门下盘。',
+      '大球水位下调但进球线停在 2.5 时，记录价格变化与盘口变化的背离；不得仅凭大球降水推断热门方能打穿。',
     sourceMatch: '拜仁慕尼黑 1-0 勒沃库森 / 曼联 1-1 切尔西 (实盘验证)',
     createdAt: '2026-09-30',
     isActive: true,
-    hitCount: 13,
+    hitCount: 0,
   },
   {
     id: 'rule-workflow-three-steps',
-    title: '【看盘三步工作流与临场速查流程】',
+    title: '【v4 三步研判】',
     category: 'GENERAL',
     leagueScope: '全赛事通用操作规程',
     ruleContent:
-      '【三步工作流标准】：\n1. 第一步【锁定初始实力盘】：确定两队身价、排名、交锋与战意基准线，寻找早盘让步与欧赔的初始偏差，看穿机构造势意图。\n2. 第二步【观察欧亚联动变轨】：临场 1~2 小时资金真实注入后，交叉校验欧亚变轨一致性，判定属于正向控赔、高息诱上还是退盘洗盘。\n3. 第三步【大小球三维交叉验证】：对照进球数盘口验证让步真伪，一剑封喉确定最终方向与精算比分。',
+      '保存初盘、临场盘及球队定位；逐项核对同一方的欧赔、亚盘与大小球；先检查临场红线，再冻结赛前方向和星级。回看历史时区分原预测与事后重算。',
     sourceMatch: '《财富经》全流程手操复盘验证法',
     createdAt: '2026-09-10',
     isActive: true,
-    hitCount: 28,
+    hitCount: 0,
   },
   {
     id: 'rule-risk-management',
-    title: '【资金管理与生存风控法则】（长期盈利生命线）',
+    title: '【组合风险与等额回报】',
     category: 'GENERAL',
     leagueScope: '全投注生存风控底线',
     ruleContent:
-      '【生存法则三纪律】：\n1. 拒绝零容错的长串：5 串 1、6 串 1 容错率为零，极易在最后关头遭遇大庄的“妖盘”杀局。\n2. 成熟方案重在分仓与容错：以榨水控赔作为“2 串 1 稳胆基石”锁定基本收益；运用 M 串 N 组合（如 5 串 16、6 串 15）容错 1~2 场，遭遇黑天鹅依然保本盈利。\n3. 把子弹留给确定性：只下注符合《财富经》正向防范模型的比赛，不买就是最致命的武器，保本优先！',
+      '仅把已通过盘口交叉核对的正向控赔场次列入核心二串一。五串一及更长的单线组合，一场失准即可全损。单场模拟按总投入 1 单位结算，双选平分，不把覆盖率当作回报率。',
     sourceMatch: '《财富经》资金管理与分仓操盘纪律',
     createdAt: '2026-09-05',
     isActive: true,
-    hitCount: 32,
+    hitCount: 0,
   },
   {
     id: 'rule-philosophy-core',
-    title: '《财富经》核心看盘哲学与四大铁律',
+    title: '【赔率、证伪与验证】',
     category: 'GENERAL',
     leagueScope: '全局足彩量化精算心法',
     ruleContent:
-      '【四大核心哲学铁律】：\n1. 数据是流动的，人性是恒定的：看盘本质是利用基本面寻找盘口偏差，研判机构是降低赔付（真实防范）还是利用题材出货（假局诱导）。\n2. 早盘看意图，晚盘看真实风控：早盘造势预谋，晚盘赛前 1~2 小时资金注入后的变轨才是机构为了不赔钱做出的最终避险调仓。\n3. 永远学会“证伪”，而非“自我证明”：对比早晚盘时，切忌先入为主找理由支撑早盘判断，而要用晚盘的剧烈变水、反向退盘去证伪早盘逻辑。\n4. 天上不会掉无缘无故的馅饼：凡是让散户在心理上觉得“买得太舒服、回报率过高、顺理成章”的盘面，99% 都是机构精心布置的深水炸弹。不买即是致命武器！',
+      '赔率体现市场定价，星级表示规则吻合程度。用赛前记录与后来比赛检验表现，按赔率段比较同组热门基准，同时报告样本数、胜平负覆盖和净回报。不要把固定置信分当作已测胜率。',
     sourceMatch: '《财富经》终极手操指南与系统心法',
     createdAt: '2026-09-01',
     isActive: true,
-    hitCount: 45,
+    hitCount: 0,
+  },
+  {
+    id: 'rule-risk-v4-red-lines',
+    title: '【v4 临场四条红线】',
+    category: 'GENERAL',
+    leagueScope: '单场复核 / 组合筛选',
+    ruleContent: V4_RED_LINES.join('\n'),
+    sourceMatch: '《财富经》v4 手册 · 临场红线',
+    createdAt: '2026-11-23',
+    isActive: true,
+    hitCount: 0,
   },
 ];
 
@@ -159,6 +172,10 @@ export function getTargetMasterRuleId(
   content?: string
 ): string {
   const text = `${category || ''} ${title || ''} ${content || ''}`.toUpperCase();
+
+  const modelId = 'rule-model-' + category;
+  if (SEED_RULES.some(rule => rule.id === modelId)) return modelId;
+  if (text.includes('临场红线') || text.includes('四条红线')) return 'rule-risk-v4-red-lines';
 
   // 1. Goals Detector Matrix
   if (text.includes('GOALS') || text.includes('大小球') || text.includes('进球数') || text.includes('测谎')) {
@@ -228,6 +245,7 @@ export function consolidateRulesToCoreMaster(rules: EvolvedExperienceRule[]): Ev
         ...existing,
         hitCount: Math.max(existing.hitCount || 0, r.hitCount || 0),
         isActive: r.isActive ?? existing.isActive,
+        sourceMatch: r.sourceMatch || existing.sourceMatch,
       });
       continue;
     }
@@ -322,23 +340,11 @@ export function getExperienceRules(): EvolvedExperienceRule[] {
     if (Array.isArray(parsed)) {
       // Always guarantee consolidation so rules are clean and never bloated into 60 matches
       const consolidated = consolidateRulesToCoreMaster(parsed);
-      if (
-        consolidated.length !== parsed.length ||
-        parsed.some(
-          (p) =>
-            p &&
-            p.id &&
-            !p.id.startsWith('rule-model-') &&
-            !p.id.startsWith('manual-') &&
-            p.id !== 'rule-goals-detector-1' &&
-            p.id !== 'rule-philosophy-core'
-        )
-      ) {
-        saveExperienceRules(consolidated);
-      }
       const json = JSON.stringify(consolidated);
-      const stored = localStorage.getItem(RULES_STORAGE_KEY);
-      if (stored) rulesReadCache = { raw: stored, json };
+      if (json !== JSON.stringify(parsed)) {
+        try { localStorage.setItem(RULES_STORAGE_KEY, json); } catch { /* Keep current rules available in memory. */ }
+      }
+      rulesReadCache = { raw: localStorage.getItem(RULES_STORAGE_KEY) ?? raw, json };
       return JSON.parse(json);
     }
     return SEED_RULES;
@@ -991,7 +997,7 @@ export function repairInconsistentLanguageRules(): {
         }
       }
       if (revChanged && typeof localStorage !== 'undefined') {
-        localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(storedReviews));
+        writeReviewArchive(storedReviews);
       }
     } catch (e) {
       // ignore
@@ -1456,7 +1462,7 @@ export function getActiveExperiencePromptText(): string {
   if (activeRules.length === 0) return '';
 
   return `
-【《财富经》实战复盘自我进化法则库（已吸纳 ${activeRules.length} 条经过实战检验的核心经验）】：
+【《财富经》实战复盘自我进化法则库（已吸纳 ${activeRules.length} 条已启用法则，案例次数不代表命中率）】：
 ${activeRules
   .map(
     (r, i) =>
@@ -1472,16 +1478,12 @@ ${activeRules
  */
 // Same idea as rulesReadCache: recalibrating every review on each of the dozens of
 // reads per interaction is wasted work once the stored archive is already calibrated.
-let reviewsReadCache: { raw: string; json: string } | null = null;
-
-/** Score of a stored review, or null when it cannot be read (never guess 0-0). */
-function readStoredScore(rev: PostMatchReview): { home: number; away: number } | null {
-  if (typeof rev.actualHomeScore === 'number' && typeof rev.actualAwayScore === 'number') {
-    return { home: rev.actualHomeScore, away: rev.actualAwayScore };
-  }
-  const m = (rev.actualScore || '').match(/^\s*(\d{1,2})\s*[-:：]\s*(\d{1,2})\s*$/);
-  return m ? { home: Number(m[1]), away: Number(m[2]) } : null;
+interface ReviewArchive {
+  reviews: PostMatchReview[];
+  unreadable: unknown[];
+  changed: boolean;
 }
+let reviewsReadCache: { raw: string; json: string } | null = null;
 
 /** One match per sales day: the score is deliberately not part of the key, so a corrected score replaces the old entry. */
 function reviewMatchKey(r: PostMatchReview): string {
@@ -1490,100 +1492,114 @@ function reviewMatchKey(r: PostMatchReview): string {
   return home && away ? `${home}_vs_${away}_${r.salesDate || ''}` : `id:${r.id}`;
 }
 
+function calibrateStoredReview(rev: PostMatchReview) {
+  if (!rev?.id || !rev.matchData?.matchInfo || !rev.priorReport || !rev.outcomeEvaluation) {
+    throw new Error('复盘记录缺少必要字段');
+  }
+  let changed = false;
+  const cal = calibrateReviewSalesDate({ ...rev, outcomeEvaluation: { ...rev.outcomeEvaluation } });
+  if (cal.salesDate !== rev.salesDate || cal.kickoffTime !== rev.kickoffTime) {
+    changed = true;
+  }
+
+  // Ensure scoreHit boolean is accurately evaluated
+  if (cal.outcomeEvaluation && typeof cal.outcomeEvaluation.scoreHit !== 'boolean') {
+    const predicted = cal.priorReport?.decision?.predictedScores || [];
+    cal.outcomeEvaluation.scoreHit = predicted.includes(cal.actualScore);
+    changed = true;
+  }
+
+  // Re-evaluate euroHit, handicapHit, overUnderHit, and modelVerified with latest precise actuarial logic
+  const storedScore = readStoredScore(cal);
+  if (cal.matchData && cal.priorReport && cal.outcomeEvaluation && storedScore) {
+    const hScore = storedScore.home;
+    const aScore = storedScore.away;
+    const goalDiff = hScore - aScore;
+    const actualEuroOutcome = goalDiff > 0 ? 'WIN' : goalDiff === 0 ? 'DRAW' : 'LOSS';
+
+    const newEuroHit = decisionOutcomes(cal.priorReport.decision).includes(actualEuroOutcome);
+    const hdcRes = evaluateHandicapDetailedOutcome(
+      cal.matchData,
+      cal.priorReport,
+      hScore,
+      aScore
+    );
+    const newOverUnderHit = evaluateOverUnderHit(
+      cal.matchData.overUnder.lateLine,
+      cal.priorReport.decision?.overUnderPick || '',
+      hScore,
+      aScore
+    );
+    const newModelVerified = newEuroHit && hdcRes.hit;
+
+    if (
+      cal.outcomeEvaluation.euroHit !== newEuroHit ||
+      cal.outcomeEvaluation.handicapHit !== hdcRes.hit ||
+      cal.outcomeEvaluation.handicapDetail !== hdcRes.detail ||
+      cal.outcomeEvaluation.overUnderHit !== newOverUnderHit ||
+      cal.outcomeEvaluation.modelVerified !== newModelVerified
+    ) {
+      changed = true;
+    }
+
+    cal.outcomeEvaluation.euroHit = newEuroHit;
+    cal.outcomeEvaluation.handicapHit = hdcRes.hit;
+    cal.outcomeEvaluation.handicapDetail = hdcRes.detail;
+    cal.outcomeEvaluation.handicapDetailLabel = hdcRes.detailLabel;
+    cal.outcomeEvaluation.overUnderHit = newOverUnderHit;
+    cal.outcomeEvaluation.modelVerified = newModelVerified;
+  }
+  return { review: cal, changed };
+}
+
+function readReviewArchive(raw: string | null): ReviewArchive {
+  if (raw === null) return { reviews: [], unreadable: [], changed: false };
+  if (reviewsReadCache?.raw === raw) return JSON.parse(reviewsReadCache.json);
+  const rows = JSON.parse(raw);
+  if (!Array.isArray(rows)) throw new Error('复盘档案格式错误');
+  const archive: ReviewArchive = { reviews: [], unreadable: [], changed: false };
+  const seen = new Set<string>();
+  for (const row of rows) {
+    try {
+      const { review, changed } = calibrateStoredReview(row);
+      const key = reviewMatchKey(review);
+      if (seen.has(key)) {
+        archive.changed = true;
+        continue;
+      }
+      seen.add(key);
+      archive.reviews.push(review);
+      archive.changed ||= changed;
+    } catch {
+      archive.unreadable.push(row);
+    }
+  }
+  reviewsReadCache = { raw, json: JSON.stringify(archive) };
+  return archive;
+}
+
+// Keep unrecognized historical rows alongside the valid rows on every ordinary write.
+// Parsing must succeed before replacing an archive, even when the caller supplies its own list.
+function writeReviewArchive(reviews: PostMatchReview[], archive = readReviewArchive(localStorage.getItem(REVIEWS_STORAGE_KEY))) {
+  localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify([...reviews, ...archive.unreadable]));
+}
+
 export function getPostMatchReviews(): PostMatchReview[] {
+  if (typeof localStorage === 'undefined') return [];
   try {
-    if (typeof localStorage === 'undefined') return [];
     const raw = localStorage.getItem(REVIEWS_STORAGE_KEY);
-    if (!raw) return [];
-    if (reviewsReadCache && reviewsReadCache.raw === raw) {
-      return JSON.parse(reviewsReadCache.json);
-    }
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      const seen = new Set<string>();
-      const deduplicated: PostMatchReview[] = [];
-
-      let hasCalibrationChange = false;
-      for (const rev of parsed) {
-        const cal = calibrateReviewSalesDate(rev);
-        if (cal.salesDate !== rev.salesDate || cal.kickoffTime !== rev.kickoffTime) {
-          hasCalibrationChange = true;
-        }
-
-        // Ensure scoreHit boolean is accurately evaluated
-        if (cal.outcomeEvaluation && typeof cal.outcomeEvaluation.scoreHit !== 'boolean') {
-          const predicted = cal.priorReport?.decision?.predictedScores || [];
-          cal.outcomeEvaluation.scoreHit = predicted.includes(cal.actualScore);
-        }
-
-        // Re-evaluate euroHit, handicapHit, overUnderHit, and modelVerified with latest precise actuarial logic
-        const storedScore = readStoredScore(cal);
-        if (cal.matchData && cal.priorReport && cal.outcomeEvaluation && storedScore) {
-          const hScore = storedScore.home;
-          const aScore = storedScore.away;
-          const goalDiff = hScore - aScore;
-          const actualEuroOutcome = goalDiff > 0 ? 'WIN' : goalDiff === 0 ? 'DRAW' : 'LOSS';
-
-          const newEuroHit = evaluateEuroHit(
-            cal.priorReport.decision?.euroPick || '',
-            actualEuroOutcome
-          );
-          const hdcRes = evaluateHandicapDetailedOutcome(
-            cal.matchData,
-            cal.priorReport,
-            hScore,
-            aScore
-          );
-          const newOverUnderHit = evaluateOverUnderHit(
-            cal.matchData.overUnder.lateLine,
-            cal.priorReport.decision?.overUnderPick || '',
-            hScore,
-            aScore
-          );
-          const newModelVerified = newEuroHit && hdcRes.hit;
-
-          if (
-            cal.outcomeEvaluation.euroHit !== newEuroHit ||
-            cal.outcomeEvaluation.handicapHit !== hdcRes.hit ||
-            cal.outcomeEvaluation.handicapDetail !== hdcRes.detail ||
-            cal.outcomeEvaluation.overUnderHit !== newOverUnderHit ||
-            cal.outcomeEvaluation.modelVerified !== newModelVerified
-          ) {
-            hasCalibrationChange = true;
-          }
-
-          cal.outcomeEvaluation.euroHit = newEuroHit;
-          cal.outcomeEvaluation.handicapHit = hdcRes.hit;
-          cal.outcomeEvaluation.handicapDetail = hdcRes.detail;
-          cal.outcomeEvaluation.handicapDetailLabel = hdcRes.detailLabel;
-          cal.outcomeEvaluation.overUnderHit = newOverUnderHit;
-          cal.outcomeEvaluation.modelVerified = newModelVerified;
-        }
-
-        // Deduplicate key: home vs away + salesDate (newest entry wins, list is newest-first)
-        const key = reviewMatchKey(cal);
-
-        if (!seen.has(key)) {
-          seen.add(key);
-          deduplicated.push(cal);
-        }
+    const archive = readReviewArchive(raw);
+    if (archive.changed && raw !== null) {
+      try {
+        if (!localStorage.getItem(SALES_DAY_BACKUP_KEY)) localStorage.setItem(SALES_DAY_BACKUP_KEY, raw);
+        writeReviewArchive(archive.reviews, archive);
+      } catch (error) {
+        console.warn('Could not persist review migration:', error);
       }
-
-      // If calibrated or duplicates were pruned, sync back to localStorage and backup if needed
-      if ((hasCalibrationChange || deduplicated.length !== parsed.length) && typeof localStorage !== 'undefined') {
-        if (!localStorage.getItem(SALES_DAY_BACKUP_KEY)) {
-          localStorage.setItem(SALES_DAY_BACKUP_KEY, raw);
-        }
-        localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(deduplicated));
-      }
-      const json = JSON.stringify(deduplicated);
-      const stored = localStorage.getItem(REVIEWS_STORAGE_KEY);
-      if (stored) reviewsReadCache = { raw: stored, json };
-      return JSON.parse(json);
     }
-    return [];
-  } catch (e) {
-    console.error('Error loading post-match reviews:', e);
+    return archive.reviews;
+  } catch (error) {
+    console.error('Error loading post-match reviews:', error);
     return [];
   }
 }
@@ -1591,17 +1607,18 @@ export function getPostMatchReviews(): PostMatchReview[] {
 /**
  * Save a post-match review (Idempotent: updates existing review of the same match rather than creating duplicate)
  */
-export function savePostMatchReview(review: PostMatchReview): void {
+export function savePostMatchReview(review: PostMatchReview): boolean {
   try {
-    if (typeof localStorage === 'undefined') return;
+    if (typeof localStorage === 'undefined') return false;
     const calReview = calibrateReviewSalesDate(review);
-    const reviews = getPostMatchReviews();
+    const currentRaw = localStorage.getItem(REVIEWS_STORAGE_KEY);
+    const archive = readReviewArchive(currentRaw);
+    const reviews = archive.reviews;
     const targetKey = reviewMatchKey(calReview);
     const existingIdx = reviews.findIndex(
       (r) => r.id === calReview.id || reviewMatchKey(r) === targetKey
     );
 
-    const currentRaw = localStorage.getItem(REVIEWS_STORAGE_KEY);
     if (currentRaw && !localStorage.getItem(SALES_DAY_BACKUP_KEY)) {
       localStorage.setItem(SALES_DAY_BACKUP_KEY, currentRaw);
     }
@@ -1619,9 +1636,14 @@ export function savePostMatchReview(review: PostMatchReview): void {
     } else {
       reviews.unshift(calReview);
     }
-    localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(reviews));
+    writeReviewArchive(reviews, archive);
+    return true;
   } catch (e) {
     console.error('Error saving review:', e);
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      queueMicrotask(() => window.dispatchEvent(new Event('fortune-review-save-error')));
+    }
+    return false;
   }
 }
 
@@ -1631,8 +1653,9 @@ export function savePostMatchReview(review: PostMatchReview): void {
 export function deletePostMatchReview(reviewId: string): PostMatchReview[] {
   try {
     if (typeof window === 'undefined' || typeof localStorage === 'undefined') return [];
-    const reviews = getPostMatchReviews().filter((r) => r.id !== reviewId);
-    localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(reviews));
+    const archive = readReviewArchive(localStorage.getItem(REVIEWS_STORAGE_KEY));
+    const reviews = archive.reviews.filter((r) => r.id !== reviewId);
+    writeReviewArchive(reviews, archive);
     return reviews;
   } catch (e) {
     console.error('Error deleting review:', e);
@@ -1659,7 +1682,7 @@ export function clearAllPostMatchReviews(): void {
 export function saveAllPostMatchReviews(reviews: PostMatchReview[]): void {
   try {
     if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
-      localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(reviews));
+      writeReviewArchive(reviews);
     }
   } catch (e) {
     console.error('Error batch saving reviews:', e);
@@ -1676,7 +1699,7 @@ export function replacePostMatchReviews(reviews: PostMatchReview[]): boolean {
     if (existing) {
       localStorage.setItem(`${REVIEWS_STORAGE_KEY}_backup`, existing);
     }
-    localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(reviews));
+    writeReviewArchive(reviews);
     return true;
   } catch (e) {
     console.error('Error replacing reviews:', e);
@@ -1748,21 +1771,15 @@ export function evaluateParlaySettlement(
     ? evaluateSingleHandicapOutcome(line2, parlay.match2.handicapPick, parlay.match2.homeTeam, parlay.match2.awayTeam, home2, away2)
     : undefined;
 
-  const diff1 = (home1 !== undefined && away1 !== undefined) ? home1 - away1 : 0;
-  const actualEuroOutcome1 = diff1 > 0 ? 'WIN' : diff1 === 0 ? 'DRAW' : 'LOSS';
-  const euroHit1 = rev1?.outcomeEvaluation?.euroHit !== undefined
-    ? rev1.outcomeEvaluation.euroHit
-    : (parlay.match1.euroHit !== undefined
-      ? parlay.match1.euroHit
-      : (home1 !== undefined ? evaluateEuroHit(parlay.match1.euroPick, actualEuroOutcome1) : undefined));
-
-  const diff2 = (home2 !== undefined && away2 !== undefined) ? home2 - away2 : 0;
-  const actualEuroOutcome2 = diff2 > 0 ? 'WIN' : diff2 === 0 ? 'DRAW' : 'LOSS';
-  const euroHit2 = rev2?.outcomeEvaluation?.euroHit !== undefined
-    ? rev2.outcomeEvaluation.euroHit
-    : (parlay.match2.euroHit !== undefined
-      ? parlay.match2.euroHit
-      : (home2 !== undefined ? evaluateEuroHit(parlay.match2.euroPick, actualEuroOutcome2) : undefined));
+  // Settle each leg against its own frozen pick, even when the cached boolean
+  // predates the correction or a single-match report has since been rerated.
+  const settleLeg = (leg: ParlayMatchSnapshot, home?: number, away?: number, fallback?: boolean) => {
+    const picks = parseEuroPick(leg.euroPick);
+    if (home === undefined || away === undefined || !picks.length) return leg.euroHit ?? fallback;
+    return picks.includes(home > away ? 'WIN' : home < away ? 'LOSS' : 'DRAW');
+  };
+  const euroHit1 = settleLeg(parlay.match1, home1, away1, rev1?.outcomeEvaluation?.euroHit);
+  const euroHit2 = settleLeg(parlay.match2, home2, away2, rev2?.outcomeEvaluation?.euroHit);
 
   const m1: ParlayMatchSnapshot = {
     ...parlay.match1,
@@ -1988,6 +2005,8 @@ export function autoExtractDailyParlayReviews(matchReviews: PostMatchReview[]): 
   // Group match reviews by sales date
   const groups = new Map<string, PostMatchReview[]>();
   for (const rev of matchReviews) {
+    // Older archived predictions predate v4 and keep their original selection criteria.
+    if (rev.priorReport?.decision?.coreEligible === false) continue;
     const sDate = rev.salesDate || '常规归档';
     if (!groups.has(sDate)) {
       groups.set(sDate, []);
@@ -2116,44 +2135,7 @@ export function evaluateEuroHit(
   predictedEuro: string,
   actualEuroOutcome: 'WIN' | 'DRAW' | 'LOSS'
 ): boolean {
-  if (!predictedEuro) return false;
-  const pred = predictedEuro.trim();
-
-  // 1. Home win / unbeaten coverage
-  const coversHomeWin =
-    pred.includes('主胜') ||
-    pred.includes('胜 / 平') ||
-    pred.includes('主队不败') ||
-    pred.includes('主队受让') ||
-    pred.includes('让球胜') ||
-    (pred.includes('保平争胜') && (pred.includes('主') || !pred.includes('客')));
-
-  // 2. Draw coverage
-  const coversDraw =
-    pred.includes('平') ||
-    pred.includes('胆平') ||
-    pred.includes('和') ||
-    pred.includes('让球负') ||
-    pred.includes('让球胜') ||
-    pred.includes('客队不败') ||
-    pred.includes('主队不败') ||
-    pred.includes('客队受让') ||
-    pred.includes('主队受让') ||
-    pred.includes('双重保险');
-
-  // 3. Away win / unbeaten coverage
-  const coversAwayWin =
-    pred.includes('客胜') ||
-    pred.includes('平 / 负') ||
-    pred.includes('客队不败') ||
-    pred.includes('客队受让') ||
-    pred.includes('让球负') ||
-    (pred.includes('保平争胜') && pred.includes('客'));
-
-  if (actualEuroOutcome === 'WIN') return coversHomeWin;
-  if (actualEuroOutcome === 'DRAW') return coversDraw;
-  if (actualEuroOutcome === 'LOSS') return coversAwayWin;
-  return false;
+  return parseEuroPick(predictedEuro).includes(actualEuroOutcome);
 }
 
 /**
@@ -2350,8 +2332,7 @@ export function evaluateMatchOutcomeAndExtractLesson(
 
   // 1. Euro Pick Evaluation (胜平负 / 让胜让负双重保险)
   const actualEuroOutcome = goalDiff > 0 ? 'WIN' : goalDiff === 0 ? 'DRAW' : 'LOSS';
-  const predictedEuro = priorReport.decision.euroPick || '';
-  const euroHit = evaluateEuroHit(predictedEuro, actualEuroOutcome);
+  const euroHit = decisionOutcomes(priorReport.decision).includes(actualEuroOutcome);
 
   // 2. Handicap Evaluation (亚指让球赢盘 / 赢半 / 走盘对冲保本)
   const handicapOutcome = evaluateHandicapDetailedOutcome(

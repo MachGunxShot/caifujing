@@ -6,7 +6,10 @@ export type ManipulationModelType =
   | 'SHALLOW_FULL_WATER'   // 浅盘满水死亡
   | 'UNCLASSIFIED';        // 复合型/常规调整
 
+export type TeamProfile = 'dominant' | 'challenger' | 'ordinary';
 export interface MatchInfo {
+  homeProfile?: TeamProfile;
+  awayProfile?: TeamProfile;
   league: string;
   homeTeam: string;
   awayTeam: string;
@@ -74,7 +77,12 @@ export interface ActuarialMetrics {
   handicapDiscrepancy: string;
 }
 
+export type EuroOutcome = 'WIN' | 'DRAW' | 'LOSS';
+
 export interface StructuredDecision {
+  coreEligible?: boolean;
+  v4Assessment?: string;
+  euroOutcomes?: EuroOutcome[]; // Older archives only store the display label.
   starRating: number;          // 推荐星级 1-5 星
   euroPick: string;            // 胜平负首选 (如: 主胜 / 平局 / 让球负)
   handicapPick: string;        // 让球首选 (如: 上盘 曼城 -1.75 / 下盘 赫塔菲 +1.25)

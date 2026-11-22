@@ -80,16 +80,16 @@ export const ModelKnowledgeBase: React.FC<ModelKnowledgeBaseProps> = ({
       id: 'POSITIVE_CONTROL',
       title: '【极限榨水 / 正向控赔】',
       subTitle: '真风控控赔 · 正路做稳胆',
-      badge: '稳胆模型 (胜率最高)',
+      badge: '正向控赔（需核对临场红线）',
       badgeColor: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40',
       caseName: '曼城 2-0 埃弗顿（欧赔1.22 + 球半两球1.76超低水稳胆打出）',
       formula: '欧赔持续下调 + 亚指维持原盘或升盘 + 上盘水位砸至 <1.80 极低水',
       mindset:
         '大庄在临场资金大举介入后，不惜降低彩民的盈利吸引力，强行将赔付水位砸入冰点。机构宁可少赚抽水，也绝不敢冒高额赔付风险，这是货真价实的防范打出。',
       traps: '彩民常因“赔率只有1.75回报太低”而心理抗拒，转去博冷，结果惨遭绝杀。',
-      rule: '天上不会掉馅饼，超低水才是机构最诚实的投降书。正路可做稳胆，支持让球胜。',
+      rule: '低水须与同侧胜赔、亚盘变动及大小球共同核对。仅凭低赔不升五星。',
       presetId: 'case-positive-control',
-      actionPick: '做稳胆让球胜 / 欧胜独赢',
+      actionPick: '分别记录让球与独赢方向',
     },
     {
       id: 'HIGH_INTEREST_TRAP',
@@ -268,8 +268,8 @@ export const ModelKnowledgeBase: React.FC<ModelKnowledgeBaseProps> = ({
       return {
         modelIdx: 0,
         model: models[0],
-        verdict: '✅ 确诊【极限榨水 / 正向控赔稳胆】',
-        advice: '机构主动压低赔付冰点防范打出，属于极高置信度的真风控。实战坚定做核心稳胆，支持让球胜或主胜独赢！',
+        verdict: '正向控赔形态 · 待临场复核',
+        advice: '此处只识别盘口形态。请在精算台核对早晚盘与球队定位，通过 v4 红线复核后再判断核心资格。',
       };
     }
     // 2. HIGH INTEREST TRAP
