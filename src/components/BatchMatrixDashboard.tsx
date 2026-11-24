@@ -1126,7 +1126,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
           {renderStarRating(dec.starRating)}
           <div className="flex items-center gap-1 mt-0.5">
             <span className={`text-[10px] font-mono ${isFiveStar ? 'text-amber-400 font-bold' : 'text-slate-400'}`}>
-              {dec.starRating}星置信度
+              {dec.starRating}星盘口信号
             </span>
             {shift && shift.starChange !== 0 ? (
               <span className={`px-1 py-0.2 rounded text-[9px] font-extrabold font-mono border ${
@@ -1309,6 +1309,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
             {onToggleLockMatch && (
               <button
                 type="button"
+                disabled={!!item.predictionSnapshot}
                 onClick={(e) => {
                   e.stopPropagation();
                   onToggleLockMatch(item.id);
@@ -1319,7 +1320,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
                     : 'bg-slate-800 text-slate-400 hover:text-white border-slate-700'
                 }`}
                 title={
-                  item.isLocked
+                  item.predictionSnapshot ? '已保存原始快照' : item.isLocked
                     ? `已锁定 (${item.lockedAt || '已封盘'})，点击可解除锁定`
                     : '锁定此场终盘快照与五项推荐，后续导入新 Markdown 时自动免疫覆盖'
                 }
@@ -1506,12 +1507,13 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
               <button
                 type="button"
                 onClick={() => onToggleLockMatch(item.id)}
+                disabled={!!item.predictionSnapshot}
                 className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border flex items-center gap-1 transition-all cursor-pointer ${
                   item.isLocked
                     ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
                     : 'bg-slate-800 text-slate-400 hover:text-white border-slate-700'
                 }`}
-                title="锁定/解锁终盘快照"
+                title={item.predictionSnapshot ? '已保存原始快照' : '锁定或解锁终盘'}
               >
                 {item.isLocked ? (
                   <>
@@ -1582,7 +1584,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
             <div className="text-[10px] text-slate-400">推荐星级 & 变轨信心</div>
             <div className="mt-1">{renderStarRating(dec.starRating)}</div>
             <div className="text-[10px] text-amber-400 font-mono mt-0.5 flex items-center gap-1">
-              <span>{dec.starRating} 星置信度</span>
+              <span>{dec.starRating} 星盘口信号</span>
               {shift && shift.starChange !== 0 && (
                 <span className={`px-1 rounded text-[9px] font-bold ${shift.starChange > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                   ({shift.earlyStars}★➔{shift.lateStars}★)
@@ -1741,12 +1743,13 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
               <button
                 type="button"
                 onClick={() => onToggleLockMatch(item.id)}
+                disabled={!!item.predictionSnapshot}
                 className={`px-2.5 py-1 rounded text-xs font-bold border flex items-center gap-1 transition-all cursor-pointer ${
                   item.isLocked
                     ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 hover:bg-amber-500/30'
                     : 'bg-slate-800 text-slate-400 hover:text-white border-slate-700'
                 }`}
-                title="锁定/解锁开赛快照"
+                title={item.predictionSnapshot ? '已保存原始快照' : '锁定或解锁开赛盘口'}
               >
                 {item.isLocked ? (
                   <>
@@ -2842,7 +2845,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 font-mono text-[11px]">
                   <div className="bg-slate-900 p-2 rounded border border-slate-800">
                     <span className="text-slate-400 block text-[10px]">推荐星级</span>
-                    <span className="text-amber-400 font-bold">{reviewTarget.report.decision.starRating} 星置信度</span>
+                    <span className="text-amber-400 font-bold">{reviewTarget.report.decision.starRating} 星盘口信号</span>
                   </div>
                   <div className="bg-slate-900 p-2 rounded border border-slate-800">
                     <span className="text-slate-400 block text-[10px]">胜平负首选</span>

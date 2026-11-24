@@ -1,4 +1,25 @@
-import type { EuroOutcome, PostMatchReview, StructuredDecision } from '../types/fortuneActuary';
+import type { EuroOddsData, EuroOutcome, FullMatchData, PostMatchReview, StructuredDecision } from '../types/fortuneActuary';
+
+export const EURO_OUTCOMES: EuroOutcome[] = ['WIN', 'DRAW', 'LOSS'];
+export const EURO_LABELS = { WIN: '主胜', DRAW: '平局', LOSS: '客胜' };
+export type EuroVector = Record<EuroOutcome, number>;
+
+export function market1x2(odds: EuroOddsData) {
+  const prices = { WIN: odds.lateWin, DRAW: odds.lateDraw, LOSS: odds.lateLoss };
+  if (!Object.values(prices).every(price => Number.isFinite(price) && price > 1)) return null;
+  const margin = EURO_OUTCOMES.reduce((total, outcome) => total + 1 / prices[outcome], 0);
+  const probabilities = { WIN: 1 / prices.WIN / margin, DRAW: 1 / prices.DRAW / margin, LOSS: 1 / prices.LOSS / margin };
+  const lowest = EURO_OUTCOMES.reduce((a, b) => prices[b] < prices[a] ? b : a);
+  return { prices, probabilities, lowest };
+}
+
+export function euroBrier(probabilities: EuroVector, actual: EuroOutcome): number {
+  return EURO_OUTCOMES.reduce((sum, outcome) => sum + (probabilities[outcome] - Number(actual === outcome)) ** 2, 0);
+}
+
+export function isPlaceholderMarket(data: FullMatchData): boolean {
+  return data.matchInfo.marketStory === '批量实战赛果导入' || data.matchInfo.league === '实战复盘录入';
+}
 
 const aliases: Record<string, EuroOutcome[]> = {
   胜: ['WIN'], 主胜: ['WIN'], 主胜独赢: ['WIN'],
@@ -39,17 +60,15 @@ export function readStoredScore(review: Pick<PostMatchReview, 'actualHomeScore' 
 }
 
 export function settleEuroReview(review: PostMatchReview) {
+  if (review.matchData?.matchInfo && isPlaceholderMarket(review.matchData)) return null;
   const picks = decisionOutcomes(review.priorReport?.decision);
   const score = readStoredScore(review);
   if (!picks.length || !score) return null;
   const outcome = score.home > score.away ? 'WIN' : score.home < score.away ? 'LOSS' : 'DRAW';
   const hit = picks.includes(outcome);
   const odds = review.matchData?.euroOdds;
-  let profit: number | null = null;
-  if (odds && [odds.lateWin, odds.lateDraw, odds.lateLoss].every(n => Number.isFinite(n) && n > 1)) {
-    const winningPrice = { WIN: odds.lateWin, DRAW: odds.lateDraw, LOSS: odds.lateLoss }[outcome];
-    profit = (hit ? winningPrice / picks.length : 0) - 1;
-  }
+  const market = odds && market1x2(odds);
+  const profit = market ? (hit ? market.prices[outcome] / picks.length : 0) - 1 : null;
   return { hit, choices: picks.length, profit };
 }
 

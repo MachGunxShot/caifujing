@@ -99,3 +99,26 @@ test('unreadable JSON or an unexpected root cannot be replaced by a normal save'
     assert.equal(memoryStorage.getItem(REVIEWS_KEY), raw);
   }
 });
+
+test('winning the match by two on a 2.25 line correctly describes both sides of the bet', () => {
+  for (const [line, home, away] of [['两球/两球半', 3, 1], ['受两球/两球半', 1, 3]] as const) {
+    const data = matchData();
+    data.asianHandicap.lateHandicap = line;
+    const report = generateActuarialRuleReport(data);
+    report.decision.handicapPick = '上盘';
+    const review = evaluateMatchOutcomeAndExtractLesson(data, report, home, away);
+    assert.equal(review.outcomeEvaluation.handicapDetail, 'LOSE_HALF');
+    assert.match(review.evolvedRuleContent, /净胜 2 球/);
+    assert.match(review.evolvedRuleContent, /上盘输半，受让方【.+】赢半/);
+    const legacy = { ...review, evolvedRuleTitle: '旧档【测试】强队赢球输盘/小胜卡盘修正法',
+      evolvedRuleContent: '针对 瑞典超 让步 两球/两球半 深盘，强队仅取得 1 球微弱优势（完场 3-1），未能完成深盘穿盘，受让方【测试】赢盘守住底线。' };
+    memoryStorage.setItem(REVIEWS_KEY, JSON.stringify([legacy]));
+    const [repaired] = getPostMatchReviews();
+    assert.equal(repaired.evolvedRuleContent, review.evolvedRuleContent);
+    assert.equal(repaired.evolvedRuleTitle, review.evolvedRuleTitle);
+    assert.deepEqual(repaired.priorReport, JSON.parse(JSON.stringify(report)));
+    assert.equal(JSON.parse(memoryStorage.getItem(REVIEWS_KEY)!)[0].evolvedRuleContent, review.evolvedRuleContent);
+    memoryStorage.setItem(REVIEWS_KEY, JSON.stringify([{ ...legacy, evolvedRuleContent: '人工复盘笔记' }]));
+    assert.equal(getPostMatchReviews()[0].evolvedRuleContent, '人工复盘笔记');
+  }
+});

@@ -49,7 +49,7 @@ export function parseImageMatch(value: unknown): FullMatchData {
 }
 
 const reportShape: Shape = {
-  ...fields('text', 'firstImpression threeDimLieDetection identifiedModel modelTitle source'),
+  ...fields('text', 'firstImpression threeDimLieDetection identifiedModel modelTitle source geminiModel? ruleVersion?'),
   finalVerdict: fields('text', 'direction directionDetail riskWarning'),
   decision: { ...fields('text', 'euroPick handicapPick overUnderPick confidenceReason'), 'euroOutcomes?': ['text'], 'coreEligible?': 'boolean', 'v4Assessment?': 'text', starRating: 'number', predictedScores: ['text'] },
   metrics: {
@@ -67,10 +67,13 @@ const shiftShape: Shape = {
   probDiff: fields('number', 'win draw loss'), earlyOddsSummary: oddsSummary, lateOddsSummary: oddsSummary,
 };
 
+const predictionShape = { ...fields('number', 'recordedAt frozenAt kickoffAt?'), ruleVersion: 'nonempty' } as const;
+
 const reviewShape: Shape = {
+  'predictionSnapshot?': predictionShape,
   id: 'nonempty', matchData: matchShape, priorReport: reportShape,
   ...fields('text', 'actualScore matchIncidents? salesDate? salesDateOverride? salesDateLabel? salesCycleText? kickoffTime? dissectionText evolvedRuleTitle evolvedRuleContent ruleCategory'),
-  ...fields('number', 'actualHomeScore? actualAwayScore? reviewTimestamp'),
+  ...fields('number', 'actualHomeScore? actualAwayScore? reviewTimestamp resultRecordedAt?'),
   outcomeEvaluation: {
     ...fields('boolean', 'euroHit handicapHit overUnderHit scoreHit? modelVerified'),
     ...fields('text', 'summaryNote handicapDetail? handicapDetailLabel?'),
@@ -79,6 +82,7 @@ const reviewShape: Shape = {
 
 const itemShape: Shape = {
   id: 'nonempty', data: matchShape, status: 'text', timestamp: 'number',
+  'marketRecordedAt?': 'number', 'predictionSnapshot?': predictionShape,
   ...fields('text', 'sourceName? rawAiText? lockedAt? lockedReason? finalScore?'),
   ...fields('boolean', 'isLocked? isReviewed?'), 'report?': reportShape, 'review?': reviewShape,
   'earlyDataSnapshot?': matchShape, 'earlyReportSnapshot?': reportShape, 'confidenceShift?': shiftShape,

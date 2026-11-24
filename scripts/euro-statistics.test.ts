@@ -51,3 +51,15 @@ test('structured selections are used for new snapshots; older reviews settle fro
   assert.deepEqual(settleEuroReview(row), { hit:true, choices:2, profit:0.5 });
   assert.deepEqual(settleEuroReview(review('平 / 负','1:1')), settleEuroReview(row));
 });
+
+test('five selected singles return the sum of the three winning decimal prices including stake', () => {
+  const selected = [
+    review('主胜', '2-0', [1.60, 3, 4]), review('平', '0-0', [2, 2.10, 4]),
+    review('客胜', '0-1', [2, 3, 1.80]), review('主胜', '0-1'), review('平', '1-0'),
+  ];
+  const { priced, profit } = euroStatistics(selected);
+  assert.equal(priced, 5);
+  assert.equal((priced + profit).toFixed(2), '5.50');
+  assert.equal(profit.toFixed(2), '0.50');
+  assert.equal(displayRate(profit, priced), '10.00%');
+});

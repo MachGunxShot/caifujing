@@ -1,4 +1,4 @@
-import { assessV4 } from './coreRulesV4';
+import { assessV4, RULES_VERSION, type V4RedLine } from './coreRulesV4';
 import { parseEuroPick } from './euroStatistics';
 import {
   FullMatchData,
@@ -370,7 +370,7 @@ export function calculateConsistentPredictedScores(
 /**
  * Deterministic fallback generator strictly adhering to the 3 output sections required by the user
  */
-export function generateActuarialRuleReport(data: FullMatchData): AnalysisReportResult {
+export function generateActuarialRuleReport(data: FullMatchData, omitRedLine?: V4RedLine): AnalysisReportResult {
   const metrics = computeActuarialMetrics(data);
   // Sort detectedModels by confidence in descending order so the highest conviction model leads
   const sortedModels = [...metrics.detectedModels].sort((a, b) => b.confidence - a.confidence);
@@ -846,7 +846,7 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
   }
 
   const v4 = assessV4(data, parseHandicapValue(data.asianHandicap.earlyHandicap, NaN), parseHandicapValue(lateHandicap, NaN),
-    parseOverUnderValue(data.overUnder.earlyLine, NaN), parseOverUnderValue(data.overUnder.lateLine, NaN));
+    parseOverUnderValue(data.overUnder.earlyLine, NaN), parseOverUnderValue(data.overUnder.lateLine, NaN), omitRedLine);
   let v4Assessment: string | undefined;
   if (v4.notes.length) {
     starRating = Math.min(starRating, 3);
@@ -900,6 +900,7 @@ export function generateActuarialRuleReport(data: FullMatchData): AnalysisReport
     identifiedModel: primaryModel.model,
     modelTitle: primaryModel.title,
     source: 'ACTUARIAL_RULE_ENGINE',
+    ruleVersion: RULES_VERSION,
     metrics,
   };
 }

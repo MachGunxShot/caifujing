@@ -106,6 +106,8 @@ export interface AnalysisReportResult {
   identifiedModel: ManipulationModelType;
   modelTitle: string;
   source: 'GEMINI_AI' | 'ACTUARIAL_RULE_ENGINE';
+  geminiModel?: string;
+  ruleVersion?: string;
   metrics: ActuarialMetrics;
 }
 
@@ -165,6 +167,13 @@ export interface ConfidenceComparisonResult {
   };
 }
 
+export interface PredictionSnapshot {
+  recordedAt: number;
+  frozenAt: number;
+  kickoffAt?: number;
+  ruleVersion: string;
+}
+
 export interface BatchMatchItem {
   id: string;
   sourceName?: string;
@@ -174,6 +183,8 @@ export interface BatchMatchItem {
   status: 'idle' | 'analyzing' | 'done' | 'error';
   timestamp: number;
   review?: PostMatchReview;
+  marketRecordedAt?: number;
+  predictionSnapshot?: PredictionSnapshot;
   isLocked?: boolean;         // 🔒 封盘锁定：开赛后固定盘口快照，防止多次导入新 Markdown 时被篡改或覆盖
   lockedAt?: string;          // 锁定时间（如 "10-06 00:00"）
   lockedReason?: string;      // 锁定理由（如 "开赛封盘保护"）
@@ -190,11 +201,13 @@ export interface PostMatchReview {
   id: string;
   matchData: FullMatchData;
   priorReport: AnalysisReportResult;
+  predictionSnapshot?: PredictionSnapshot;
   actualScore: string;           // e.g. "2-1"
   actualHomeScore: number;
   actualAwayScore: number;
   matchIncidents?: string;       // 比赛转折点 (红牌、点球、补时绝杀、主力早退等)
   reviewTimestamp: number;
+  resultRecordedAt?: number;
   
   // Sports lottery sales day (竞彩销售日：当日11:00至次日11:00)
   salesDate?: string;            // e.g. "2026-03-28"

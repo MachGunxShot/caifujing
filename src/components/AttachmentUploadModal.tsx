@@ -20,7 +20,7 @@ import { parseBatchMatchesFromText, SAMPLE_BATCH_CSV, SAMPLE_BATCH_MARKDOWN } fr
 interface AttachmentUploadModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onImageAnalyzed: (extractedData: FullMatchData, aiAnalysis: string) => void;
+  onImageAnalyzed: (extractedData: FullMatchData, aiAnalysis: string, geminiModel?: string) => void;
   onBatchImported: (matches: FullMatchData[]) => void;
 }
 
@@ -100,7 +100,7 @@ export const AttachmentUploadModal: React.FC<AttachmentUploadModalProps> = ({
           alert(error instanceof Error ? error.message : '截图识别数据不完整');
           return;
         }
-        onImageAnalyzed(match, res.aiAnalysis);
+        onImageAnalyzed(match, res.aiAnalysis, typeof res.geminiModel === 'string' ? res.geminiModel : undefined);
         onClose();
       } else {
         alert(res.error || '截图识别失败，请重试');

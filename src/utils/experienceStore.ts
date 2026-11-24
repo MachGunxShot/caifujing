@@ -4,6 +4,7 @@ import {
   FullMatchData,
   AnalysisReportResult,
   PostMatchReview,
+  PredictionSnapshot,
   EvolvedExperienceRule,
   ParlayReviewRecord,
   ParlayMatchSnapshot,
@@ -1532,10 +1533,29 @@ function calibrateStoredReview(rev: PostMatchReview) {
     );
     const newModelVerified = newEuroHit && hdcRes.hit;
 
+    // Match the old generated sentences so that manually edited lessons survive a reload.
+    const oldText = cal.evolvedRuleContent || '';
+    const template = /^针对 .* 深盘，强队仅取得 1 球微弱优势（完场 [^）]+），未能完成深盘穿盘，受让方【.+】赢盘守住底线。$/.test(oldText)
+      || /^在 .* 对阵中，.*强势穿盘大胜，切忌盲目反选受让下盘，顺应深盘打穿实力。$/.test(oldText)
+      || /^在 .* 对阵中，.*属于典型的一球小胜赢盘，绝非深盘穿盘。$/.test(oldText)
+      || /^针对 .* 双方实力接近之胶着盘型.*守住盘面底线。$/.test(oldText)
+      || /^在 .* 类似对阵中.*机构平赔防守有效兑现，两头对冲下平局.*具备极高防御价值。$/.test(oldText);
+    if (template) {
+      const lesson = boundaryHandicapLesson(cal.matchData, hScore, aScore);
+      if (lesson) {
+        cal.evolvedRuleContent = lesson.content;
+        if (/(?:小胜卡盘修正法|深盘实力穿盘大胜验证|一球小胜经济型赢盘验证|受让守盘修正法|冷平防守验证)$/.test(cal.evolvedRuleTitle)) {
+          cal.evolvedRuleTitle = lesson.title;
+        }
+        changed = true;
+      }
+    }
+
     if (
       cal.outcomeEvaluation.euroHit !== newEuroHit ||
       cal.outcomeEvaluation.handicapHit !== hdcRes.hit ||
       cal.outcomeEvaluation.handicapDetail !== hdcRes.detail ||
+      cal.outcomeEvaluation.handicapDetailLabel !== hdcRes.detailLabel ||
       cal.outcomeEvaluation.overUnderHit !== newOverUnderHit ||
       cal.outcomeEvaluation.modelVerified !== newModelVerified
     ) {
@@ -1628,11 +1648,19 @@ export function savePostMatchReview(review: PostMatchReview): boolean {
       const override = calReview.salesDateOverride !== undefined ? calReview.salesDateOverride : existing.salesDateOverride;
       reviews[existingIdx] = {
         ...calReview,
+        ...(existing.predictionSnapshot ? {
+          predictionSnapshot: existing.predictionSnapshot, matchData: existing.matchData, priorReport: existing.priorReport,
+        } : {}),
         id: existing.id, // preserve ID
         salesDateOverride: override,
         salesDate: override || calReview.salesDate,
         reviewTimestamp: calReview.reviewTimestamp || existing.reviewTimestamp || Date.now(),
       };
+      if (existing.predictionSnapshot) {
+        const next = reviews[existingIdx];
+        next.outcomeEvaluation.scoreHit = next.priorReport.decision.predictedScores.includes(next.actualScore);
+        reviews[existingIdx] = calibrateStoredReview(next).review;
+      }
     } else {
       reviews.unshift(calReview);
     }
@@ -2312,6 +2340,29 @@ export function evaluateHandicapHit(
   return evaluateHandicapDetailedOutcome(matchData, priorReport, actualHomeScore, actualAwayScore).hit;
 }
 
+// Quarter lines settle each side independently of the direction selected in the prediction.
+export function boundaryHandicapLesson(data: FullMatchData, home: number, away: number) {
+  const line = data.asianHandicap?.lateHandicap;
+  const h = parseHandicapValue(line || '', NaN);
+  if (!Number.isFinite(h)) return null;
+  const { league, homeTeam, awayTeam } = data.matchInfo;
+  const prefix = `${league}【${homeTeam} vs ${awayTeam}】`;
+  const diff = home - away;
+  const margin = diff === 0 ? '双方战平' : `【${diff > 0 ? homeTeam : awayTeam}】净胜 ${Math.abs(diff)} 球`;
+  const result = `完场 ${home}-${away}，${margin}。`;
+  if (h === 0) {
+    return { title: prefix + '平手盘结算', content: result + (diff === 0 ? '平手盘双方走盘。' : '平手盘胜方赢盘，负方输盘。') };
+  }
+  const upper = evaluateSingleHandicapOutcome(line, '上盘', '', '', home, away);
+  const lower = evaluateSingleHandicapOutcome(line, '下盘', '', '', home, away);
+  const givingWon = (h < 0 ? diff : -diff) > 0;
+  if (upper.detail !== 'WIN_HALF' && upper.detail !== 'LOSE_HALF' && !(givingWon && upper.detail === 'LOSE')) return null;
+  return {
+    title: prefix + (givingWon ? '让步方赢球，上盘' : '上盘') + upper.detailLabel,
+    content: result + `让步方【${h < 0 ? homeTeam : awayTeam}】让 ${Math.abs(h)} 球，上盘${upper.detailLabel}，受让方【${h < 0 ? awayTeam : homeTeam}】${lower.detailLabel}。`,
+  };
+}
+
 /**
  * Evaluate match outcome against prior actuarial report and extract core rule
  */
@@ -2324,8 +2375,14 @@ export function evaluateMatchOutcomeAndExtractLesson(
   persistToCoreRules: boolean = false,
   preferredSalesDate?: string,
   fallbackTimestamp?: number,
-  existingReview?: PostMatchReview
+  existingReview?: PostMatchReview,
+  predictionSnapshot?: PredictionSnapshot
 ): PostMatchReview {
+  if (existingReview?.predictionSnapshot) {
+    matchData = existingReview.matchData;
+    priorReport = existingReview.priorReport;
+    predictionSnapshot = existingReview.predictionSnapshot;
+  }
   const { homeTeam, awayTeam, league } = matchData.matchInfo;
   const actualScoreStr = `${actualHomeScore}-${actualAwayScore}`;
   const goalDiff = actualHomeScore - actualAwayScore;
@@ -2399,7 +2456,11 @@ export function evaluateMatchOutcomeAndExtractLesson(
     const isUnderdogOutrightWin = (isHomeGiving && goalDiff < 0) || (isAwayGiving && goalDiff > 0);
     const isDraw = goalDiff === 0;
 
-    if (isFavoriteBlowout) {
+    const boundary = boundaryHandicapLesson(matchData, actualHomeScore, actualAwayScore);
+    if (boundary) {
+      evolvedRuleTitle = boundary.title;
+      evolvedRuleContent = boundary.content;
+    } else if (isFavoriteBlowout) {
       // 净胜 2 球及以上，且成功打穿深盘
       evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】${favoriteTeam}深盘实力穿盘大胜验证`;
       evolvedRuleContent = `在 ${league} 对阵中，让步强队【${favoriteTeam}】具备绝对实力优势并在即时盘口得到体现（${matchData.asianHandicap.lateHandicap}）。实战打出 ${actualScoreStr}（净胜 ${Math.abs(goalDiff)} 球）强势穿盘大胜，切忌盲目反选受让下盘，顺应深盘打穿实力。`;
@@ -2418,11 +2479,8 @@ export function evaluateMatchOutcomeAndExtractLesson(
       evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】平赔低洼/冷平防守验证`;
       evolvedRuleContent = `在 ${league} 类似对阵中（盘口 ${matchData.asianHandicap.lateHandicap}），机构平赔防守有效兑现，两头对冲下平局（完场 ${actualScoreStr}）具备极高防御价值。`;
     } else {
-      const isShallow = Math.abs(lateHandicapNum) <= 0.5;
-      evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】${isShallow ? '常规博弈平局/受让守盘修正法' : '强队赢球输盘/小胜卡盘修正法'}`;
-      evolvedRuleContent = isShallow
-        ? `针对 ${league} 双方实力接近之胶着盘型（${matchData.asianHandicap.lateHandicap}），实战打出 ${actualScoreStr}，受让下盘【${underdogTeam}】守住盘面底线。`
-        : `针对 ${league} 让步 ${matchData.asianHandicap.lateHandicap} 深盘，强队仅取得 1 球微弱优势（完场 ${actualScoreStr}），未能完成深盘穿盘，受让方【${underdogTeam}】赢盘守住底线。`;
+      evolvedRuleTitle = `${league}【${homeTeam} vs ${awayTeam}】让球结算复核`;
+      evolvedRuleContent = `完场 ${actualScoreStr}，净胜球差 ${Math.abs(goalDiff)} 球，赛前让球首选结算为${handicapOutcome.detailLabel}。`;
     }
   }
 
@@ -2437,11 +2495,13 @@ export function evaluateMatchOutcomeAndExtractLesson(
     id: existingReview?.id || `rev-${safeHome}-${safeAway}-${actualScoreStr}`,
     matchData,
     priorReport,
+    predictionSnapshot,
     actualScore: actualScoreStr,
     actualHomeScore,
     actualAwayScore,
     matchIncidents,
     reviewTimestamp: existingReview?.reviewTimestamp || effectiveTimestamp,
+    resultRecordedAt: Date.now(),
     salesDate: existingReview?.salesDateOverride || salesInfo.salesDate,
     salesDateLabel: salesInfo.salesDateLabel,
     salesCycleText: salesInfo.salesCycleText,

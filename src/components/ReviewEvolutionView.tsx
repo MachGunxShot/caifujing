@@ -1,3 +1,4 @@
+import { SimulatedSettlement } from './SimulatedSettlement';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Brain,
@@ -60,10 +61,10 @@ import {
   importRulesSmart,
   getPostMatchReviews,
   evaluateMatchOutcomeAndExtractLesson,
+  boundaryHandicapLesson,
   deletePostMatchReview,
   clearAllPostMatchReviews,
   savePostMatchReview,
-  saveAllPostMatchReviews,
   replacePostMatchReviews,
   auditRulesHealth,
   deduplicateExperienceRules,
@@ -81,6 +82,8 @@ import {
 } from '../utils/experienceStore';
 import { displayRate, euroStatistics, settleEuroReview } from '../utils/euroStatistics';
 import { generateActuarialRuleReport } from '../utils/actuaryEngine';
+import { sealQueuePrediction, hasVerifiedSnapshot } from '../utils/predictionSnapshot';
+import { RuleAuditPanel } from './RuleAuditPanel';
 import { ParsedScoreItem, parseBatchMatchScoresFromText } from '../utils/textParser';
 import {
   calculateSalesDate,
@@ -212,7 +215,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
   const [healthNotification, setHealthNotification] = useState<string | null>(null);
   const [isSyncingRules, setIsSyncingRules] = useState<boolean>(false);
   const [isCalibratingDates, setIsCalibratingDates] = useState<boolean>(false);
-  const [isCalibratingStars, setIsCalibratingStars] = useState<boolean>(false);
+  const [showRuleAudit, setShowRuleAudit] = useState(false);
   const [syncResultModal, setSyncResultModal] = useState<{
     totalProcessed: number;
     addedCount: number;
@@ -709,89 +712,6 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
     }
   };
 
-  // Calibrate star tiers across all existing reviews using latest actuarial graduated rules
-  const handleCalibrateStarTiers = () => {
-    setIsCalibratingStars(true);
-    let calibratedCount = 0;
-
-    const allStoredReviews = getPostMatchReviews();
-    const updatedReviews = allStoredReviews.map((rev) => {
-      if (!rev.matchData) return rev;
-      const newReport = generateActuarialRuleReport(rev.matchData);
-      const oldStars = rev.priorReport?.decision?.starRating || 3;
-      const newStars = newReport.decision?.starRating || 3;
-      const [hScore, aScore] = (rev.actualScore || '0-0')
-        .split('-')
-        .map((s) => parseInt(s.trim(), 10) || 0);
-
-      const updatedRev = evaluateMatchOutcomeAndExtractLesson(
-        rev.matchData,
-        newReport,
-        hScore,
-        aScore,
-        rev.matchIncidents || '',
-        false,
-        rev.salesDate,
-        rev.reviewTimestamp
-      );
-
-      if (
-        oldStars !== newStars ||
-        rev.outcomeEvaluation?.euroHit !== updatedRev.outcomeEvaluation?.euroHit ||
-        rev.outcomeEvaluation?.handicapHit !== updatedRev.outcomeEvaluation?.handicapHit ||
-        rev.outcomeEvaluation?.overUnderHit !== updatedRev.outcomeEvaluation?.overUnderHit
-      ) {
-        calibratedCount++;
-      }
-
-      return {
-        ...updatedRev,
-        id: rev.id,
-        salesDate: rev.salesDate || updatedRev.salesDate,
-        reviewTimestamp: rev.reviewTimestamp,
-      };
-    });
-
-    saveAllPostMatchReviews(updatedReviews);
-    setReviews(updatedReviews);
-
-    // Synchronize into queue items
-    const updatedQueue = queue.map((item) => {
-      const qRev = updatedReviews.find(
-        (r) =>
-          r.id === item.id ||
-          (matchTeamsFuzzy(r.matchData?.matchInfo?.homeTeam, item.data?.matchInfo?.homeTeam) &&
-            matchTeamsFuzzy(r.matchData?.matchInfo?.awayTeam, item.data?.matchInfo?.awayTeam))
-      );
-      if (qRev) {
-        return {
-          ...item,
-          report: qRev.priorReport || generateActuarialRuleReport(item.data),
-          review: qRev,
-        };
-      } else if (item.data) {
-        return {
-          ...item,
-          report: generateActuarialRuleReport(item.data),
-        };
-      }
-      return item;
-    });
-    onUpdateQueue(updatedQueue);
-
-    setIsCalibratingStars(false);
-
-    const tier5 = updatedReviews.filter((r) => (r.priorReport?.decision?.starRating || 3) === 5).length;
-    const tier4 = updatedReviews.filter((r) => (r.priorReport?.decision?.starRating || 3) === 4).length;
-    const tier3 = updatedReviews.filter((r) => (r.priorReport?.decision?.starRating || 3) === 3).length;
-
-    setHealthNotification(
-      `⭐ 历史战报星级档位与命中率梯次智能重校准完成！共重算并更新 ${calibratedCount} 场（覆盖全量 ${updatedReviews.length} 场）。最新梯度分布：5星稳胆 ${tier5} 场、4星防冷 ${tier4} 场、3星博弈 ${tier3} 场。`
-    );
-    setTimeout(() => setHealthNotification(null), 8000);
-  };
-
-  // Retroactively sync reviews to core rules library (查漏补缺)
   const handleRetroactiveSyncRules = (targetReviews?: PostMatchReview[]) => {
     setIsSyncingRules(true);
 
@@ -1165,9 +1085,15 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           targetReport = generateActuarialRuleReport(targetMatch);
         }
 
+        const recordedItem = queueIdx >= 0 ? sealQueuePrediction(updatedQueue[queueIdx], Date.now()) : undefined;
+        if (recordedItem?.predictionSnapshot) {
+          targetMatch = recordedItem.data;
+          targetReport = recordedItem.report || targetReport;
+        }
+
         // Preserve a complete source date; otherwise use a date observed on the score row.
         const originalMatchTime = targetMatch.matchInfo?.matchTime || '';
-        if (!hasFullKickoffDate(originalMatchTime) && item.matchTime && item.matchTime !== '临场') {
+        if (!recordedItem?.predictionSnapshot && !hasFullKickoffDate(originalMatchTime) && item.matchTime && item.matchTime !== '临场') {
           targetMatch = {
             ...targetMatch,
             matchInfo: { ...targetMatch.matchInfo, matchTime: item.matchTime },
@@ -1191,7 +1117,8 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           batchSyncToCoreRules, // 是否沉淀进《财富经》核心法则库
           effectivePreferredDate, // 缺完整开赛日期时才使用逐场或批次销售日锚
           queueTimestamp,       // 后备时间戳使用队列创建/导入时间戳
-          existingReview        // 保留已归档场次的稳定 ID 与人工确认销售日
+          existingReview,       // 保留已归档场次的稳定 ID 与人工确认销售日
+          recordedItem?.predictionSnapshot
         );
 
         if (review.outcomeEvaluation.modelVerified) {
@@ -1277,21 +1204,23 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
   const activeRulesCount = rules.filter((r) => r.isActive).length;
 
   // Selected match for review
-  const activeReviewMatchData: FullMatchData =
+  const activeReviewInput: FullMatchData =
     selectedMatchId === 'current'
       ? currentMatch
       : queue.find((q) => q.id === selectedMatchId)?.data || currentMatch;
 
   const activeReviewQueueMatches = queue.filter((item) =>
-    item.data === activeReviewMatchData || (
-      item.data?.matchInfo?.homeTeam === activeReviewMatchData.matchInfo.homeTeam &&
-      item.data?.matchInfo?.awayTeam === activeReviewMatchData.matchInfo.awayTeam &&
-      item.data?.matchInfo?.matchTime === activeReviewMatchData.matchInfo.matchTime
+    item.data === activeReviewInput || (
+      item.data?.matchInfo?.homeTeam === activeReviewInput.matchInfo.homeTeam &&
+      item.data?.matchInfo?.awayTeam === activeReviewInput.matchInfo.awayTeam &&
+      item.data?.matchInfo?.matchTime === activeReviewInput.matchInfo.matchTime
     )
   );
-  const activeReviewQueueItem = selectedMatchId !== 'current'
+  const matchingQueueItem = selectedMatchId !== 'current'
     ? queue.find((item) => item.id === selectedMatchId)
     : activeReviewQueueMatches.length === 1 ? activeReviewQueueMatches[0] : undefined;
+  const activeReviewQueueItem = matchingQueueItem ? sealQueuePrediction(matchingQueueItem, Date.now()) : undefined;
+  const activeReviewMatchData = activeReviewQueueItem?.predictionSnapshot ? activeReviewQueueItem.data : activeReviewInput;
   const matchingActiveReviews = reviews.filter((rev) =>
     rev.matchData?.matchInfo?.homeTeam === activeReviewMatchData.matchInfo.homeTeam &&
     rev.matchData?.matchInfo?.awayTeam === activeReviewMatchData.matchInfo.awayTeam &&
@@ -1303,11 +1232,10 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
   const activeReviewPreferredSalesDate = existingActiveReview?.salesDateOverride || existingActiveReview?.salesDate ||
     calculateSalesDate(undefined, activeReviewFallbackTimestamp).salesDate;
 
-  const activeReviewReport: AnalysisReportResult =
-    selectedMatchId === 'current'
-      ? currentReport
-      : queue.find((q) => q.id === selectedMatchId)?.report ||
-        generateActuarialRuleReport(activeReviewMatchData);
+  const activeReviewReport = existingActiveReview?.predictionSnapshot ? existingActiveReview.priorReport
+    : activeReviewQueueItem?.predictionSnapshot && activeReviewQueueItem.report ? activeReviewQueueItem.report
+    : selectedMatchId === 'current' ? currentReport
+    : activeReviewQueueItem?.report || generateActuarialRuleReport(activeReviewMatchData);
 
   // Execute Review & Lesson Extraction
   const handleExecuteReview = async () => {
@@ -1321,7 +1249,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            matchData: activeReviewMatchData,
+            matchData: existingActiveReview?.predictionSnapshot ? existingActiveReview.matchData : activeReviewMatchData,
             priorReport: activeReviewReport,
             actualHomeScore,
             actualAwayScore,
@@ -1346,14 +1274,18 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         false,
         activeReviewPreferredSalesDate,
         activeReviewFallbackTimestamp,
-        existingActiveReview
+        existingActiveReview,
+        activeReviewQueueItem?.predictionSnapshot
       );
 
       // If AI dissection is available, enhance the review
       if (aiDissectionData) {
         localReview.dissectionText = aiDissectionData.dissectionText || localReview.dissectionText;
-        localReview.evolvedRuleTitle = aiDissectionData.evolvedRuleTitle || localReview.evolvedRuleTitle;
-        localReview.evolvedRuleContent = aiDissectionData.evolvedRuleContent || localReview.evolvedRuleContent;
+        const settledLesson = boundaryHandicapLesson(localReview.matchData, actualHomeScore, actualAwayScore);
+        if (!settledLesson || localReview.outcomeEvaluation.modelVerified) {
+          localReview.evolvedRuleTitle = aiDissectionData.evolvedRuleTitle || localReview.evolvedRuleTitle;
+          localReview.evolvedRuleContent = aiDissectionData.evolvedRuleContent || localReview.evolvedRuleContent;
+        }
         localReview.outcomeEvaluation.summaryNote =
           aiDissectionData.summaryNote || localReview.outcomeEvaluation.summaryNote;
 
@@ -1393,7 +1325,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         if (isMatched) {
           matchedInQueue = true;
           return {
-            ...item,
+            ...(activeReviewQueueItem?.predictionSnapshot ? activeReviewQueueItem : item),
             isReviewed: true,
             finalScore: finalScoreStr,
             isLocked: true,
@@ -1572,6 +1504,9 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
   // Stats calculation
   const totalReviews = reviews.length;
   const overallEuro = useMemo(() => euroStatistics(reviews), [reviews]);
+  const hasReviewSelection = selectedReviews.length > 0;
+  const settlement = hasReviewSelection ? euroStatistics(selectedReviews) : overallEuro;
+  const settlementCount = hasReviewSelection ? selectedReviews.length : reviews.length;
   const handicapHits = reviews.filter((r) => r.outcomeEvaluation.handicapHit).length;
   const ouHits = reviews.filter((r) => r.outcomeEvaluation.overUnderHit).length;
   const scoreHits = reviews.filter((r) => r.outcomeEvaluation.scoreHit).length;
@@ -2487,7 +2422,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                     {renderStarRatingBadge(activeReviewReport.decision.starRating, true)}
                   </div>
                   <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                    置信度: {activeReviewReport.decision.starRating}星
+                    盘口信号 {activeReviewReport.decision.starRating}星
                   </div>
                 </div>
 
@@ -3139,7 +3074,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                   <p className="text-xs text-slate-300">
                     同模型历史记录（含旧版） · 单选 {history.single.hits}/{history.single.total} ·
                     双选 {history.double.hits}/{history.double.total} ·
-                    等额模拟 ROI {displayRate(history.profit, history.priced)}（{history.priced} 场有效赔率）
+                    等额模拟（单位） <SimulatedSettlement stake={history.priced} profit={history.profit} /> · ROI {displayRate(history.profit, history.priced)}
                   </p>
                 )}
                 <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono pt-1 border-t border-slate-800/60">
@@ -3516,22 +3451,12 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
                   <button
                     type="button"
-                    disabled={isCalibratingDates || isCalibratingStars}
-                    onClick={handleCalibrateStarTiers}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
-                    title="依据《财富经》最新梯度置信度法则，智能重算并校准全部历史战报的星级档位（解决旧版四星档仅绑定单模型导致的触发过窄问题）"
+                    aria-expanded={showRuleAudit}
+                    onClick={() => setShowRuleAudit(value => !value)}
+                    className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-300 hover:bg-amber-500/20"
                   >
-                    {isCalibratingStars ? (
-                      <>
-                        <div className="w-3.5 h-3.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
-                        <span>正在校准星级...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400/30" />
-                        <span>星级档位智能重校准</span>
-                      </>
-                    )}
+                    <Star className="w-3.5 h-3.5" />
+                    {showRuleAudit ? '收起规则回放' : '规则回放与市场对照'}
                   </button>
 
                   <button
@@ -3564,6 +3489,13 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                   全选当前筛选
                 </label>
                 <span className="text-cyan-300 font-bold">已选 {selectedReviews.length} 场</span>
+                <div aria-live="polite" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-200">
+                  <span>{hasReviewSelection ? '已选场次' : '全部单场'}胜平负模拟 · {settlementCount} 场中 {settlement.priced} 场可结算</span>
+                  <SimulatedSettlement stake={settlement.priced} profit={settlement.profit} />
+                  <span>ROI {displayRate(settlement.profit, settlement.priced)}</span>
+                  {settlement.priced < settlementCount &&
+                    <span className="text-amber-300">{settlementCount - settlement.priced} 场缺少有效预测、赛果或赔率，已排除</span>}
+                </div>
                 <label className="flex items-center gap-2 text-slate-300">
                   归入销售日
                   <input
@@ -3588,10 +3520,12 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                   </button>
                 )}
                 <span className="w-full text-[11px] text-slate-400">
-                  选中需要修正的场次，再选择销售日；原始开赛数据保留，首次调整前会自动备份历史复盘。
+                  默认汇总全部单场，勾选后只汇总所选场次。每场模拟投入 1 单位，双选各投 0.5，返还含本金。需要修正销售日时，选好日期再点调整，首次调整前会自动备份。
                   {incompleteReviewDateCount > 0 && <span className="text-amber-300 ml-1">{incompleteReviewDateCount} 场缺少完整开赛日期，可选中调整销售日。</span>}
                 </span>
               </div>
+
+              {showRuleAudit && <RuleAuditPanel reviews={reviews} />}
 
               {/* STAR TIER REALIZATION VALUE DASHBOARD */}
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-md space-y-3">
@@ -3608,10 +3542,10 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                 </div>
 
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[740px] text-right text-xs tabular-nums">
+                  <table className="w-full min-w-[900px] text-right text-xs tabular-nums">
                     <thead className="text-slate-400 border-b border-slate-800">
                       <tr>
-                        {['星级', '单选命中', '双选覆盖', '综合覆盖', '模拟 ROI', '净盈亏（单位）', '让球不亏', '大小球命中'].map((label, i) =>
+                        {['星级', '单选命中', '双选覆盖', '综合覆盖', '模拟结算（单位）', '模拟 ROI', '让球不亏', '大小球命中'].map((label, i) =>
                           <th key={label} scope="col" className={i === 0 ? 'p-2 text-left' : 'p-2'}>{label}</th>
                         )}
                       </tr>
@@ -3635,11 +3569,11 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                             {rateCell(tier.single.hits, tier.single.total)}
                             {rateCell(tier.double.hits, tier.double.total)}
                             {rateCell(tier.hits, tier.settled)}
+                            <td className="p-2"><SimulatedSettlement stake={tier.priced} profit={tier.profit} /></td>
                             <td className="p-2">
                               <strong className={tier.profit < 0 ? 'text-rose-300' : 'text-slate-100'}>{displayRate(tier.profit, tier.priced)}</strong>
                               <div className="text-[10px] text-slate-400">{tier.priced} 场可计</div>
                             </td>
-                            <td className="p-2">{tier.priced ? tier.profit.toFixed(2) : '—'}</td>
                             <td className="p-2">{tier.handicapRate}</td>
                             <td className="p-2">{tier.ouRate}</td>
                           </tr>
@@ -3649,7 +3583,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                   </table>
                 </div>
                 <p className="text-[11px] leading-relaxed text-slate-400">
-                  单选和双选分别统计，分数为命中场数 / 可判定场数。模拟每场投入 1 单位，双选两项各投 0.5。按存档晚盘欧赔结算，三项赔率均有效且大于 1 才计入 ROI。让球不亏含走盘和赢半。
+                  单选和双选分别统计，分数为命中场数 / 可判定场数。无预测的占位盘口不计入胜平负统计。模拟每场投入 1 单位，双选两项各投 0.5。返还含本金，按存档晚盘欧赔结算，三项赔率均有效且大于 1 才计入模拟结算。让球不亏含走盘和赢半。
                 </p>
               </div>
 
@@ -4142,6 +4076,11 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                                       {rev.salesDateOverride && (
                                         <span className="text-[10px] text-cyan-300">销售日已手动确认</span>
                                       )}
+                                      {rev.predictionSnapshot && <span className="text-[10px] text-emerald-300">
+                                        {hasVerifiedSnapshot(rev.predictionSnapshot) ? '已核验赛前' : '开赛时间待核验'} · {rev.predictionSnapshot.ruleVersion} ·
+                                        {' '}盘口录入 {new Date(rev.predictionSnapshot.recordedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}
+                                      </span>}
+
                                       <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
                                         <span>(复盘: {timeInfo.timeStr})</span>
                                       </span>

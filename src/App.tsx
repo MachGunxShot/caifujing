@@ -20,6 +20,7 @@ import {
   parseKickoffDetails,
   isMatchBeforeOrAtCutoff,
   matchTeamsFuzzy,
+  normalizeTeamName,
   extractKickoffTime,
 } from './utils/salesDayUtils';
 import {
@@ -37,6 +38,7 @@ const ReviewEvolutionView = lazy(() => import('./components/ReviewEvolutionView'
 const ModelKnowledgeBase = lazy(() => import('./components/ModelKnowledgeBase').then((m) => ({ default: m.ModelKnowledgeBase })));
 
 import { createQueueWriter, QUEUE_STORAGE_KEY } from './utils/queuePersistence';
+import { hasVerifiedSnapshot, sealQueuePrediction, snapshotKickoff } from './utils/predictionSnapshot';
 const WORKSPACE_BACKUP_KEY = 'fortune_actuary_user_workspace';
 const MATCH_STORAGE_KEY = 'fortune_actuary_current_match_v2';
 const REPORT_STORAGE_KEY = 'fortune_actuary_current_report_v2';
@@ -63,7 +65,7 @@ import { extractLeagueFromText } from './utils/textParser';
  */
 function sanitizeAndRecalibrateQueue(queue: BatchMatchItem[]): BatchMatchItem[] {
   return queue.map((item) => {
-    if ((item.isLocked || item.isReviewed) && item.report) return item;
+    if ((item.isLocked || item.isReviewed || item.marketRecordedAt !== undefined || item.predictionSnapshot) && item.report) return item;
     // If kickoff time was lost or left as '临场', see if marketStory has the time
     let matchTime = item.data.matchInfo.matchTime;
     if (!matchTime || matchTime === '临场') {
@@ -508,6 +510,7 @@ export default function App() {
             threeDimLieDetection: parsedLieDetection,
             finalVerdict: parsedVerdict,
             source: 'GEMINI_AI',
+            geminiModel: typeof data.geminiModel === 'string' ? data.geminiModel : undefined,
           });
         }
       }
@@ -570,10 +573,14 @@ export default function App() {
   };
 
   // Image analysis callback
-  const handleImageAnalyzed = (targetData: FullMatchData, aiAnalysis: string) => {
+  const handleImageAnalyzed = (targetData: FullMatchData, aiAnalysis: string, geminiModel?: string) => {
     const updatedReport = generateActuarialRuleReport(targetData);
     setMatchData(targetData);
     const reportAiText = updatedReport.decision.v4Assessment ? '' : aiAnalysis;
+    if (reportAiText) {
+      updatedReport.source = 'GEMINI_AI';
+      updatedReport.geminiModel = geminiModel;
+    }
     setRawAiText(reportAiText);
     setReport(updatedReport);
     setActiveTab('report');
@@ -585,6 +592,7 @@ export default function App() {
       data: targetData,
       report: updatedReport,
       rawAiText: reportAiText,
+      marketRecordedAt: Date.now(),
       status: 'done',
       timestamp: Date.now(),
     };
@@ -647,12 +655,17 @@ export default function App() {
         );
 
         if (existingIndex >= 0) {
-          const existing = updatedQueue[existingIndex];
-          if (existing.isLocked) {
+          let existing = updatedQueue[existingIndex];
+          const kickoff = snapshotKickoff(existing.data);
+          if (kickoff !== undefined && kickoff <= Date.now()) {
+            existing = { ...sealQueuePrediction(existing, Date.now()), isLocked: true };
+            updatedQueue[existingIndex] = existing;
+          }
+          if (existing.isLocked || existing.predictionSnapshot || existing.isReviewed || existing.finalScore) {
             protectedCount++;
             // Lock Protection: preserve locked odds and predictions.
             // If matchTime was previously '临场' or missing, update matchTime from new data!
-            if ((!existing.data.matchInfo.matchTime || existing.data.matchInfo.matchTime === '临场') &&
+            if (!existing.predictionSnapshot && (!existing.data.matchInfo.matchTime || existing.data.matchInfo.matchTime === '临场') &&
                 m.matchInfo.matchTime && m.matchInfo.matchTime !== '临场') {
               updatedQueue[existingIndex] = {
                 ...existing,
@@ -737,28 +750,6 @@ export default function App() {
           else if (confidenceShift.shiftType === 'DECREASED') decConfidenceCount++;
           else stableConfidenceCount++;
 
-          // If match was already scored, re-evaluate review outcome against the updated late market report
-          let updatedReview = existing.review;
-          if (existing.finalScore) {
-            const parts = existing.finalScore.split(/[-:：]/);
-            const hScore = parseInt(parts[0], 10);
-            const aScore = parseInt(parts[1], 10);
-            if (!isNaN(hScore) && !isNaN(aScore)) {
-              updatedReview = evaluateMatchOutcomeAndExtractLesson(
-                mergedMatchData,
-                updatedReport,
-                hScore,
-                aScore,
-                existing.review?.matchIncidents || '',
-                false,
-                existing.review?.salesDateOverride || existing.review?.salesDate,
-                existing.timestamp,
-                existing.review
-              );
-              if (!savePostMatchReview(updatedReview)) continue;
-            }
-          }
-
           updatedQueue[existingIndex] = {
             ...existing,
             data: mergedMatchData,
@@ -768,10 +759,10 @@ export default function App() {
             confidenceShift,
             status: 'done',
             timestamp: Date.now(),
+            marketRecordedAt: Date.now(),
             isReviewed: existing.isReviewed,
             finalScore: existing.finalScore,
             isLocked: existing.isLocked,
-            review: updatedReview || existing.review,
           };
         } else {
           // Brand new match, add to queue (首次导入基石盘口)
@@ -811,6 +802,7 @@ export default function App() {
             report: rep,
             earlyDataSnapshot: m, // 保存初盘快照，供晚盘二次导入时精准比对变轨
             earlyReportSnapshot: rep,
+            marketRecordedAt: Date.now(),
             confidenceShift,
             status: 'done',
             timestamp: Date.now(),
@@ -850,7 +842,6 @@ export default function App() {
     target?: string | string[] | { mode?: 'started' | 'cutoff' | 'exact' | 'ids'; cutoffTime?: string; ids?: string[] }
   ): number => {
     const now = Date.now();
-    const timeStr = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
     const targetIdsToLock = new Set<string>();
 
     if (Array.isArray(target)) {
@@ -896,9 +887,9 @@ export default function App() {
           if (item.isLocked) return item;
           if (targetIdsToLock.has(item.id)) {
             return {
-              ...item,
+              ...sealQueuePrediction(item, now),
               isLocked: true,
-              lockedAt: item.data.matchInfo.matchTime || timeStr,
+              lockedAt: item.lockedAt || new Date(now).toISOString(),
               lockedReason: '开赛封盘保护 (固化终盘)',
             };
           }
@@ -910,37 +901,60 @@ export default function App() {
     return count;
   };
 
-  // Toggle lock for a specific match (protects snapshot against re-imports)
-  const handleToggleLockMatch = (id: string) => {
-    setBatchQueue((prev) =>
-      prev.map((item) => {
-        if (item.id === id) {
-          const willLock = !item.isLocked;
-          return {
-            ...item,
-            isLocked: willLock,
-            lockedAt: willLock
-              ? new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-              : undefined,
-            lockedReason: willLock ? '已开赛封盘保护' : undefined,
-          };
-        }
-        return item;
-      })
-    );
+  const handleSaveCurrentSnapshot = () => {
+    const now = Date.now();
+    const { homeTeam, awayTeam, matchTime } = matchData.matchInfo;
+    if (!homeTeam.trim() || !awayTeam.trim()) return '请先填写主客队。';
+    const kickoff = snapshotKickoff(matchData);
+    if (kickoff !== undefined && kickoff <= now) return '比赛已经开赛，无法补建赛前快照。';
+    if (![matchData.euroOdds.lateWin, matchData.euroOdds.lateDraw, matchData.euroOdds.lateLoss].every(odds => odds > 1 && Number.isFinite(odds))) {
+      return '请填写有效的三项晚盘欧赔。';
+    }
+    const existing = batchQueue.find(item => {
+      const info = item.data.matchInfo;
+      return normalizeTeamName(info.homeTeam) === normalizeTeamName(homeTeam) &&
+        normalizeTeamName(info.awayTeam) === normalizeTeamName(awayTeam) &&
+        (kickoff !== undefined ? snapshotKickoff(item.data) === kickoff : info.matchTime === matchTime);
+    });
+    if (existing?.isReviewed || existing?.finalScore) return '这场比赛已有赛果。';
+    if (existing?.predictionSnapshot) return '这场比赛已保存原始快照。';
+    const item = sealQueuePrediction({
+      ...existing,
+      id: existing?.id || `snapshot-${now}-${Math.random().toString(36).slice(2, 9)}`,
+      data: matchData,
+      report: generateActuarialRuleReport(matchData),
+      rawAiText: undefined,
+      confidenceShift: undefined,
+      timestamp: existing?.timestamp ?? now,
+      marketRecordedAt: now,
+      status: 'done',
+    }, now, true);
+    if (!item.predictionSnapshot) return '当前数据无法保存为盘赔快照。';
+    setBatchQueue(queue => existing
+      ? queue.map(previous => previous.id === item.id && !previous.predictionSnapshot && !previous.isReviewed ? item : previous)
+      : [item, ...queue]);
+    return hasVerifiedSnapshot(item.predictionSnapshot)
+      ? '已保存赛前快照，可在批量矩阵里查看。'
+      : '已保存快照。缺少完整开赛时间，无法确认赛前留档。';
   };
 
-  // Batch lock or unlock matches
+  // A dated prediction snapshot remains sealed when unlocking older market records.
+  const handleToggleLockMatch = (id: string) => {
+    const now = Date.now();
+    setBatchQueue(queue => queue.map(item => {
+      if (item.id !== id || item.predictionSnapshot || item.isReviewed) return item;
+      if (item.isLocked) return { ...item, isLocked: false, lockedAt: undefined, lockedReason: undefined };
+      return { ...sealQueuePrediction(item, now, true), isLocked: true, lockedAt: new Date(now).toISOString(), lockedReason: '手动封盘' };
+    }));
+  };
+
   const handleBatchLockMatches = (lock: boolean) => {
-    const timeStr = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-    setBatchQueue((prev) =>
-      prev.map((item) => ({
-        ...item,
-        isLocked: lock,
-        lockedAt: lock ? item.lockedAt || timeStr : undefined,
-        lockedReason: lock ? item.lockedReason || '开赛封盘保护' : undefined,
-      }))
-    );
+    const now = Date.now();
+    setBatchQueue(queue => queue.map(item => {
+      if (item.predictionSnapshot || item.isReviewed || item.isLocked === lock) return item;
+      if (!lock) return { ...item, isLocked: false, lockedAt: undefined, lockedReason: undefined };
+      return { ...sealQueuePrediction(item, now, true), isLocked: true, lockedAt: new Date(now).toISOString(), lockedReason: '批量封盘' };
+    }));
   };
 
   // Delete a single match from the batch queue
@@ -958,7 +972,8 @@ export default function App() {
     setBatchQueue((prev) =>
       prev.map((item) => {
         if (item.id === id) {
-          const rep = item.report || generateActuarialRuleReport(item.data);
+          const sealed = sealQueuePrediction(item, Date.now());
+          const rep = sealed.report || generateActuarialRuleReport(sealed.data);
           let review = evaluateMatchOutcomeAndExtractLesson(
             item.data,
             rep,
@@ -968,7 +983,8 @@ export default function App() {
             false,
             item.review?.salesDateOverride || item.review?.salesDate,
             item.timestamp,
-            item.review
+            item.review,
+            sealed.predictionSnapshot
           );
           if (item.review?.salesDateOverride) {
             review = calibrateReviewSalesDate({ ...review, salesDateOverride: item.review.salesDateOverride });
@@ -977,7 +993,7 @@ export default function App() {
           if (!savePostMatchReview(review)) return item;
 
           return {
-            ...item,
+            ...sealed,
             finalScore: `${homeScore}-${awayScore}`,
             isReviewed: true,
             isLocked: true, // Automatically lock once result is recorded
@@ -992,7 +1008,7 @@ export default function App() {
   const handleSelectBatchMatch = (match: FullMatchData) => {
     setMatchData(match);
     setRawAiText('');
-    setReport(generateActuarialRuleReport(match));
+    setReport(batchQueue.find(item => item.data === match)?.report || generateActuarialRuleReport(match));
     setActiveTab('report');
   };
 
@@ -1000,7 +1016,7 @@ export default function App() {
   const handleSelectMatchKeepTab = (match: FullMatchData) => {
     setMatchData(match);
     setRawAiText('');
-    setReport(generateActuarialRuleReport(match));
+    setReport(batchQueue.find(item => item.data === match)?.report || generateActuarialRuleReport(match));
   };
 
   // Batch analyze all matches in queue and render them
@@ -1139,6 +1155,7 @@ export default function App() {
                   data={matchData}
                   onChange={setMatchData}
                   onSubmit={() => handleAnalyze(matchData)}
+                  onSaveSnapshot={handleSaveCurrentSnapshot}
                   isLoading={isLoading}
                   onSelectPreset={handleSelectPreset}
                   onOpenUploadModal={() => setIsUploadModalOpen(true)}

@@ -5,7 +5,9 @@ import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { GoogleGenAI } from '@google/genai';
+import * as http from 'node:http';
+import { GoogleGenAI, ThinkingLevel, type GenerateContentParameters } from '@google/genai';
+import { DEFAULT_GEMINI_TIMEOUT_MS, generateWithModelFallback, getGeminiModels } from './src/utils/geminiModels.ts';
 import { generateActuarialRuleReport } from './src/utils/actuaryEngine.ts';
 import { parseBatchMatchScoresFromText } from './src/utils/textParser.ts';
 import { matchTeamsFuzzy, normalizeTeamName } from './src/utils/salesDayUtils.ts';
@@ -14,26 +16,18 @@ dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Overridable via .env so a saturated or retired model can be swapped without
-// editing code. Full flash tiers currently answer 503 while lite stays healthy,
-// so a saturated model falls through to the next entry instead of failing.
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
-const GEMINI_MODEL_FALLBACKS = (process.env.GEMINI_MODEL_FALLBACKS
-  || 'gemini-3.5-flash-lite,gemini-3.1-flash-lite')
-  .split(',').map((m) => m.trim()).filter(Boolean);
-const GEMINI_MODELS = [GEMINI_MODEL, ...GEMINI_MODEL_FALLBACKS.filter((m) => m !== GEMINI_MODEL)];
+const GEMINI_MODELS = getGeminiModels(process.env.GEMINI_MODEL, process.env.GEMINI_MODEL_FALLBACKS);
+const GEMINI_TIMEOUT_MS = Math.max(5000, Number(process.env.GEMINI_TIMEOUT_MS) || DEFAULT_GEMINI_TIMEOUT_MS);
 
-// A saturated model returns 503 UNAVAILABLE or 429 RESOURCE_EXHAUSTED while
-// other tiers stay healthy, so those two are worth retrying on the next model.
-function isRetryableModelError(err: any): boolean {
-  const status = err?.status ?? err?.code ?? err?.error?.code;
-  if (status === 503 || status === 429) return true;
-  const message = String(err?.message ?? '');
-  return /UNAVAILABLE|RESOURCE_EXHAUSTED|overloaded|high demand|fetch failed/i.test(message);
+// Recent Node releases can use an existing proxy environment for Gemini HTTPS calls.
+const { setGlobalProxyFromEnv } = http as typeof http & { setGlobalProxyFromEnv?: () => void };
+if (process.env.HTTPS_PROXY || process.env.https_proxy) {
+  try {
+    setGlobalProxyFromEnv?.();
+  } catch {
+    console.warn('Could not enable proxy environment for Gemini.');
+  }
 }
-
-// Without a timeout one hung request can stall a handler through every fallback model.
-const GEMINI_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GEMINI_TIMEOUT_MS || '60000', 10) || 60000);
 
 // Loopback by default: the API spends the owner's Gemini quota and has no auth,
 // so exposing it to the LAN must be an explicit choice (HOST=0.0.0.0).
@@ -86,33 +80,22 @@ function buildRuleEngineText(matchData: any): string {
 
 function extractJsonBlock(text: string): any {
   const match = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  if (!match) return null;
   try {
-    return JSON.parse(match[1]);
-  } catch (e) {
-    console.warn('Failed to parse JSON block from model response:', e);
+    return JSON.parse(match?.[1] ?? text);
+  } catch {
     return null;
   }
 }
 
-async function generateWithFallback(params: { contents: any; config?: any }) {
-  let lastError: any;
-  for (const model of GEMINI_MODELS) {
-    try {
-      return await ai.models.generateContent({ ...params, model });
-    } catch (err: any) {
-      lastError = err;
-      if (!isRetryableModelError(err)) throw err;
-      console.warn(`Gemini model ${model} unavailable, trying next: ${String(err?.message ?? err).slice(0, 140)}`);
-    }
-  }
-  throw lastError;
+function generateWithFallback(params: Omit<GenerateContentParameters, 'model'>, thinkingLevel: ThinkingLevel.LOW | ThinkingLevel.MEDIUM = ThinkingLevel.MEDIUM) {
+  return generateWithModelFallback(GEMINI_MODELS, request => ai.models.generateContent(request), params, thinkingLevel);
 }
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || '',
   httpOptions: {
     timeout: GEMINI_TIMEOUT_MS,
+    retryOptions: { attempts: 1 },
     headers: {
       'User-Agent': 'aistudio-build',
     },
@@ -171,6 +154,7 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
 `;
 
       let aiResponseText = '';
+      let geminiModel: string | undefined;
       if (process.env.GEMINI_API_KEY) {
         const response = await generateWithFallback({
           contents: promptText,
@@ -179,7 +163,8 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
             temperature: 0.2,
           },
         });
-        aiResponseText = response.text || '';
+        aiResponseText = response.text;
+        geminiModel = response.model;
       }
 
       // Report where the text really came from, so the UI never labels engine output as AI.
@@ -189,16 +174,16 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
         aiAnalysis: fromAi ? aiResponseText : buildRuleEngineText(matchData),
         source: fromAi ? 'GEMINI_AI' : 'RULE_ENGINE_FALLBACK',
         degraded: !fromAi,
-        ...(fromAi ? {} : { note: process.env.GEMINI_API_KEY ? '大模型未返回内容，已切换至《财富经》底线精算引擎' : '未配置 GEMINI_API_KEY，使用《财富经》底线精算引擎' }),
+        ...(fromAi ? { geminiModel } : { note: process.env.GEMINI_API_KEY ? '大模型未返回内容，已切换至《财富经》底线精算引擎' : '未配置 GEMINI_API_KEY，使用《财富经》底线精算引擎' }),
       });
     } catch (err: any) {
-      console.warn('Gemini API call temporarily unavailable, gracefully returning rule engine fallback:', err?.message);
+      console.warn('Gemini analysis unavailable, switching to the rule engine.');
       res.json({
         success: true,
         aiAnalysis: buildRuleEngineText(req.body),
         source: 'RULE_ENGINE_FALLBACK',
         degraded: true,
-        note: '大模型并发激增，系统已秒级无缝切换至《财富经》底线精算引擎',
+        note: 'Gemini 暂未完成分析，已切换至《财富经》底线精算引擎',
       });
     }
   });
@@ -235,7 +220,7 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
 - 最终实际比分：${actualScore}
 - 赛中突发转折点：${matchIncidents || '无特殊突发事件，常规技战术对抗'}
 
-【请严格按以下 JSON 结构输出】（使用 \`\`\`json 包裹）：
+【请严格按以下 JSON 结构输出】：
 \`\`\`json
 {
   "summaryNote": "一句话核心复盘定性（如：大庄正向控赔底牌完美印证，或是遭遇突发红牌/变异盘型反向收割）",
@@ -247,6 +232,7 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
 `;
 
       let dissectionData: any = null;
+      let geminiModel: string | undefined;
       if (process.env.GEMINI_API_KEY) {
         try {
           const response = await generateWithFallback({
@@ -254,13 +240,17 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
             config: {
               systemInstruction: '你是一位精通欧亚足彩风控内幕的顶级操盘复盘专家。你的分析绝不浮于表面，必须深刻归因庄家真实赔付、筹码诱导陷阱或黑天鹅事件，提炼出可被未来研判复用的实战金律。',
               temperature: 0.2,
+              responseMimeType: 'application/json',
             },
           });
 
           const parsed = extractJsonBlock(response.text || '');
-          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) dissectionData = parsed;
+          if (parsed && ['summaryNote', 'dissectionText', 'evolvedRuleTitle', 'evolvedRuleContent'].every(field => typeof parsed[field] === 'string' && parsed[field].trim())) {
+            dissectionData = parsed;
+            geminiModel = response.model;
+          }
         } catch (apiErr: any) {
-          console.warn('Gemini review temporary spike, switching to deterministic review:', apiErr?.message);
+          console.warn('Gemini review unavailable, switching to the rule engine.');
         }
       }
 
@@ -281,6 +271,7 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
       res.json({
         success: true,
         aiDissection: dissectionData,
+        geminiModel,
         source: fromAi ? 'GEMINI_AI' : 'RULE_ENGINE_FALLBACK',
         degraded: !fromAi,
       });
@@ -366,6 +357,7 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
 `;
 
       let aiResponseText = '';
+      let geminiModel: string | undefined;
       if (process.env.GEMINI_API_KEY) {
         const imagePart = { inlineData: image };
 
@@ -377,8 +369,9 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
             systemInstruction: FORTUNE_SYSTEM_PRINCIPLES,
             temperature: 0.2,
           },
-        });
-        aiResponseText = response.text || '';
+        }, ThinkingLevel.LOW);
+        aiResponseText = response.text;
+        geminiModel = response.model;
       }
 
       if (!aiResponseText) {
@@ -391,9 +384,9 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
         const reason = error instanceof Error ? error.message : '赛事格式错误';
         return res.status(422).json({ success: false, error: reason + '，请核对截图后重试。' });
       }
-      return res.json({ success: true, aiAnalysis: aiResponseText, extractedData, source: 'GEMINI_AI' });
+      return res.json({ success: true, aiAnalysis: aiResponseText, extractedData, source: 'GEMINI_AI', geminiModel });
     } catch (err: any) {
-      console.warn('API /api/analyze-image error:', err?.message);
+      console.warn('Gemini image analysis unavailable.');
       return res.status(503).json({ success: false, error: '截图识别服务暂不可用，请稍后重试。' });
     }
   });
@@ -409,6 +402,7 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
       let parsedScores: any[] = [];
       let skippedUnreadable = 0;
       let usedVision = false;
+      let geminiModel: string | undefined;
 
       // 1. If Image is provided and GEMINI_API_KEY is present, use Gemini multimodal vision
       const image = imageBase64 ? normalizeImageInput(imageBase64, mimeType) : null;
@@ -423,7 +417,7 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
 
 ${candidateListStr ? `【待匹配的目标赛事参考列表】：${candidateListStr}` : ''}
 
-【必须严格按以下 JSON 数组代码块格式输出】（使用 \`\`\`json 包裹）：
+【请严格按以下 JSON 数组格式输出】：
 \`\`\`json
 [
   {
@@ -444,12 +438,14 @@ ${candidateListStr ? `【待匹配的目标赛事参考列表】：${candidateLi
             config: {
               systemInstruction: '你是一位精通各类足球比分网与彩票APP截图排版的高精度多模态 OCR 专家。能够准确提取主队、客队、比分，并自动校准球队别名。',
               temperature: 0.1,
+              responseMimeType: 'application/json',
             },
-          });
+          }, ThinkingLevel.LOW);
 
-          const list = extractJsonBlock(response.text || '');
+          const list = extractJsonBlock(response.text);
           if (Array.isArray(list)) {
             usedVision = true;
+            geminiModel = response.model;
             list.forEach((item: any, idx: number) => {
               const h = String(item?.homeTeam || item?.home || '').trim();
               const a = String(item?.awayTeam || item?.away || '').trim();
@@ -482,7 +478,7 @@ ${candidateListStr ? `【待匹配的目标赛事参考列表】：${candidateLi
             });
           }
         } catch (visionErr: any) {
-          console.warn('Gemini vision score recognition error:', visionErr?.message);
+          console.warn('Gemini vision score recognition unavailable.');
         }
       }
 
@@ -502,6 +498,7 @@ ${candidateListStr ? `【待匹配的目标赛事参考列表】：${candidateLi
         success: true,
         scores: parsedScores,
         skippedUnreadable,
+        geminiModel,
         source: usedVision ? (usedText ? 'GEMINI_VISION_OCR+TEXT_PARSER' : 'GEMINI_VISION_OCR') : 'TEXT_PARSER',
       });
     } catch (err: any) {
@@ -519,7 +516,7 @@ ${candidateListStr ? `【待匹配的目标赛事参考列表】：${candidateLi
     res.json({
       status: 'ok',
       hasApiKey: !!process.env.GEMINI_API_KEY,
-      model: GEMINI_MODEL,
+      model: GEMINI_MODELS[0],
       models: GEMINI_MODELS,
     });
   });

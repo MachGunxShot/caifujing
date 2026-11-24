@@ -21,6 +21,7 @@ interface MatchInputFormProps {
   data: FullMatchData;
   onChange: (newData: FullMatchData) => void;
   onSubmit: () => void;
+  onSaveSnapshot: () => string;
   isLoading: boolean;
   onSelectPreset: (preset: typeof PRESET_CASES[0]) => void;
   onOpenUploadModal?: () => void;
@@ -38,6 +39,7 @@ export const MatchInputForm: React.FC<MatchInputFormProps> = ({
   data,
   onChange,
   onSubmit,
+  onSaveSnapshot,
   isLoading,
   onSelectPreset,
   onOpenUploadModal,
@@ -45,6 +47,7 @@ export const MatchInputForm: React.FC<MatchInputFormProps> = ({
   batchCount = 0,
 }) => {
   const [pasteText, setPasteText] = useState('');
+  const [snapshotMessage, setSnapshotMessage] = useState('');
   const [showPasteBox, setShowPasteBox] = useState(false);
 
   const handleTextParse = () => {
@@ -235,6 +238,12 @@ export const MatchInputForm: React.FC<MatchInputFormProps> = ({
         </div>
 
         <div className="grid grid-cols-2 gap-2">
+          <label className="col-span-2 text-xs text-slate-400">
+            开赛时间（北京时间）
+            <input type="text" placeholder="YYYY-MM-DD HH:mm" value={data.matchInfo.matchTime}
+              onChange={event => { setSnapshotMessage(''); updateMatchInfo('matchTime', event.target.value); }}
+              className="mt-1 w-full rounded bg-slate-950 p-1.5 text-slate-200" />
+          </label>
           {(['homeProfile', 'awayProfile'] as const).map(field => (
             <label key={field} className="text-xs text-slate-400">
               {field === 'homeProfile' ? '主队定位' : '客队定位'}
@@ -615,6 +624,12 @@ export const MatchInputForm: React.FC<MatchInputFormProps> = ({
             </>
           )}
         </button>
+
+        <button type="button" onClick={() => setSnapshotMessage(onSaveSnapshot())}
+          className="w-full rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-slate-800">
+          保存赛前快照
+        </button>
+        {snapshotMessage && <p role="status" className="text-xs text-slate-300">{snapshotMessage}</p>}
 
         {batchCount > 1 && onBatchAnalyzeAll && (
           <button

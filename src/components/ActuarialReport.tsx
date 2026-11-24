@@ -36,6 +36,8 @@ import { MarkdownView } from './MarkdownView';
 import { generateMatchMarkdown } from '../utils/textParser';
 import { generateActuarialRuleReport, compareEarlyVsLateConfidence } from '../utils/actuaryEngine';
 
+import { EURO_OUTCOMES, EURO_LABELS, decisionOutcomes, displayRate, market1x2 } from '../utils/euroStatistics';
+
 interface ActuarialReportProps {
   report: AnalysisReportResult;
   rawAiText?: string;
@@ -63,6 +65,8 @@ export const ActuarialReport: React.FC<ActuarialReportProps> = ({
   isFullWidth = false,
   onToggleFullWidth,
 }) => {
+  const market = market1x2(matchData.euroOdds);
+  const picks = decisionOutcomes(report.decision);
   const [copied, setCopied] = useState(false);
   const [copiedAll, setCopiedAll] = useState(false);
   const [viewMode, setViewMode] = useState<'rendered' | 'markdown'>('rendered');
@@ -851,11 +855,27 @@ export const ActuarialReport: React.FC<ActuarialReportProps> = ({
               </div>
               <div className="flex items-center gap-2 shrink-0 font-mono text-xs">
                 <span className="px-2.5 py-1 rounded bg-slate-950 border border-slate-800 text-amber-400 font-bold">
-                  推荐置信度: {report.decision?.starRating || 3}★
+                  盘口信号 {report.decision?.starRating || 3}★
                 </span>
               </div>
             </div>
           )}
+
+          {market && <section aria-label="市场概率与回本门槛" className="space-y-2 rounded-xl border border-slate-800 bg-slate-900 p-4">
+            <h3 className="text-sm font-bold text-white">市场概率与回本门槛</h3>
+            <dl className="grid grid-cols-3 gap-2">
+              {EURO_OUTCOMES.map(outcome => <div key={outcome} className="space-y-0.5 rounded-lg bg-slate-950 p-2 tabular-nums">
+                <dt className="text-xs text-slate-300">{EURO_LABELS[outcome]} · {market.prices[outcome].toFixed(2)}</dt>
+                <dd className="text-sm font-bold text-cyan-300">{displayRate(market.probabilities[outcome], 1)}</dd>
+                <dd className="text-[11px] text-slate-400">回本需 {displayRate(1, market.prices[outcome])}</dd>
+              </div>)}
+            </dl>
+            <p className="text-[11px] text-slate-400">
+              概率由三项晚盘赔率去水得到。回本门槛按单选计算。
+              {picks.length === 1 && ` 当前方向 ${EURO_LABELS[picks[0]]}。`}
+              {' '}星级表示盘口规则符合度。
+            </p>
+          </section>}
 
           {/* Section 1: 【盘面第一印象】 */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm relative">
@@ -1082,7 +1102,8 @@ export const ActuarialReport: React.FC<ActuarialReportProps> = ({
             <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4">
               <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 mb-2">
                 <Brain className="w-4 h-4 text-emerald-400" />
-                <span>{report.source === 'GEMINI_AI' ? 'Gemini 大模型精算师深度博弈论推演全景' : '《财富经》规则引擎推演全景'} (Markdown 原生渲染)</span>
+                <span>{report.source === 'GEMINI_AI' ? 'Gemini 分析' : '《财富经》规则引擎推演'}</span>
+                {report.geminiModel && <span className="font-mono text-emerald-300">{report.geminiModel}</span>}
               </div>
               <div className="bg-slate-950 p-4 rounded-lg border border-slate-800/80">
                 <MarkdownView content={rawAiText} />
