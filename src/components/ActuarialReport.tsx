@@ -223,51 +223,51 @@ export const ActuarialReport: React.FC<ActuarialReportProps> = ({
     <div className="space-y-4">
       {/* Batch Mode Switcher Bar */}
       {batchQueue && batchQueue.length > 0 && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs shadow-md">
-          <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800">
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
             <button
               type="button"
               onClick={() => setReportMode('single')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-extrabold transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                 reportMode === 'single'
-                  ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 shadow-sm'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-slate-800 text-slate-50'
+                  : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <FileText className="w-3.5 h-3.5" />
-              <span>📄 单场精修台 (双栏同步)</span>
+              <FileText className="w-3.5 h-3.5 text-emerald-400" />
+              <span>单场精修台</span>
             </button>
             <button
               type="button"
               onClick={() => setReportMode('batch')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-extrabold transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                 reportMode === 'batch'
-                  ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 shadow-sm'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-slate-800 text-slate-50'
+                  : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <Layers className="w-3.5 h-3.5" />
-              <span>📑 批量透视流 (独立全屏页面 · 已选 {selectedMatchIds.length} 场)</span>
+              <Layers className="w-3.5 h-3.5 text-emerald-400" />
+              <span>批量透视流 · {selectedMatchIds.length} 场</span>
             </button>
           </div>
 
           {reportMode === 'batch' ? (
             <div className="flex items-center gap-2">
-              <span className="text-[11px] text-emerald-400 font-mono hidden md:inline">
-                ✨ 独立页面模式：已隐藏左侧单场输入台，数据全屏对齐
+              <span className="text-xs text-slate-400 hidden md:inline">
+                全宽对齐模式
               </span>
               <button
                 type="button"
                 onClick={() => setReportMode('single')}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold transition-colors cursor-pointer"
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-850 hover:bg-slate-800 text-slate-200 border border-slate-700 text-xs font-medium transition-colors cursor-pointer whitespace-nowrap"
               >
                 <span>返回单场精修</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </div>
           ) : (
-            <div className="text-[11px] text-slate-400 font-mono hidden sm:block">
-              当前展示：{matchData.matchInfo.homeTeam} vs {matchData.matchInfo.awayTeam}
+            <div className="text-xs text-slate-400 hidden sm:block truncate max-w-[260px]">
+              {matchData.matchInfo.homeTeam} vs {matchData.matchInfo.awayTeam}
             </div>
           )}
         </div>
@@ -426,9 +426,8 @@ export const ActuarialReport: React.FC<ActuarialReportProps> = ({
                           )}
                         </span>
                       ) : (
-                        <span className="px-2 py-0.5 rounded text-xs font-semibold bg-slate-800/80 text-slate-400 border border-slate-700/80 flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400/80"></span>
-                          <span>初盘基石</span>
+                        <span className="text-xs font-medium text-slate-400">
+                          初盘基石
                         </span>
                       )}
                       {onSelectMatch && (
@@ -622,21 +621,22 @@ export const ActuarialReport: React.FC<ActuarialReportProps> = ({
       {reportMode === 'single' && (
         <>
           {/* Top Banner: Identified Model & Verdict Highlights */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/5 rounded-full blur-3xl -z-10 pointer-events-none" />
-
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3 mb-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400 font-mono">
-                {matchData.matchInfo.league || '常规联赛'} · 精算解剖报告
-              </span>
-              <span className={`px-2 py-0.5 rounded text-xs font-bold border ${modelBadge.bg}`}>
-                {modelBadge.label}
-              </span>
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-800 pb-4 mb-4">
+          <div className="space-y-1">
+            <div className="flex items-center flex-wrap gap-2 text-xs text-slate-400">
+              <span>{matchData.matchInfo.league || '常规联赛'}</span>
+              <span aria-hidden="true" className="text-slate-600">·</span>
+              <span className="font-medium text-slate-200">{modelBadge.label.replace(/[【】]/g, '')}</span>
+              {matchData.matchInfo.matchTime && (
+                <>
+                  <span aria-hidden="true" className="text-slate-600">·</span>
+                  <span className="font-mono">{matchData.matchInfo.matchTime}</span>
+                </>
+              )}
             </div>
-            <h2 className="text-lg font-black text-white tracking-wide mt-1">
-              {matchData.matchInfo.homeTeam} VS {matchData.matchInfo.awayTeam}
+            <h2 className="text-lg font-bold text-slate-50 tracking-tight">
+              {matchData.matchInfo.homeTeam} vs {matchData.matchInfo.awayTeam}
             </h2>
           </div>
 
@@ -647,10 +647,10 @@ export const ActuarialReport: React.FC<ActuarialReportProps> = ({
               <button
                 type="button"
                 onClick={() => setViewMode('rendered')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md transition-all ${
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
                   viewMode === 'rendered'
-                    ? 'bg-slate-800 text-emerald-400 font-bold shadow-sm'
-                    : 'text-slate-400 hover:text-white'
+                    ? 'bg-slate-800 text-slate-50 font-semibold'
+                    : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
                 <Eye className="w-3.5 h-3.5" />
@@ -795,21 +795,21 @@ export const ActuarialReport: React.FC<ActuarialReportProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 font-mono text-xs">
-                  <span className="px-2.5 py-1 rounded bg-slate-950 border border-slate-800 text-slate-300 font-bold">
-                    🌅 早盘: {confidenceShift.earlyStars}★
+                <div className="flex items-center gap-2 font-mono text-xs tabular-nums">
+                  <span className="text-slate-400">
+                    早盘 {confidenceShift.earlyStars}★
                   </span>
-                  <span className="text-slate-500 font-bold">➔</span>
+                  <span className="text-slate-600">→</span>
                   <span
-                    className={`px-2.5 py-1 rounded font-bold border ${
+                    className={`font-semibold ${
                       confidenceShift.starChange > 0
-                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                        ? 'text-emerald-400'
                         : confidenceShift.starChange < 0
-                        ? 'bg-rose-500/20 text-rose-300 border-rose-500/50'
-                        : 'bg-slate-950 text-slate-300 border-slate-800'
+                        ? 'text-rose-400'
+                        : 'text-slate-300'
                     }`}
                   >
-                    ⚡ 晚盘: {confidenceShift.lateStars}★ ({confidenceShift.starChange > 0 ? `+${confidenceShift.starChange}` : confidenceShift.starChange})
+                    晚盘 {confidenceShift.lateStars}★ ({confidenceShift.starChange > 0 ? `+${confidenceShift.starChange}` : confidenceShift.starChange})
                   </span>
                 </div>
               </div>

@@ -81,51 +81,51 @@ export const DataCalculations: React.FC<DataCalculationsProps> = ({
     <div className="space-y-4">
       {/* Mode Switcher Banner */}
       {batchQueue && batchQueue.length > 0 && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs shadow-md">
-          <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800">
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
             <button
               type="button"
               onClick={() => setCalcMode('single')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-extrabold transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                 calcMode === 'single'
-                  ? 'bg-gradient-to-r from-cyan-500 to-teal-500 text-slate-950 shadow-sm'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-slate-800 text-slate-50'
+                  : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <Calculator className="w-3.5 h-3.5" />
-              <span>📊 单场精算模型 (双栏同步)</span>
+              <Calculator className="w-3.5 h-3.5 text-emerald-400" />
+              <span>单场精算模型</span>
             </button>
             <button
               type="button"
               onClick={() => setCalcMode('batch')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-extrabold transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                 calcMode === 'batch'
-                  ? 'bg-gradient-to-r from-cyan-500 to-teal-500 text-slate-950 shadow-sm'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-slate-800 text-slate-50'
+                  : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <BarChart3 className="w-3.5 h-3.5" />
-              <span>⚡ 多场横向精算对比矩阵 (独立全屏页面 · 已选 {selectedMatchIds.length} 场)</span>
+              <BarChart3 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>多场横向精算对比 · {selectedMatchIds.length} 场</span>
             </button>
           </div>
 
           {calcMode === 'batch' ? (
             <div className="flex items-center gap-2">
-              <span className="text-[11px] text-cyan-400 font-mono hidden md:inline">
-                ✨ 独立页面模式：已隐藏左侧单场输入台，大表横向对齐
+              <span className="text-xs text-slate-400 hidden md:inline">
+                全宽对比视图
               </span>
               <button
                 type="button"
                 onClick={() => setCalcMode('single')}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-bold transition-colors cursor-pointer"
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-850 hover:bg-slate-800 text-slate-200 border border-slate-700 text-xs font-medium transition-colors cursor-pointer whitespace-nowrap"
               >
                 <span>返回单场模型</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </div>
           ) : (
-            <div className="text-[11px] text-slate-400 font-mono hidden sm:block">
-              当前精算：{matchData.matchInfo.homeTeam} vs {matchData.matchInfo.awayTeam}
+            <div className="text-xs text-slate-400 hidden sm:block truncate max-w-[260px]">
+              {matchData.matchInfo.homeTeam} vs {matchData.matchInfo.awayTeam}
             </div>
           )}
         </div>

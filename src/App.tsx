@@ -29,7 +29,7 @@ import {
   savePostMatchReview,
   getPostMatchReviews,
 } from './utils/experienceStore';
-import { ShieldCheck, Sparkles, TrendingUp, AlertTriangle, HelpCircle, Layers, Brain } from 'lucide-react';
+import { AlertTriangle, ChevronDown, RotateCcw } from 'lucide-react';
 
 // The full-width tabs are by far the largest components; load them on first visit
 // so the default report tab doesn't pay for them up front.
@@ -1056,6 +1056,39 @@ export default function App() {
     setIsBatchAnalyzing(false);
   };
 
+  const realQueueMatches = batchQueue.filter(
+    (item) => !item.id.startsWith('preset-') && !PRESET_CASES.some((c) => c.id === item.id)
+  );
+
+  const activeSelectorValue = (() => {
+    const foundQueue = realQueueMatches.find(
+      (b) =>
+        b.data.matchInfo.homeTeam === matchData.matchInfo.homeTeam &&
+        b.data.matchInfo.awayTeam === matchData.matchInfo.awayTeam
+    );
+    if (foundQueue) return `batch-${foundQueue.id}`;
+    const foundPreset = PRESET_CASES.find(
+      (p) =>
+        p.data.matchInfo.homeTeam === matchData.matchInfo.homeTeam &&
+        p.data.matchInfo.awayTeam === matchData.matchInfo.awayTeam
+    );
+    return foundPreset ? `preset-${foundPreset.id}` : '';
+  })();
+
+  const handleWorkspaceMatchSwitch = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value;
+    if (!val) return;
+    if (val.startsWith('batch-')) {
+      const matchId = val.replace('batch-', '');
+      const item = batchQueue.find((b) => b.id === matchId);
+      if (item) handleSelectMatchKeepTab(item.data);
+    } else if (val.startsWith('preset-')) {
+      const presetId = val.replace('preset-', '');
+      const preset = PRESET_CASES.find((p) => p.id === presetId);
+      if (preset) handleSelectPreset(preset);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
       {/* Header */}
@@ -1072,17 +1105,91 @@ export default function App() {
         onSelectMatch={handleSelectMatchKeepTab}
       />
 
+      {/* Contextual Workspace Strip (Match switcher, active context metadata, reset action) */}
+      <div className="border-b border-slate-800/70 bg-slate-900/50">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-2 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="relative">
+              <select
+                aria-label="切换分析场次"
+                value={activeSelectorValue}
+                onChange={handleWorkspaceMatchSwitch}
+                className="h-8 appearance-none bg-slate-950 text-xs font-medium text-slate-200 border border-slate-800 hover:border-slate-700 rounded-md pl-2.5 pr-7 focus:outline-none focus:border-emerald-500/60 cursor-pointer min-w-[210px] max-w-[320px] truncate transition-colors"
+              >
+                <option value="" disabled>
+                  {realQueueMatches.length > 0
+                    ? `切换实战场次 (${realQueueMatches.length} 场)`
+                    : '选择场次或教学案例'}
+                </option>
+                {realQueueMatches.length > 0 && (
+                  <optgroup label={`实战队列 (${realQueueMatches.length} 场)`}>
+                    {realQueueMatches.map((item, idx) => (
+                      <option key={item.id} value={`batch-${item.id}`}>
+                        #{idx + 1} {item.data.matchInfo.homeTeam} vs {item.data.matchInfo.awayTeam} ({item.data.matchInfo.league || '常规'})
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                <optgroup label="经典操盘教学案例">
+                  {PRESET_CASES.map((c) => (
+                    <option key={c.id} value={`preset-${c.id}`}>
+                      {c.tag} · {c.name.split('：')[0]}
+                    </option>
+                  ))}
+                </optgroup>
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-2 top-1/2 -translate-y-1/2" />
+            </div>
+
+            {matchData.matchInfo.homeTeam && matchData.matchInfo.awayTeam && (
+              <div className="hidden md:flex items-center gap-2 text-xs text-slate-400 truncate">
+                <span className="text-slate-300 font-medium">
+                  {matchData.matchInfo.homeTeam} vs {matchData.matchInfo.awayTeam}
+                </span>
+                <span aria-hidden="true" className="text-slate-600">·</span>
+                <span>{matchData.matchInfo.league || '常规联赛'}</span>
+                {matchData.matchInfo.matchTime && (
+                  <>
+                    <span aria-hidden="true" className="text-slate-600">·</span>
+                    <span className="font-mono text-slate-400">{matchData.matchInfo.matchTime}</span>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-4 text-xs shrink-0">
+            <span className="hidden sm:inline text-slate-500 font-mono">
+              队列 {batchQueue.length} 场
+            </span>
+            <button
+              type="button"
+              onClick={handleReset}
+              className="h-8 px-2.5 rounded-md text-xs font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/80 border border-slate-800 hover:border-slate-700 inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              title="清空当前单场盘面表单"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>重置盘面</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
       {storageWarning && (
-        <div role="alert" className="mx-4 mt-3 rounded-lg border border-red-500/50 bg-red-950/70 px-4 py-2.5 text-xs text-red-200 flex items-start justify-between gap-3">
-          <span>⚠️ {storageWarning}</span>
-          <button type="button" onClick={() => setStorageWarning(null)} className="shrink-0 text-red-300 hover:text-white">关闭</button>
+        <div role="alert" className="max-w-[1440px] w-full mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+          <div className="rounded-lg border border-rose-500/40 bg-rose-950/50 px-4 py-2.5 text-xs text-rose-200 flex items-start justify-between gap-3">
+            <span>{storageWarning}</span>
+            <button type="button" onClick={() => setStorageWarning(null)} className="shrink-0 text-rose-300 hover:text-white cursor-pointer">关闭</button>
+          </div>
         </div>
       )}
 
       {appNotice && (
-        <div role="status" className="mx-4 mt-3 rounded-lg border border-amber-500/40 bg-amber-950/60 px-4 py-2.5 text-xs text-amber-200 flex items-start justify-between gap-3">
-          <span>{appNotice}</span>
-          <button type="button" onClick={() => setAppNotice(null)} className="shrink-0 text-amber-300 hover:text-white">关闭</button>
+        <div role="status" className="max-w-[1440px] w-full mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+          <div className="rounded-lg border border-amber-500/35 bg-amber-950/40 px-4 py-2.5 text-xs text-amber-200 flex items-start justify-between gap-3">
+            <span>{appNotice}</span>
+            <button type="button" onClick={() => setAppNotice(null)} className="shrink-0 text-amber-300 hover:text-white cursor-pointer">关闭</button>
+          </div>
         </div>
       )}
 
@@ -1262,16 +1369,11 @@ export default function App() {
         </div>
       )}
 
-      {/* Footer Info */}
-      <footer className="border-t border-slate-900 bg-slate-950/80 py-4 text-center text-xs text-slate-500">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-emerald-500" />
-            <span>《财富经》足彩盘赔精算与风控博弈系统 · 顶级精算师量化引擎</span>
-          </div>
-          <div className="text-[11px] text-slate-600">
-            支持盘赔截图OCR识别 · CSV多场次沙箱隔离批处理 · 零上下文膨胀
-          </div>
+      {/* Quiet Institutional Footer */}
+      <footer className="border-t border-slate-800/80 bg-slate-950 py-4 text-xs text-slate-500">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-2">
+          <span>财富经精算工作台 · 欧亚盘赔博弈与复盘系统</span>
+          <span className="text-slate-600">早盘看意图 · 临场看风控 · 复盘看证伪</span>
         </div>
       </footer>
     </div>

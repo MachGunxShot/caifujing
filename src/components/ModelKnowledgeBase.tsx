@@ -442,16 +442,16 @@ export const ModelKnowledgeBase: React.FC<ModelKnowledgeBaseProps> = ({
             <Layers className="w-4 h-4" />
           </div>
           <div>
-            <h2 className="text-sm font-black text-white flex items-center gap-2">
+            <h2 className="text-sm font-bold text-slate-50 flex items-center gap-2">
               <span>五大模型 · 矩阵推演与知识库</span>
               {batchQueue.length > 0 && (
-                <span className="px-2 py-0.2 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                  实盘已载入 {batchQueue.length} 场
+                <span className="text-[11px] font-mono text-emerald-400 font-medium">
+                  · 实盘已载入 {batchQueue.length} 场
                 </span>
               )}
             </h2>
-            <p className="text-[11px] text-slate-400">
-              支持一键切换「批量推演矩阵大屏」全览所有场次沙盘，或查阅「五大经典模型字典」
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              在「批量推演矩阵大屏」与「五大模型理论字典」之间切换
             </p>
           </div>
         </div>
@@ -460,17 +460,17 @@ export const ModelKnowledgeBase: React.FC<ModelKnowledgeBaseProps> = ({
           <button
             type="button"
             onClick={() => setTopViewMode('batchShowcase')}
-            className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md font-bold transition-all cursor-pointer ${
+            className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
               topViewMode === 'batchShowcase'
-                ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 shadow-sm'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-slate-800 text-slate-50 font-semibold'
+                : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Layers className="w-3.5 h-3.5" />
-            <span>📑 批量推演矩阵大屏</span>
+            <Layers className="w-3.5 h-3.5 text-emerald-400" />
+            <span>批量推演矩阵大屏</span>
             {batchQueue.length > 0 && (
-              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-900/60 font-normal">
-                {batchQueue.length}场
+              <span className="text-[11px] font-mono text-emerald-400 font-normal">
+                {batchQueue.length}
               </span>
             )}
           </button>
@@ -478,14 +478,14 @@ export const ModelKnowledgeBase: React.FC<ModelKnowledgeBaseProps> = ({
           <button
             type="button"
             onClick={() => setTopViewMode('theoryGuide')}
-            className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md font-bold transition-all cursor-pointer ${
+            className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
               topViewMode === 'theoryGuide'
-                ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 shadow-sm'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-slate-800 text-slate-50 font-semibold'
+                : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <BookOpen className="w-3.5 h-3.5" />
-            <span>📘 五大模型理论知识库 & 测谎仪</span>
+            <BookOpen className="w-3.5 h-3.5 text-emerald-400" />
+            <span>五大模型理论知识库</span>
           </button>
         </div>
       </div>

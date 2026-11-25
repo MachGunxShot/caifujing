@@ -147,62 +147,75 @@ export const AttachmentUploadModal: React.FC<AttachmentUploadModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="relative w-full max-w-3xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/90">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-slate-950 border border-slate-800 text-emerald-400 flex items-center justify-center">
               <Upload className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-white tracking-wide">
-                附件上传与多场次上下文隔离导入
+              <h3 className="text-sm font-semibold text-slate-50">
+                导入盘赔数据与批量队列
               </h3>
-              <p className="text-[11px] text-slate-400">
-                支持截图自动识盘 · CSV/TXT 批量导入 · 杜绝上下文膨胀与信息污染
+              <p className="text-xs text-slate-400">
+                支持赔率截图识别 · Markdown / CSV / 文本多场次差量导入
               </p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Modal Tab Navigation */}
-        <div className="flex items-center gap-2 px-6 pt-3 border-b border-slate-800 bg-slate-950/40 text-xs">
+        <div className="flex items-center gap-5 px-6 pt-3 border-b border-slate-800 bg-slate-950/60 text-xs overflow-x-auto">
           <button
-            onClick={() => setActiveTab('image')}
-            className={`flex items-center gap-1.5 pb-2.5 font-semibold transition-all border-b-2 ${
+            type="button"
+            onClick={() => {
+              setModalError(null);
+              setActiveTab('image');
+            }}
+            className={`flex items-center gap-1.5 pb-2.5 font-medium whitespace-nowrap shrink-0 transition-colors border-b-2 cursor-pointer ${
               activeTab === 'image'
-                ? 'border-emerald-500 text-emerald-400'
+                ? 'border-emerald-400 text-slate-50 font-semibold'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <FileImage className="w-4 h-4" />
-            <span>📸 截图识盘 (支持微信/懂球帝截图 & 剪贴板Ctrl+V)</span>
+            <FileImage className="w-3.5 h-3.5" />
+            <span>截图识盘 (支持 Ctrl+V 粘贴)</span>
           </button>
           <button
-            onClick={() => setActiveTab('batch')}
-            className={`flex items-center gap-1.5 pb-2.5 font-semibold transition-all border-b-2 ${
+            type="button"
+            onClick={() => {
+              setModalError(null);
+              setActiveTab('batch');
+            }}
+            className={`flex items-center gap-1.5 pb-2.5 font-medium whitespace-nowrap shrink-0 transition-colors border-b-2 cursor-pointer ${
               activeTab === 'batch'
-                ? 'border-emerald-500 text-emerald-400'
+                ? 'border-emerald-400 text-slate-50 font-semibold'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <FileSpreadsheet className="w-4 h-4" />
-            <span>📑 批量多场次导入 (CSV / 文本 / 表格)</span>
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span>批量多场次导入 (CSV / 文本 / MD)</span>
           </button>
           <button
-            onClick={() => setActiveTab('architecture')}
-            className={`flex items-center gap-1.5 pb-2.5 font-semibold transition-all border-b-2 ${
+            type="button"
+            onClick={() => {
+              setModalError(null);
+              setActiveTab('architecture');
+            }}
+            className={`flex items-center gap-1.5 pb-2.5 font-medium whitespace-nowrap shrink-0 transition-colors border-b-2 cursor-pointer ${
               activeTab === 'architecture'
-                ? 'border-emerald-500 text-emerald-400'
+                ? 'border-emerald-400 text-slate-50 font-semibold'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <ShieldCheck className="w-4 h-4 text-cyan-400" />
-            <span>⚡ 上下文上限机制说明</span>
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>隔离与锁盘机制</span>
           </button>
         </div>
 
@@ -314,7 +327,7 @@ export const AttachmentUploadModal: React.FC<AttachmentUploadModalProps> = ({
                   type="button"
                   disabled={!previewImage || isProcessing}
                   onClick={handleImageUploadSubmit}
-                  className="px-5 py-2 text-xs font-extrabold text-slate-950 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 rounded-lg shadow-lg disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                  className="px-5 py-2 text-xs font-bold text-slate-950 bg-emerald-500 hover:bg-emerald-400 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
                 >
                   {isProcessing ? (
                     <>
@@ -435,7 +448,7 @@ export const AttachmentUploadModal: React.FC<AttachmentUploadModalProps> = ({
                   type="button"
                   disabled={parsedPreviewCount === 0}
                   onClick={handleBatchSubmit}
-                  className="px-5 py-2 text-xs font-extrabold text-slate-950 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 rounded-lg shadow-lg disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                  className="px-5 py-2 text-xs font-bold text-slate-950 bg-emerald-500 hover:bg-emerald-400 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
                 >
                   <Layers className="w-3.5 h-3.5" />
                   <span>导入批处理队列 ({parsedPreviewCount} 场)</span>

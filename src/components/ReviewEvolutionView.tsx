@@ -1552,75 +1552,71 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
   return (
     <div className="space-y-5">
-      {/* Top Banner: Evolution Engine Live Status */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 border border-emerald-500/40 rounded-xl p-4 shadow-xl relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-80 h-80 bg-emerald-500/10 rounded-full blur-3xl -z-10 pointer-events-none" />
-
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-800 pb-3 mb-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-slate-950 font-black shadow-md">
-              <Brain className="w-5 h-5 text-slate-950" />
+      {/* Top Banner: Evolution Engine Overview */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-emerald-400 shrink-0">
+              <Brain className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-base font-black text-white tracking-wide">
-                  《财富经》实战复盘与自我进化引擎
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <h2 className="text-base font-bold text-slate-50 tracking-tight">
+                  实战复盘与自我进化引擎
                 </h2>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>动态进化学习已启用</span>
+                <span className="text-[11px] font-medium text-emerald-400">
+                  · 动态进化学习已启用
                 </span>
               </div>
-              <div className="flex items-center gap-2 flex-wrap mt-1">
-                <p className="text-xs text-slate-400">
-                  赛后录入实际比分进行归因测谎 · 自动提炼核心经验法则 · 永久反哺后续赛事研判
-                </p>
-                <span className="text-[10px] text-cyan-300 font-mono bg-cyan-950/70 px-2 py-0.5 rounded border border-cyan-800/60 flex items-center gap-1">
-                  <Clock className="w-3 h-3 text-cyan-400" />
-                  <span>竞彩销售日规则：当日 11:00 至次日 11:00（自动按开赛时间归档对齐每日赛果）</span>
+              <div className="flex items-center gap-2 flex-wrap mt-1 text-xs text-slate-400">
+                <span>赛后录入比分归因测谎 · 自动提炼实战法则</span>
+                <span className="text-slate-600">·</span>
+                <span className="text-[11px] font-mono text-slate-400 inline-flex items-center gap-1">
+                  <Clock className="w-3 h-3 text-slate-500" />
+                  销售日：当日 11:00 至次日 11:00
                 </span>
               </div>
             </div>
           </div>
 
-          <div className="bg-slate-950/80 px-3 py-1.5 rounded-lg border border-slate-800 text-xs text-slate-300 flex items-center gap-2 font-mono">
-            <Award className="w-4 h-4 text-emerald-400" />
-            <span>已激活实战法则：</span>
-            <span className="font-extrabold text-emerald-400 text-sm">
-              {activeRulesCount} 条
+          <div className="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 text-xs text-slate-400 flex items-center gap-2 font-mono shrink-0">
+            <Award className="w-3.5 h-3.5 text-emerald-400" />
+            <span>已激活法则</span>
+            <span className="font-bold text-emerald-400 text-sm">
+              {activeRulesCount}
             </span>
           </div>
         </div>
 
-        {/* Stats Row */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center text-xs">
-          <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
-            <div className="text-[10px] text-slate-400">历史复盘场次</div>
-            <div className="font-black text-white text-sm mt-0.5 font-mono">
+        {/* KPI Strip */}
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-xs">
+          <div className="bg-slate-950 p-3 rounded-lg border border-slate-800/80">
+            <div className="text-[11px] text-slate-500">历史复盘场次</div>
+            <div className="font-bold text-slate-100 text-sm mt-1 font-mono">
               {totalReviews > 0 ? `${totalReviews} 场` : '初始校准中'}
             </div>
           </div>
-          <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
-            <div className="text-[10px] text-slate-400">胜平负覆盖率（含双选）</div>
-            <div className="font-black text-emerald-400 text-sm mt-0.5 font-mono">
+          <div className="bg-slate-950 p-3 rounded-lg border border-slate-800/80">
+            <div className="text-[11px] text-slate-500">胜平负覆盖率（含双选）</div>
+            <div className="font-bold text-emerald-400 text-sm mt-1 font-mono">
               {euroRate}
             </div>
           </div>
-          <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
-            <div className="text-[10px] text-slate-400">让球不亏率（含走盘）</div>
-            <div className="font-black text-cyan-400 text-sm mt-0.5 font-mono">
+          <div className="bg-slate-950 p-3 rounded-lg border border-slate-800/80">
+            <div className="text-[11px] text-slate-500">让球不亏率（含走盘）</div>
+            <div className="font-bold text-slate-100 text-sm mt-1 font-mono">
               {handicapRate}
             </div>
           </div>
-          <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
-            <div className="text-[10px] text-slate-400">大小球锁定率</div>
-            <div className="font-black text-amber-400 text-sm mt-0.5 font-mono">
+          <div className="bg-slate-950 p-3 rounded-lg border border-slate-800/80">
+            <div className="text-[11px] text-slate-500">大小球锁定率</div>
+            <div className="font-bold text-amber-400 text-sm mt-1 font-mono">
               {ouRate}
             </div>
           </div>
-          <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80 col-span-2 sm:col-span-1">
-            <div className="text-[10px] text-slate-400">精准比分命中率</div>
-            <div className="font-black text-teal-400 text-sm mt-0.5 font-mono">
+          <div className="bg-slate-950 p-3 rounded-lg border border-slate-800/80 col-span-2 sm:col-span-1">
+            <div className="text-[11px] text-slate-500">精准比分命中率</div>
+            <div className="font-bold text-slate-100 text-sm mt-1 font-mono">
               {scoreRate}
             </div>
           </div>
@@ -1628,57 +1624,57 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
       </div>
 
       {/* Navigation Sub-Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+      <div className="flex items-center gap-1.5 border-b border-slate-800 pb-2.5 overflow-x-auto">
         <button
           type="button"
           onClick={() => setActiveSubTab('review')}
-          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
             activeSubTab === 'review'
-              ? 'bg-emerald-500 text-slate-950 shadow-md'
-              : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              ? 'bg-emerald-500 text-slate-950 font-bold'
+              : 'text-slate-400 hover:text-slate-100 hover:bg-slate-900'
           }`}
         >
           <Sparkles className="w-3.5 h-3.5" />
-          <span>📝 录入完场比分复盘</span>
+          <span>录入完场比分复盘</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveSubTab('rules')}
-          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
             activeSubTab === 'rules'
-              ? 'bg-emerald-500 text-slate-950 shadow-md'
-              : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              ? 'bg-emerald-500 text-slate-950 font-bold'
+              : 'text-slate-400 hover:text-slate-100 hover:bg-slate-900'
           }`}
         >
           <BookOpen className="w-3.5 h-3.5" />
-          <span>📚 《财富经》核心法则库 ({rules.length})</span>
+          <span>核心法则库 ({rules.length})</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveSubTab('history')}
-          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
             activeSubTab === 'history'
-              ? 'bg-emerald-500 text-slate-950 shadow-md'
-              : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              ? 'bg-emerald-500 text-slate-950 font-bold'
+              : 'text-slate-400 hover:text-slate-100 hover:bg-slate-900'
           }`}
         >
           <RotateCcw className="w-3.5 h-3.5" />
-          <span>📊 单场历史战报 ({reviews.length})</span>
+          <span>单场历史战报 ({reviews.length})</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveSubTab('parlays')}
-          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
             activeSubTab === 'parlays'
-              ? 'bg-amber-500 text-slate-950 shadow-md font-black'
-              : 'text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/30'
+              ? 'bg-amber-500 text-slate-950 font-bold'
+              : 'text-amber-400/90 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/25'
           }`}
         >
           <Award className="w-3.5 h-3.5" />
-          <span>🎯 2串1 稳胆历史战报 ({parlayReviews.length})</span>
+          <span>2串1 稳胆战报 ({parlayReviews.length})</span>
         </button>
       </div>
 
@@ -1824,33 +1820,31 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           )}
 
           {/* Mode Switch Tabs: Batch vs Single */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-2">
-            <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-1">
+            <div className="inline-flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs">
               <button
                 type="button"
                 onClick={() => setReviewEntryMode('batch')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-extrabold transition-all cursor-pointer ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
                   reviewEntryMode === 'batch'
-                    ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 shadow-md'
-                    : 'text-slate-400 hover:text-white'
+                    ? 'bg-slate-800 text-slate-50 font-semibold'
+                    : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <Layers className="w-3.5 h-3.5" />
-                <span>⚡ 批量录入赛果 (支持截图/文本自动识别)</span>
+                <Layers className="w-3.5 h-3.5 text-emerald-400" />
+                <span>批量录入赛果</span>
                 {queue.length > 0 && (() => {
                   const unreviewedCount = queue.filter((q) => !q.isReviewed && !q.review).length;
                   const reviewedCount = queue.filter((q) => q.isReviewed || q.review).length;
                   return (
                     <span
-                      className={`ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-mono border ${
-                        unreviewedCount > 0
-                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                          : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                      className={`ml-1 text-[11px] font-mono ${
+                        unreviewedCount > 0 ? 'text-amber-400' : 'text-emerald-400'
                       }`}
                     >
                       {unreviewedCount > 0
-                        ? `待复盘 ${unreviewedCount} 场 (已完赛 ${reviewedCount} 场)`
-                        : `全部已复盘 (${queue.length} 场)`}
+                        ? `待复盘 ${unreviewedCount} · 已完赛 ${reviewedCount}`
+                        : `全部已复盘 (${queue.length})`}
                     </span>
                   );
                 })()}
@@ -1858,20 +1852,20 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
               <button
                 type="button"
                 onClick={() => setReviewEntryMode('single')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-extrabold transition-all cursor-pointer ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
                   reviewEntryMode === 'single'
-                    ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 shadow-md'
-                    : 'text-slate-400 hover:text-white'
+                    ? 'bg-slate-800 text-slate-50 font-semibold'
+                    : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <FileText className="w-3.5 h-3.5" />
-                <span>📝 单场逐场精细复盘</span>
+                <FileText className="w-3.5 h-3.5 text-emerald-400" />
+                <span>单场逐场复盘</span>
                 {(() => {
                   const unreviewedCount = queue.filter((q) => !q.isReviewed && !q.review).length;
                   if (unreviewedCount > 0) {
                     return (
-                      <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-slate-900 text-amber-400 border border-amber-500/30">
-                        {unreviewedCount} 场待办
+                      <span className="ml-1 text-[11px] font-mono text-amber-400">
+                        {unreviewedCount} 待办
                       </span>
                     );
                   }

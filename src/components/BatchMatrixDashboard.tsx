@@ -1186,46 +1186,46 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
         onClick={() => onSelectMatch(item.data)}
         className={`transition-colors group cursor-pointer ${
           isFiveStar
-            ? 'border-l-4 border-l-amber-400 bg-gradient-to-r from-amber-500/[0.08] via-amber-500/[0.02] to-transparent hover:bg-amber-500/[0.12]'
+            ? 'bg-amber-500/[0.04] hover:bg-amber-500/[0.08]'
             : isFourStar
-            ? 'border-l-4 border-l-emerald-400 bg-gradient-to-r from-emerald-500/[0.05] via-emerald-500/[0.01] to-transparent hover:bg-emerald-500/[0.08]'
-            : 'border-l-4 border-l-slate-800 hover:bg-slate-850/80'
+            ? 'bg-emerald-500/[0.03] hover:bg-emerald-500/[0.06]'
+            : 'hover:bg-slate-850/90'
         }`}
       >
         {/* Number & Original Rank */}
-        <td className="py-3 px-3 font-mono text-center">
+        <td className="py-3 px-3 font-mono text-center tabular-nums">
           {isFiveStar ? (
-            <div className="font-extrabold text-amber-400 text-xs">
+            <div className="font-bold text-amber-400 text-xs">
               TOP {idx + 1}
             </div>
+          ) : isFourStar ? (
+            <div className="font-semibold text-emerald-400 text-xs">
+              {idx + 1}
+            </div>
           ) : (
-            <div className="font-bold text-slate-400 text-xs">
+            <div className="font-medium text-slate-400 text-xs">
               {idx + 1}
             </div>
           )}
-          <div className="text-[9px] text-slate-500 font-mono mt-0.5">
-            原#{originalIndex + 1}
+          <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+            #{originalIndex + 1}
           </div>
         </td>
 
         {/* 1. 推荐星级 & 变轨信心 */}
         <td className="py-3 px-3 whitespace-nowrap">
           {renderStarRating(dec.starRating)}
-          <div className="flex items-center gap-1 mt-0.5">
-            <span className={`text-[10px] font-mono ${isFiveStar ? 'text-amber-400 font-bold' : 'text-slate-400'}`}>
-              {dec.starRating}星盘口信号
+          <div className="flex items-center gap-1.5 mt-0.5 text-[11px] font-mono tabular-nums">
+            <span className={isFiveStar ? 'text-amber-400 font-semibold' : 'text-slate-400'}>
+              {dec.starRating}星信号
             </span>
             {shift && shift.starChange !== 0 ? (
-              <span className={`px-1 py-0.2 rounded text-[9px] font-extrabold font-mono border ${
-                shift.starChange > 0
-                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                  : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
-              }`}>
-                {shift.earlyStars}★➔{shift.lateStars}★ ({shift.starChange > 0 ? `+${shift.starChange}` : shift.starChange})
+              <span className={shift.starChange > 0 ? 'text-emerald-400 font-semibold' : 'text-rose-400 font-semibold'}>
+                · {shift.earlyStars}→{shift.lateStars} ({shift.starChange > 0 ? `+${shift.starChange}` : shift.starChange})
               </span>
             ) : isFiveStar ? (
-              <span className="px-1 py-0.2 rounded text-[9px] font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                {report.identifiedModel === 'POSITIVE_CONTROL'
+              <span className="text-amber-300 font-semibold">
+                · {report.identifiedModel === 'POSITIVE_CONTROL'
                   ? '稳胆'
                   : report.identifiedModel === 'LOW_DRAW_DEFENSE'
                   ? '胆平'
@@ -1233,7 +1233,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
               </span>
             ) : null}
           </div>
-          {/* Quick Confidence Shift Pill */}
+          {/* Interactive Confidence Shift Button */}
           <div className="mt-1">
             {shift ? (
               <button
@@ -1242,12 +1242,12 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
                   e.stopPropagation();
                   setDiffModalTarget({ item, report, shift });
                 }}
-                className={`px-1.5 py-0.5 rounded text-[10px] font-bold border flex items-center gap-1 transition-all cursor-pointer ${
+                className={`px-2 py-0.5 rounded text-[10px] font-medium border inline-flex items-center gap-1 transition-colors cursor-pointer ${
                   shift.shiftType === 'INCREASED'
-                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/30'
+                    ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/35 hover:bg-emerald-500/20'
                     : shift.shiftType === 'DECREASED'
-                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 hover:bg-rose-500/30'
-                    : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:text-slate-200'
+                    ? 'bg-rose-500/10 text-rose-300 border-rose-500/35 hover:bg-rose-500/20'
+                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
                 }`}
                 title="点击查看早盘 vs 晚盘 信心异动轨迹与变轨对比"
               >
@@ -1276,43 +1276,43 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
                   const fallbackShift = compareEarlyVsLateConfidence(item.data, item.earlyReportSnapshot, report, item.earlyDataSnapshot);
                   setDiffModalTarget({ item, report, shift: fallbackShift });
                 }}
-                className="px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-400 bg-slate-900/60 hover:bg-slate-800 border border-slate-800/80 flex items-center gap-1 transition-all cursor-pointer"
+                className="px-2 py-0.5 rounded text-[10px] font-medium text-slate-400 bg-slate-900 hover:bg-slate-800 border border-slate-800 inline-flex items-center gap-1 transition-colors cursor-pointer"
                 title="首次导入基石盘口，再次导入晚盘即可自动比对变轨轨迹（点击查看盘口详情）"
               >
-                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400/80"></span>
                 <span>初盘基石</span>
               </button>
             )}
           </div>
         </td>
 
-        {/* 赛事对阵 */}
+        {/* 赛事对阵 (Zero-pill clean unboxed metadata) */}
         <td className="py-3 px-4 min-w-[240px] whitespace-nowrap">
-          <div className="flex items-center gap-1.5 font-bold text-white group-hover:text-emerald-300 transition-colors text-xs sm:text-[13px]">
-            <span className="font-extrabold tracking-wide">{item.data.matchInfo.homeTeam}</span>
-            <span className="text-[10px] font-mono text-slate-400 font-semibold px-1 py-0.2 rounded bg-slate-950 border border-slate-800">
-              VS
-            </span>
-            <span className="font-extrabold tracking-wide">{item.data.matchInfo.awayTeam}</span>
+          <div className="flex items-center gap-1.5 font-semibold text-slate-100 group-hover:text-emerald-300 transition-colors text-[13px]">
+            <span>{item.data.matchInfo.homeTeam}</span>
+            <span className="text-[11px] font-mono text-slate-500 font-normal">vs</span>
+            <span>{item.data.matchInfo.awayTeam}</span>
           </div>
-          <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-1 font-mono">
-            <span className="px-1.5 py-0.2 rounded bg-slate-800 text-emerald-400 font-semibold border border-slate-700/70">
+          <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-1 font-mono tabular-nums">
+            <span className="text-slate-300 font-sans font-medium">
               {item.data.matchInfo.league || '常规赛事'}
             </span>
             {item.data.matchInfo.matchTime && (
-              <span className="text-slate-300 font-bold flex items-center gap-0.5">
-                <Clock className="w-2.5 h-2.5 text-cyan-400" />
+              <>
+                <span aria-hidden="true" className="text-slate-600">·</span>
                 <span>{item.data.matchInfo.matchTime}</span>
-              </span>
+              </>
             )}
             {item.isLocked && (
-              <span
-                className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-bold flex items-center gap-0.5"
-                title={`🔒 终盘快照已固化 (${item.lockedAt || '已封盘'}) · 再次导入新 Markdown 时自动免疫覆盖，赛后复盘 100% 对应此时预测！`}
-              >
-                <Lock className="w-2.5 h-2.5 text-amber-400" />
-                <span>终盘已锁</span>
-              </span>
+              <>
+                <span aria-hidden="true" className="text-slate-600">·</span>
+                <span
+                  className="text-amber-400 font-sans font-medium inline-flex items-center gap-0.5"
+                  title={`终盘快照已固化 (${item.lockedAt || '已封盘'}) · 再次导入新盘口时自动免疫覆盖`}
+                >
+                  <Lock className="w-2.5 h-2.5" />
+                  <span>终盘已锁</span>
+                </span>
+              </>
             )}
           </div>
         </td>
@@ -2030,21 +2030,22 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
         </div>
       )}
 
-      {/* 2. Interactive Kickoff Lock Assistant Toolbar (Addressing Point 5 directly) */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-md">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold shrink-0">
+      {/* 2. Interactive Kickoff Lock Assistant Toolbar */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-slate-950 border border-slate-800 text-amber-400 flex items-center justify-center shrink-0">
             <Lock className="w-4 h-4" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-white">⏱️ 开赛时间管理与终盘快照固化</span>
-              <span className="px-2 py-0.5 rounded-full bg-slate-950 text-[10px] font-mono text-amber-300 font-bold border border-slate-800">
-                🔒 终盘已固化 {lockedMatchesCount} / {queue.length} 场
+            <div className="flex items-center gap-2 text-xs">
+              <span className="font-semibold text-slate-100">开赛时间管理与终盘固化</span>
+              <span aria-hidden="true" className="text-slate-600">·</span>
+              <span className="font-mono text-amber-400 font-medium tabular-nums">
+                已锁 {lockedMatchesCount} / {queue.length} 场
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              开赛后锁定快照，后续<strong>多次导入新时间点的 Markdown 时自动免疫覆盖</strong>，终盘与决策原封不动，便于后续客观复盘！
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              开赛锁定后，后续多次导入临场数据时自动保护终盘快照不被覆盖。
             </p>
           </div>
         </div>
@@ -2053,14 +2054,14 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
           <button
             type="button"
             onClick={() => setIsAutoLockModalOpen(true)}
-            className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
-            title="按开赛时间智能锁定对应比赛（支持时段批次、当前时间对比与自定义截止时刻）"
+            className="h-8 px-3 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/35 text-xs font-semibold rounded-lg transition-colors inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+            title="按开赛时间智能锁定对应比赛"
           >
-            <Zap className="w-3.5 h-3.5 text-amber-400" />
-            <span>智能锁定已开赛场次</span>
+            <Clock className="w-3.5 h-3.5 text-amber-400" />
+            <span>按时段锁盘</span>
             {detectedStartedMatches.length > 0 && (
-              <span className="px-1.5 py-0.2 bg-amber-400 text-slate-950 font-black text-[10px] rounded-full">
-                {detectedStartedMatches.length} 场已开赛
+              <span className="font-mono text-[11px] text-amber-200 tabular-nums">
+                ({detectedStartedMatches.length})
               </span>
             )}
           </button>
@@ -2069,7 +2070,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
               <button
                 type="button"
                 onClick={() => onBatchLockMatches(true)}
-                className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 text-xs font-bold rounded-lg transition-all flex items-center gap-1 cursor-pointer"
+                className="h-8 px-3 bg-slate-950 hover:bg-slate-850 text-slate-200 border border-slate-800 hover:border-slate-700 text-xs font-medium rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer whitespace-nowrap"
                 title="一键锁定当前所有场次的终盘快照"
               >
                 <Lock className="w-3 h-3 text-amber-400" />
@@ -2078,7 +2079,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
               <button
                 type="button"
                 onClick={() => onBatchLockMatches(false)}
-                className="px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-750 text-slate-400 hover:text-white border border-slate-700 text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer"
+                className="h-8 px-3 bg-slate-950 hover:bg-slate-850 text-slate-400 hover:text-slate-200 border border-slate-800 hover:border-slate-700 text-xs font-medium rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer whitespace-nowrap"
                 title="解除全部锁定"
               >
                 <Unlock className="w-3 h-3" />
@@ -2123,69 +2124,63 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
         </div>
       )}
 
-      {/* PROMINENT BATCH ANALYZE ACTION BUTTON */}
-      <div className="bg-slate-900/90 border border-emerald-500/30 rounded-xl p-3.5 shadow-xl">
+      {/* PROMINENT BATCH ANALYZE ACTION BAR */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="space-y-0.5">
+          <div className="text-xs font-semibold text-slate-100">
+            队列批量精算校准 · {queue.length} 场赛事
+          </div>
+          <p className="text-[11px] text-slate-400">
+            输出推荐星级 · 胜平负首选 · 让球方向 · 大小球与参考比分
+          </p>
+        </div>
         <button
           type="button"
           onClick={onBatchAnalyzeAll}
           disabled={isBatchAnalyzing}
-          className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:via-teal-400 hover:to-cyan-400 text-slate-950 font-black text-sm shadow-xl shadow-emerald-500/25 flex items-center justify-center gap-2 transform active:scale-[0.99] transition-all disabled:opacity-50 cursor-pointer"
+          className="h-10 px-5 rounded-lg bg-emerald-500 hover:bg-emerald-400 active:scale-[0.99] text-slate-950 font-bold text-xs inline-flex items-center justify-center gap-2 transition-all disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
         >
           {isBatchAnalyzing ? (
             <>
-              <div className="w-5 h-5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
-              <span>《财富经》全量批处理测谎中... 已处理 {queue.length} 场</span>
+              <span className="w-3.5 h-3.5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+              <span>批量精算中 ({queue.length} 场)...</span>
             </>
           ) : (
             <>
-              <Sparkles className="w-5 h-5 text-slate-950" />
-              <span>
-                ⚡ 批量一键启动《财富经》全量测谎精算 · 批量渲染全部 {queue.length} 场
-              </span>
-              <ArrowRight className="w-4 h-4 ml-1" />
+              <span>一键重算全部 {queue.length} 场</span>
+              <ArrowRight className="w-3.5 h-3.5" />
             </>
           )}
         </button>
-
-        <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2 px-1">
-          <span className="flex items-center gap-1 text-emerald-400">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            <span>自动输出：推荐星级 · 胜平负首选 · 让球首选 · 大小球首选 · 参考比分</span>
-          </span>
-          <span className="text-cyan-400 font-mono">
-            单场上下文隔离 · 0% Token 污染
-          </span>
-        </div>
       </div>
 
       {/* 3. Recommended Parlay Combo Card */}
       {archivedParlayToast && (
-        <div className="bg-amber-950/60 border border-amber-500/50 rounded-xl p-3 flex items-center justify-between text-xs text-amber-300 shadow-lg animate-in fade-in">
+        <div className="bg-amber-950/50 border border-amber-500/40 rounded-xl px-4 py-2.5 flex items-center justify-between text-xs text-amber-200">
           <div className="flex items-center gap-2">
             <BookmarkCheck className="w-4 h-4 text-amber-400" />
-            <span className="font-bold">{archivedParlayToast}</span>
+            <span className="font-medium">{archivedParlayToast}</span>
           </div>
           <button
             type="button"
             onClick={() => setArchivedParlayToast(null)}
-            className="text-amber-400 hover:text-white text-xs px-2 py-0.5 cursor-pointer"
+            className="text-amber-300 hover:text-white text-xs px-2 py-0.5 cursor-pointer"
           >
-            ✕
+            关闭
           </button>
         </div>
       )}
 
       {parlayRecommendation && (
-        <div className="bg-gradient-to-r from-amber-500/[0.12] via-slate-900 to-cyan-500/[0.10] border border-amber-500/40 rounded-xl p-4 shadow-xl space-y-2">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-500/20 pb-2.5">
+        <div className="bg-slate-900 border border-amber-500/35 rounded-xl p-4 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
             <div className="flex items-center gap-2">
-              <span className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center font-black text-xs">
-                👑
-              </span>
-              <h4 className="text-sm font-black text-white tracking-wide">
+              <Award className="w-4 h-4 text-amber-400 shrink-0" />
+              <h4 className="text-sm font-bold text-slate-50 tracking-tight">
                 {parlayRecommendation.title}
               </h4>
-              <span className="px-2 py-0.2 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+              <span aria-hidden="true" className="text-slate-600 text-xs">·</span>
+              <span className="text-xs text-amber-400/90 font-medium">
                 高置信稳胆配对
               </span>
             </div>
@@ -2193,16 +2188,16 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
               <button
                 type="button"
                 onClick={handleArchiveParlay}
-                className="px-3 py-1 bg-slate-800 hover:bg-slate-750 text-amber-300 hover:text-amber-200 border border-amber-500/40 text-xs font-bold rounded-lg shadow transition-all flex items-center gap-1.5 cursor-pointer"
-                title="将今日精选的 2串1 实战方案固化沉淀到【复盘演化 ➔ 2串1 稳胆历史战报】"
+                className="h-8 px-3 bg-slate-950 hover:bg-slate-850 text-amber-300 border border-amber-500/35 text-xs font-medium rounded-lg transition-colors inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                title="将精选的 2串1 实战方案归档至复盘战报"
               >
                 <Save className="w-3.5 h-3.5 text-amber-400" />
-                <span>💾 固化归档至 2串1 战报</span>
+                <span>归档至 2串1 战报</span>
               </button>
               <button
                 type="button"
                 onClick={handleCopyCombo}
-                className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold rounded-lg shadow transition-all flex items-center gap-1 cursor-pointer"
+                className="h-8 px-3 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer whitespace-nowrap"
               >
                 {copiedCombo ? (
                   <>
@@ -2212,103 +2207,103 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
                 ) : (
                   <>
                     <Copy className="w-3.5 h-3.5" />
-                    <span>复制实战 2串1 方案</span>
+                    <span>复制 2串1 方案</span>
                   </>
                 )}
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {/* Match 1 */}
-            <div className="bg-slate-950/80 border border-amber-500/30 rounded-lg p-2.5 text-xs flex items-center justify-between gap-2">
+            <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs flex items-center justify-between gap-2">
               <div>
-                <div className="flex items-center gap-1.5 font-bold text-white">
-                  <span>稳胆 1：{parlayRecommendation.match1.item.data.matchInfo.homeTeam} vs {parlayRecommendation.match1.item.data.matchInfo.awayTeam}</span>
-                  <span className="text-[10px] text-cyan-400 font-mono">({parlayRecommendation.match1.item.data.matchInfo.matchTime})</span>
+                <div className="flex items-center gap-1.5 font-semibold text-slate-100">
+                  <span>{parlayRecommendation.match1.item.data.matchInfo.homeTeam} vs {parlayRecommendation.match1.item.data.matchInfo.awayTeam}</span>
+                  <span className="text-[11px] text-slate-500 font-mono">{parlayRecommendation.match1.item.data.matchInfo.matchTime}</span>
                 </div>
-                <div className="text-[11px] text-slate-400 mt-0.5">
-                  操盘：<span className="text-amber-300 font-bold">{parlayRecommendation.match1.report.modelTitle}</span>
+                <div className="text-[11px] text-slate-400 mt-1">
+                  模型：{parlayRecommendation.match1.report.modelTitle}
                 </div>
               </div>
-              <div className="text-right">
-                <div className="font-mono font-bold text-emerald-400 text-xs">
+              <div className="text-right shrink-0">
+                <div className="font-mono font-semibold text-emerald-400 text-xs">
                   {parlayRecommendation.match1.dec.handicapPick}
                 </div>
-                <div className="text-[10px] text-slate-300">
-                  胜平负: {parlayRecommendation.match1.dec.euroPick}
+                <div className="text-[11px] text-slate-400 mt-0.5">
+                  {parlayRecommendation.match1.dec.euroPick}
                 </div>
               </div>
             </div>
 
             {/* Match 2 */}
-            <div className="bg-slate-950/80 border border-cyan-500/30 rounded-lg p-2.5 text-xs flex items-center justify-between gap-2">
+            <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs flex items-center justify-between gap-2">
               <div>
-                <div className="flex items-center gap-1.5 font-bold text-white">
-                  <span>稳胆 2：{parlayRecommendation.match2.item.data.matchInfo.homeTeam} vs {parlayRecommendation.match2.item.data.matchInfo.awayTeam}</span>
-                  <span className="text-[10px] text-cyan-400 font-mono">({parlayRecommendation.match2.item.data.matchInfo.matchTime})</span>
+                <div className="flex items-center gap-1.5 font-semibold text-slate-100">
+                  <span>{parlayRecommendation.match2.item.data.matchInfo.homeTeam} vs {parlayRecommendation.match2.item.data.matchInfo.awayTeam}</span>
+                  <span className="text-[11px] text-slate-500 font-mono">{parlayRecommendation.match2.item.data.matchInfo.matchTime}</span>
                 </div>
-                <div className="text-[11px] text-slate-400 mt-0.5">
-                  操盘：<span className="text-cyan-300 font-bold">{parlayRecommendation.match2.report.modelTitle}</span>
+                <div className="text-[11px] text-slate-400 mt-1">
+                  模型：{parlayRecommendation.match2.report.modelTitle}
                 </div>
               </div>
-              <div className="text-right">
-                <div className="font-mono font-bold text-cyan-300 text-xs">
+              <div className="text-right shrink-0">
+                <div className="font-mono font-semibold text-emerald-400 text-xs">
                   {parlayRecommendation.match2.dec.handicapPick}
                 </div>
-                <div className="text-[10px] text-slate-300">
-                  胜平负: {parlayRecommendation.match2.dec.euroPick}
+                <div className="text-[11px] text-slate-400 mt-0.5">
+                  {parlayRecommendation.match2.dec.euroPick}
                 </div>
               </div>
             </div>
           </div>
-          <p className="text-[11px] text-slate-400 leading-relaxed pt-1">
-            💡 <strong>风控心法</strong>：{parlayRecommendation.description}。
+          <p className="text-xs text-slate-400 leading-relaxed">
+            <span className="text-slate-300 font-medium">风控要点：</span>{parlayRecommendation.description}
           </p>
         </div>
       )}
 
       {/* Control Bar: View Switcher, Star Filters & Sorting Optimizations */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-md">
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
         {/* View Mode Toggle */}
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-xs">
+          <div className="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs">
             <button
               type="button"
               onClick={() => setViewStyle('matrix')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
                 viewStyle === 'matrix'
-                  ? 'bg-emerald-500 text-slate-950 font-bold shadow-sm'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-slate-800 text-slate-50 font-semibold'
+                  : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              <span>📊 批量决策大盘表</span>
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+              <span>大盘决策表</span>
             </button>
             <button
               type="button"
               onClick={() => setViewStyle('cards')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
                 viewStyle === 'cards'
-                  ? 'bg-emerald-500 text-slate-950 font-bold shadow-sm'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-slate-800 text-slate-50 font-semibold'
+                  : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <Eye className="w-3.5 h-3.5" />
-              <span>📑 全量卡片流渲染</span>
+              <Eye className="w-3.5 h-3.5 text-emerald-400" />
+              <span>全量卡片流</span>
             </button>
             <button
               type="button"
               onClick={() => setViewStyle('sandbox')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
                 viewStyle === 'sandbox'
-                  ? 'bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 font-bold shadow-sm'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-slate-800 text-slate-50 font-semibold'
+                  : 'text-slate-400 hover:text-slate-200'
               }`}
               title="批量全览所有场次的四步动态博弈沙盘推演与早晚盘差量"
             >
-              <History className="w-3.5 h-3.5" />
-              <span>🎲 批量博弈沙盘流</span>
+              <History className="w-3.5 h-3.5 text-emerald-400" />
+              <span>批量博弈沙盘流</span>
             </button>
           </div>
 

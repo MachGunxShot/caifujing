@@ -1,17 +1,13 @@
 import React, { useState } from 'react';
 import {
-  Sparkles,
   ArrowRight,
   TrendingDown,
   TrendingUp,
   Minus,
   ClipboardPaste,
-  HelpCircle,
-  Activity,
   Layers,
-  Flame,
-  Percent,
   Upload,
+  Bookmark,
 } from 'lucide-react';
 import { FullMatchData } from '../types/fortuneActuary';
 import { parseNaturalTextOdds } from '../utils/textParser';
@@ -34,6 +30,12 @@ const COMMON_HANDICAPS = [
 ];
 
 const COMMON_OU_LINES = ['2.0', '2.25', '2.5', '2.75', '3.0', '3.25', '3.5'];
+
+const INPUT_BASE =
+  'w-full h-9 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-lg px-2.5 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500/70 focus:ring-2 focus:ring-emerald-500/15 transition-colors';
+
+const NUMERIC_INPUT_BASE =
+  'w-full h-8 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-md px-2 text-xs text-center font-mono tabular-nums text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500/70 focus:ring-2 focus:ring-emerald-500/15 transition-colors';
 
 export const MatchInputForm: React.FC<MatchInputFormProps> = ({
   data,
@@ -84,7 +86,7 @@ export const MatchInputForm: React.FC<MatchInputFormProps> = ({
       ...data,
       matchInfo: {
         ...data.matchInfo,
-        ...(field === 'homeTeam' ? {homeProfile: undefined} : field === 'awayTeam' ? {awayProfile: undefined} : {}),
+        ...(field === 'homeTeam' ? { homeProfile: undefined } : field === 'awayTeam' ? { awayProfile: undefined } : {}),
         [field]: value,
       },
     });
@@ -120,528 +122,528 @@ export const MatchInputForm: React.FC<MatchInputFormProps> = ({
     });
   };
 
-  // Helper for trend badge
   const getTrendIcon = (late: number, early: number) => {
-    if (late < early) return <TrendingDown className="w-3.5 h-3.5 text-emerald-400 inline" />;
-    if (late > early) return <TrendingUp className="w-3.5 h-3.5 text-rose-400 inline" />;
-    return <Minus className="w-3.5 h-3.5 text-slate-500 inline" />;
+    if (late < early) return <TrendingDown className="w-3 h-3 text-emerald-400 inline ml-0.5" />;
+    if (late > early) return <TrendingUp className="w-3 h-3 text-rose-400 inline ml-0.5" />;
+    return <Minus className="w-3 h-3 text-slate-600 inline ml-0.5" />;
   };
 
   return (
     <div className="space-y-4">
-      {/* Smart Quick Input Bar & Presets chips */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 shadow-sm">
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-300">
+      {/* Quick Import & Case Presets Strip */}
+      <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-xs font-semibold text-slate-200">
             <ClipboardPaste className="w-3.5 h-3.5 text-emerald-400" />
-            <span>智能盘赔文本快捷录入</span>
+            <span>快捷录入</span>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 text-xs">
             {onOpenUploadModal && (
               <button
                 type="button"
                 onClick={onOpenUploadModal}
-                className="text-xs text-emerald-400 hover:text-emerald-300 font-mono hover:underline flex items-center gap-1 cursor-pointer"
+                className="text-emerald-400 hover:text-emerald-300 font-medium inline-flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap"
               >
-                <Upload className="w-3 h-3" />
-                <span>截图识盘 / 批量文件</span>
+                <Upload className="w-3.5 h-3.5" />
+                <span>截图 / 批量文件</span>
               </button>
             )}
             <button
               type="button"
               onClick={() => setShowPasteBox(!showPasteBox)}
-              className="text-xs text-cyan-400 hover:text-cyan-300 font-mono hover:underline cursor-pointer"
+              className="text-slate-300 hover:text-white font-medium transition-colors cursor-pointer whitespace-nowrap"
             >
-              {showPasteBox ? '收起文本框' : '+ 粘贴赔率'}
+              {showPasteBox ? '收起文本框' : '粘贴单场文本'}
             </button>
           </div>
         </div>
 
         {showPasteBox && (
-          <div className="space-y-2 mt-2 pt-2 border-t border-slate-800/80">
+          <div className="space-y-2.5 pt-2.5 border-t border-slate-800">
             <textarea
               value={pasteText}
               onChange={(e) => setPasteText(e.target.value)}
-              placeholder="直接粘贴任意盘赔文本，如：
-阿森纳 vs 切尔西 初盘半一0.92 临场一球0.82 欧赔 1.65 3.80 5.20 -> 1.48 4.20 7.00 大小球2.5"
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono h-20"
+              placeholder="粘贴任意盘赔文本，例如：阿森纳 vs 切尔西 初盘半一0.92 临场一球0.82 欧赔 1.65 3.80 5.20 -> 1.48 4.20 7.00 大小球2.5"
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500/70 focus:ring-2 focus:ring-emerald-500/15 font-mono h-20"
             />
-            <div className="flex justify-end gap-2">
+            <div className="flex justify-end">
               <button
                 type="button"
                 onClick={handleTextParse}
-                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-semibold text-xs rounded-md shadow"
+                className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-xs rounded-md transition-colors cursor-pointer"
               >
-                一键解析填入各盘
+                解析并填入
               </button>
             </div>
           </div>
         )}
 
-        {/* Quick preset chips */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[11px] scrollbar-none">
-          <span className="text-slate-500 whitespace-nowrap">经典模型速测:</span>
+        <div className="flex items-center gap-1.5 overflow-x-auto pt-1 text-[11px]">
+          <span className="text-slate-500 whitespace-nowrap shrink-0 mr-1">案例速测</span>
           {PRESET_CASES.slice(0, 5).map((preset) => (
             <button
               key={preset.id}
               type="button"
               onClick={() => onSelectPreset(preset)}
-              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-700/60 whitespace-nowrap transition-colors"
+              className="px-2.5 py-1 rounded-md bg-slate-950 hover:bg-slate-850 text-slate-300 hover:text-white border border-slate-800 hover:border-slate-700 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
             >
               {preset.tag}
             </button>
           ))}
         </div>
-      </div>
+      </section>
 
-      {/* Basic Match Info */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
-        <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
-          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-300">
-            <Activity className="w-4 h-4 text-cyan-400" />
-            <span>比赛基本信息与题材热度</span>
-          </div>
-          <span className="text-[11px] text-slate-400">早盘看意图 · 晚盘看风控</span>
+      {/* Match Fundamentals */}
+      <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3.5">
+        <div className="flex items-center justify-between pb-2.5 border-b border-slate-800">
+          <h3 className="text-xs font-semibold text-slate-100">赛事基本面与题材</h3>
+          <span className="text-[11px] text-slate-500">早盘看意图 · 晚盘看风控</span>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
-            <label className="block text-[11px] text-slate-400 mb-1">赛事/联赛</label>
+            <label className="block text-[11px] text-slate-400 mb-1">赛事 / 联赛</label>
             <input
               type="text"
               value={data.matchInfo.league}
               onChange={(e) => updateMatchInfo('league', e.target.value)}
-              placeholder="如：英格兰超级联赛"
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              placeholder="如：英超"
+              className={INPUT_BASE}
             />
           </div>
           <div>
-            <label className="block text-[11px] text-emerald-400 font-semibold mb-1">主队 (上盘方/主场)</label>
+            <label className="block text-[11px] text-emerald-400/90 font-medium mb-1">主队</label>
             <input
               type="text"
               value={data.matchInfo.homeTeam}
               onChange={(e) => updateMatchInfo('homeTeam', e.target.value)}
               placeholder="如：曼彻斯特城"
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-medium"
+              className={`${INPUT_BASE} font-medium`}
             />
           </div>
           <div>
-            <label className="block text-[11px] text-cyan-400 font-semibold mb-1">客队 (下盘方/客场)</label>
+            <label className="block text-[11px] text-slate-300 font-medium mb-1">客队</label>
             <input
               type="text"
               value={data.matchInfo.awayTeam}
               onChange={(e) => updateMatchInfo('awayTeam', e.target.value)}
               placeholder="如：埃弗顿"
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-medium"
+              className={`${INPUT_BASE} font-medium`}
             />
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
-          <label className="col-span-2 text-xs text-slate-400">
-            开赛时间（北京时间）
-            <input type="text" placeholder="YYYY-MM-DD HH:mm" value={data.matchInfo.matchTime}
-              onChange={event => { setSnapshotMessage(''); updateMatchInfo('matchTime', event.target.value); }}
-              className="mt-1 w-full rounded bg-slate-950 p-1.5 text-slate-200" />
-          </label>
-          {(['homeProfile', 'awayProfile'] as const).map(field => (
-            <label key={field} className="text-xs text-slate-400">
-              {field === 'homeProfile' ? '主队定位' : '客队定位'}
-              <select className="mt-1 w-full rounded bg-slate-950 p-1.5 text-slate-200"
-                value={data.matchInfo[field] || ''} onChange={e => updateMatchInfo(field, e.target.value)}>
-                <option value="">待核实</option><option value="dominant">统治级强队</option>
-                <option value="challenger">新贵 / 黑马</option><option value="ordinary">普通球队</option>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <label className="block text-[11px] text-slate-400 mb-1">开赛时间 (北京时间)</label>
+            <input
+              type="text"
+              placeholder="YYYY-MM-DD HH:mm"
+              value={data.matchInfo.matchTime}
+              onChange={(event) => {
+                setSnapshotMessage('');
+                updateMatchInfo('matchTime', event.target.value);
+              }}
+              className={`${INPUT_BASE} font-mono`}
+            />
+          </div>
+          {(['homeProfile', 'awayProfile'] as const).map((field) => (
+            <div key={field}>
+              <label className="block text-[11px] text-slate-400 mb-1">
+                {field === 'homeProfile' ? '主队定位' : '客队定位'}
+              </label>
+              <select
+                className={INPUT_BASE}
+                value={data.matchInfo[field] || ''}
+                onChange={(e) => updateMatchInfo(field, e.target.value)}
+              >
+                <option value="">待核实</option>
+                <option value="dominant">统治级强队</option>
+                <option value="challenger">新贵 / 黑马</option>
+                <option value="ordinary">普通球队</option>
               </select>
-            </label>
+            </div>
           ))}
         </div>
 
         <div>
           <label className="block text-[11px] text-slate-400 mb-1">
-            市场题材热度 / 豪门名气对比 / 核心伤停情报 (关键证伪依据)
+            市场题材 / 战意与伤停线索
           </label>
           <input
             type="text"
             value={data.matchInfo.marketStory}
             onChange={(e) => updateMatchInfo('marketStory', e.target.value)}
-            placeholder="如：主队名气极大但核心前锋伤缺，近3次交手全胜，市场资金一面倒追捧主队"
-            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            placeholder="如：主队名气占优但核心前锋伤缺，近3次交手全胜"
+            className={INPUT_BASE}
           />
         </div>
-      </div>
+      </section>
 
-      {/* Asian Handicap Comparison (早盘 vs 晚盘) */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
-        <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
-          <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
-            <Layers className="w-4 h-4 text-emerald-400" />
-            <span>亚指盘口对比 (早盘意图 vs 临场晚盘风控)</span>
+      {/* Unified Three-Dimensional Market Odds Matrix (Asian / Euro / Over-Under) */}
+      <section className="bg-slate-900 border border-slate-800 rounded-xl divide-y divide-slate-800 overflow-hidden">
+        {/* 1. Asian Handicap */}
+        <div className="p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-slate-100">亚盘盘口与水位</h3>
+            <span className="text-[11px] text-slate-500">初盘意图 / 临场风控</span>
           </div>
-          <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-            榨水/诱盘识别区
-          </span>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <div className="text-[11px] text-slate-500 font-medium">早盘初盘</div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-1">初盘让步</label>
+                  <input
+                    type="text"
+                    value={data.asianHandicap.earlyHandicap}
+                    onChange={(e) => updateAsian('earlyHandicap', e.target.value)}
+                    placeholder="-0.75"
+                    className={NUMERIC_INPUT_BASE}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-1">主队初水</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={data.asianHandicap.earlyHomeOdds || ''}
+                    onChange={(e) => updateAsian('earlyHomeOdds', parseFloat(e.target.value))}
+                    placeholder="1.92"
+                    className={NUMERIC_INPUT_BASE}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-1">客队初水</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={data.asianHandicap.earlyAwayOdds || ''}
+                    onChange={(e) => updateAsian('earlyAwayOdds', parseFloat(e.target.value))}
+                    placeholder="1.90"
+                    className={NUMERIC_INPUT_BASE}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2 md:pl-3 md:border-l md:border-slate-800/80">
+              <div className="text-[11px] text-emerald-400 font-medium">临场即时</div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1">即时让步</label>
+                  <input
+                    type="text"
+                    value={data.asianHandicap.lateHandicap}
+                    onChange={(e) => updateAsian('lateHandicap', e.target.value)}
+                    placeholder="-1.0"
+                    className={`${NUMERIC_INPUT_BASE} border-slate-700 font-semibold text-white`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1">
+                    主队即时{getTrendIcon(data.asianHandicap.lateHomeOdds, data.asianHandicap.earlyHomeOdds)}
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={data.asianHandicap.lateHomeOdds || ''}
+                    onChange={(e) => updateAsian('lateHomeOdds', parseFloat(e.target.value))}
+                    placeholder="1.78"
+                    className={`${NUMERIC_INPUT_BASE} font-bold ${
+                      data.asianHandicap.lateHomeOdds >= 2.0
+                        ? 'border-rose-500/60 text-rose-400'
+                        : data.asianHandicap.lateHomeOdds <= 1.80
+                        ? 'border-emerald-500/60 text-emerald-400'
+                        : 'border-slate-700 text-white'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1">客队即时</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={data.asianHandicap.lateAwayOdds || ''}
+                    onChange={(e) => updateAsian('lateAwayOdds', parseFloat(e.target.value))}
+                    placeholder="1.82"
+                    className={NUMERIC_INPUT_BASE}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 overflow-x-auto pt-1 text-[11px]">
+            <span className="text-slate-500 whitespace-nowrap shrink-0 mr-0.5">快选</span>
+            {COMMON_HANDICAPS.map((h) => (
+              <button
+                key={h}
+                type="button"
+                onClick={() => updateAsian('lateHandicap', h)}
+                className={`px-2 py-0.5 rounded text-[11px] font-mono whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                  data.asianHandicap.lateHandicap === h
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                    : 'bg-slate-950 hover:bg-slate-850 text-slate-400 hover:text-slate-200 border border-slate-800'
+                }`}
+              >
+                {h}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Early Asian */}
-          <div className="bg-slate-950/80 border border-slate-800 rounded-lg p-3 space-y-2">
-            <div className="text-[11px] font-semibold text-slate-400 flex items-center justify-between">
-              <span>早盘 (机构原始意图)</span>
-              <span className="text-slate-500 font-mono">初盘</span>
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              <div>
-                <label className="block text-[10px] text-slate-500 mb-0.5">初盘让步</label>
-                <input
-                  type="text"
-                  value={data.asianHandicap.earlyHandicap}
-                  onChange={(e) => updateAsian('earlyHandicap', e.target.value)}
-                  placeholder="-0.75 或 半一"
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-center font-mono text-white"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-500 mb-0.5">主队初水</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={data.asianHandicap.earlyHomeOdds || ''}
-                  onChange={(e) => updateAsian('earlyHomeOdds', parseFloat(e.target.value))}
-                  placeholder="1.92"
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-center font-mono text-white"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-500 mb-0.5">客队初水</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={data.asianHandicap.earlyAwayOdds || ''}
-                  onChange={(e) => updateAsian('earlyAwayOdds', parseFloat(e.target.value))}
-                  placeholder="1.90"
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-center font-mono text-white"
-                />
-              </div>
-            </div>
+        {/* 2. European Odds */}
+        <div className="p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-slate-100">欧指胜平负走势</h3>
+            <span className="text-[11px] text-slate-500">平赔防线 / 胜赔控水</span>
           </div>
 
-          {/* Late Asian */}
-          <div className="bg-slate-950/80 border border-emerald-950/60 rounded-lg p-3 space-y-2 ring-1 ring-emerald-500/20">
-            <div className="text-[11px] font-semibold text-emerald-400 flex items-center justify-between">
-              <span>临场晚盘 (大庄真实风控底牌)</span>
-              <span className="text-[10px] text-emerald-500 font-mono">即时变轨</span>
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              <div>
-                <label className="block text-[10px] text-slate-400 mb-0.5">即时让步</label>
-                <input
-                  type="text"
-                  value={data.asianHandicap.lateHandicap}
-                  onChange={(e) => updateAsian('lateHandicap', e.target.value)}
-                  placeholder="-1.0 或 一球"
-                  className="w-full bg-slate-900 border border-emerald-500/40 rounded px-2 py-1 text-xs text-center font-mono text-white font-semibold"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 mb-0.5">
-                  主队即时水 {getTrendIcon(data.asianHandicap.lateHomeOdds, data.asianHandicap.earlyHomeOdds)}
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={data.asianHandicap.lateHomeOdds || ''}
-                  onChange={(e) => updateAsian('lateHomeOdds', parseFloat(e.target.value))}
-                  placeholder="2.06 或 1.76"
-                  className={`w-full bg-slate-900 border rounded px-2 py-1 text-xs text-center font-mono font-bold ${
-                    data.asianHandicap.lateHomeOdds >= 2.0
-                      ? 'border-rose-500/60 text-rose-400'
-                      : data.asianHandicap.lateHomeOdds <= 1.80
-                      ? 'border-emerald-500/60 text-emerald-400'
-                      : 'border-slate-800 text-white'
-                  }`}
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 mb-0.5">客队即时水</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={data.asianHandicap.lateAwayOdds || ''}
-                  onChange={(e) => updateAsian('lateAwayOdds', parseFloat(e.target.value))}
-                  placeholder="1.82"
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-center font-mono text-white"
-                />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <div className="text-[11px] text-slate-500 font-medium">早盘初赔</div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-1">主胜</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={data.euroOdds.earlyWin || ''}
+                    onChange={(e) => updateEuro('earlyWin', parseFloat(e.target.value))}
+                    placeholder="1.65"
+                    className={NUMERIC_INPUT_BASE}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-1">平局</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={data.euroOdds.earlyDraw || ''}
+                    onChange={(e) => updateEuro('earlyDraw', parseFloat(e.target.value))}
+                    placeholder="3.80"
+                    className={NUMERIC_INPUT_BASE}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-1">客胜</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={data.euroOdds.earlyLoss || ''}
+                    onChange={(e) => updateEuro('earlyLoss', parseFloat(e.target.value))}
+                    placeholder="5.20"
+                    className={NUMERIC_INPUT_BASE}
+                  />
+                </div>
               </div>
             </div>
-          </div>
-        </div>
 
-        {/* Quick handicap shortcuts */}
-        <div className="flex items-center gap-1 overflow-x-auto text-[10px] pt-1">
-          <span className="text-slate-500 whitespace-nowrap">盘口快选:</span>
-          {COMMON_HANDICAPS.map((h) => (
-            <button
-              key={h}
-              type="button"
-              onClick={() => updateAsian('lateHandicap', h)}
-              className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono"
-            >
-              {h}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* European Odds Comparison (欧指走势) */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
-        <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
-          <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
-            <Percent className="w-4 h-4 text-cyan-400" />
-            <span>欧指走势 (早盘初赔 vs 临场即时赔率)</span>
-          </div>
-          <span className="text-[11px] font-mono text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20">
-            平赔排雷 & 胜赔榨水
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Early Euro */}
-          <div className="bg-slate-950/80 border border-slate-800 rounded-lg p-3 space-y-2">
-            <div className="text-[11px] font-semibold text-slate-400">早盘初赔 (胜 / 平 / 负)</div>
-            <div className="grid grid-cols-3 gap-2">
-              <div>
-                <label className="block text-[10px] text-slate-500 mb-0.5">主胜初赔</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={data.euroOdds.earlyWin || ''}
-                  onChange={(e) => updateEuro('earlyWin', parseFloat(e.target.value))}
-                  placeholder="1.65"
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-center font-mono text-white"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-500 mb-0.5">平局初赔</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={data.euroOdds.earlyDraw || ''}
-                  onChange={(e) => updateEuro('earlyDraw', parseFloat(e.target.value))}
-                  placeholder="3.80"
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-center font-mono text-white"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-500 mb-0.5">客胜初赔</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={data.euroOdds.earlyLoss || ''}
-                  onChange={(e) => updateEuro('earlyLoss', parseFloat(e.target.value))}
-                  placeholder="5.20"
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-center font-mono text-white"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Late Euro */}
-          <div className="bg-slate-950/80 border border-cyan-950/60 rounded-lg p-3 space-y-2 ring-1 ring-cyan-500/20">
-            <div className="text-[11px] font-semibold text-cyan-400">临场即时欧赔 (胜 / 平 / 负)</div>
-            <div className="grid grid-cols-3 gap-2">
-              <div>
-                <label className="block text-[10px] text-slate-400 mb-0.5">
-                  主胜即时 {getTrendIcon(data.euroOdds.lateWin, data.euroOdds.earlyWin)}
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={data.euroOdds.lateWin || ''}
-                  onChange={(e) => updateEuro('lateWin', parseFloat(e.target.value))}
-                  placeholder="1.48"
-                  className="w-full bg-slate-900 border border-cyan-500/40 rounded px-2 py-1 text-xs text-center font-mono text-white font-bold"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 mb-0.5">
-                  平局即时 {getTrendIcon(data.euroOdds.lateDraw, data.euroOdds.earlyDraw)}
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={data.euroOdds.lateDraw || ''}
-                  onChange={(e) => updateEuro('lateDraw', parseFloat(e.target.value))}
-                  placeholder="2.90"
-                  className={`w-full bg-slate-900 border rounded px-2 py-1 text-xs text-center font-mono font-bold ${
-                    data.euroOdds.lateDraw <= 3.0 ? 'border-amber-500/60 text-amber-300' : 'border-slate-800 text-white'
-                  }`}
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 mb-0.5">
-                  客胜即时 {getTrendIcon(data.euroOdds.lateLoss, data.euroOdds.earlyLoss)}
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={data.euroOdds.lateLoss || ''}
-                  onChange={(e) => updateEuro('lateLoss', parseFloat(e.target.value))}
-                  placeholder="7.00"
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-center font-mono text-white"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Over/Under Comparison (大小球联动) */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
-        <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
-          <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
-            <Flame className="w-4 h-4 text-amber-400" />
-            <span>大小球联动 (三维联动测谎关键维度)</span>
-          </div>
-          <span className="text-[11px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-            深浅让步测谎
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Early OU */}
-          <div className="bg-slate-950/80 border border-slate-800 rounded-lg p-3 space-y-2">
-            <div className="text-[11px] font-semibold text-slate-400">早盘大小球 (初盘 / 大小水)</div>
-            <div className="grid grid-cols-3 gap-2">
-              <div>
-                <label className="block text-[10px] text-slate-500 mb-0.5">初盘界线</label>
-                <input
-                  type="text"
-                  value={data.overUnder.earlyLine}
-                  onChange={(e) => updateOU('earlyLine', e.target.value)}
-                  placeholder="2.5"
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-center font-mono text-white"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-500 mb-0.5">大球初水</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={data.overUnder.earlyOverOdds || ''}
-                  onChange={(e) => updateOU('earlyOverOdds', parseFloat(e.target.value))}
-                  placeholder="1.95"
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-center font-mono text-white"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-500 mb-0.5">小球初水</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={data.overUnder.earlyUnderOdds || ''}
-                  onChange={(e) => updateOU('earlyUnderOdds', parseFloat(e.target.value))}
-                  placeholder="1.85"
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-center font-mono text-white"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Late OU */}
-          <div className="bg-slate-950/80 border border-amber-950/60 rounded-lg p-3 space-y-2 ring-1 ring-amber-500/20">
-            <div className="text-[11px] font-semibold text-amber-400">临场晚盘大小球 (即时盘 / 水位)</div>
-            <div className="grid grid-cols-3 gap-2">
-              <div>
-                <label className="block text-[10px] text-slate-400 mb-0.5">即时界线</label>
-                <input
-                  type="text"
-                  value={data.overUnder.lateLine}
-                  onChange={(e) => updateOU('lateLine', e.target.value)}
-                  placeholder="2.5"
-                  className="w-full bg-slate-900 border border-amber-500/40 rounded px-2 py-1 text-xs text-center font-mono text-white font-bold"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 mb-0.5">大球即时水</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={data.overUnder.lateOverOdds || ''}
-                  onChange={(e) => updateOU('lateOverOdds', parseFloat(e.target.value))}
-                  placeholder="1.82"
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-center font-mono text-white"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 mb-0.5">小球即时水</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={data.overUnder.lateUnderOdds || ''}
-                  onChange={(e) => updateOU('lateUnderOdds', parseFloat(e.target.value))}
-                  placeholder="2.02"
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-center font-mono text-white"
-                />
+            <div className="space-y-2 md:pl-3 md:border-l md:border-slate-800/80">
+              <div className="text-[11px] text-slate-300 font-medium">临场即时</div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1">
+                    主胜{getTrendIcon(data.euroOdds.lateWin, data.euroOdds.earlyWin)}
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={data.euroOdds.lateWin || ''}
+                    onChange={(e) => updateEuro('lateWin', parseFloat(e.target.value))}
+                    placeholder="1.48"
+                    className={`${NUMERIC_INPUT_BASE} border-slate-700 font-bold text-white`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1">
+                    平局{getTrendIcon(data.euroOdds.lateDraw, data.euroOdds.earlyDraw)}
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={data.euroOdds.lateDraw || ''}
+                    onChange={(e) => updateEuro('lateDraw', parseFloat(e.target.value))}
+                    placeholder="2.90"
+                    className={`${NUMERIC_INPUT_BASE} font-bold ${
+                      data.euroOdds.lateDraw > 0 && data.euroOdds.lateDraw <= 3.0
+                        ? 'border-amber-500/60 text-amber-300'
+                        : 'border-slate-700 text-white'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1">
+                    客胜{getTrendIcon(data.euroOdds.lateLoss, data.euroOdds.earlyLoss)}
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={data.euroOdds.lateLoss || ''}
+                    onChange={(e) => updateEuro('lateLoss', parseFloat(e.target.value))}
+                    placeholder="7.00"
+                    className={NUMERIC_INPUT_BASE}
+                  />
+                </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Quick OU shortcuts */}
-        <div className="flex items-center gap-1 overflow-x-auto text-[10px] pt-1">
-          <span className="text-slate-500 whitespace-nowrap">进球数快选:</span>
-          {COMMON_OU_LINES.map((line) => (
-            <button
-              key={line}
-              type="button"
-              onClick={() => updateOU('lateLine', line)}
-              className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono"
-            >
-              {line}
-            </button>
-          ))}
-        </div>
-      </div>
+        {/* 3. Over / Under */}
+        <div className="p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-slate-100">大小球联动</h3>
+            <span className="text-[11px] text-slate-500">深浅让步交叉验真</span>
+          </div>
 
-      {/* Main Submit Action */}
-      <div className="space-y-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <div className="text-[11px] text-slate-500 font-medium">早盘初盘</div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-1">界线</label>
+                  <input
+                    type="text"
+                    value={data.overUnder.earlyLine}
+                    onChange={(e) => updateOU('earlyLine', e.target.value)}
+                    placeholder="2.5"
+                    className={NUMERIC_INPUT_BASE}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-1">大球水</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={data.overUnder.earlyOverOdds || ''}
+                    onChange={(e) => updateOU('earlyOverOdds', parseFloat(e.target.value))}
+                    placeholder="1.95"
+                    className={NUMERIC_INPUT_BASE}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-1">小球水</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={data.overUnder.earlyUnderOdds || ''}
+                    onChange={(e) => updateOU('earlyUnderOdds', parseFloat(e.target.value))}
+                    placeholder="1.85"
+                    className={NUMERIC_INPUT_BASE}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2 md:pl-3 md:border-l md:border-slate-800/80">
+              <div className="text-[11px] text-amber-400/90 font-medium">临场即时</div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1">即时界线</label>
+                  <input
+                    type="text"
+                    value={data.overUnder.lateLine}
+                    onChange={(e) => updateOU('lateLine', e.target.value)}
+                    placeholder="2.5"
+                    className={`${NUMERIC_INPUT_BASE} border-slate-700 font-bold text-white`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1">大球水</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={data.overUnder.lateOverOdds || ''}
+                    onChange={(e) => updateOU('lateOverOdds', parseFloat(e.target.value))}
+                    placeholder="1.82"
+                    className={NUMERIC_INPUT_BASE}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1">小球水</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={data.overUnder.lateUnderOdds || ''}
+                    onChange={(e) => updateOU('lateUnderOdds', parseFloat(e.target.value))}
+                    placeholder="2.02"
+                    className={NUMERIC_INPUT_BASE}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 overflow-x-auto pt-1 text-[11px]">
+            <span className="text-slate-500 whitespace-nowrap shrink-0 mr-0.5">快选</span>
+            {COMMON_OU_LINES.map((line) => (
+              <button
+                key={line}
+                type="button"
+                onClick={() => updateOU('lateLine', line)}
+                className={`px-2 py-0.5 rounded text-[11px] font-mono whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                  data.overUnder.lateLine === line
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                    : 'bg-slate-950 hover:bg-slate-850 text-slate-400 hover:text-slate-200 border border-slate-800'
+                }`}
+              >
+                {line}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Primary Action Block */}
+      <div className="space-y-2.5">
         <button
           type="button"
           onClick={onSubmit}
           disabled={isLoading}
-          className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:via-teal-400 hover:to-cyan-400 text-slate-950 font-extrabold text-sm shadow-xl shadow-emerald-500/20 flex items-center justify-center gap-2 transform active:scale-[0.99] transition-all disabled:opacity-50 cursor-pointer"
+          className="w-full h-11 px-5 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-[0.99] text-slate-950 font-bold text-sm flex items-center justify-center gap-2 transition-all duration-150 disabled:opacity-50 cursor-pointer"
         >
           {isLoading ? (
             <>
-              <div className="w-5 h-5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
-              <span>精算师博弈论测谎中 (Gemini 大模型 + 财富经五大模型)...</span>
+              <span className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+              <span>正在执行三维盘赔精算...</span>
             </>
           ) : (
             <>
-              <Sparkles className="w-5 h-5" />
-              <span>启动《财富经》三维联动测谎精算 · 直击大庄底牌</span>
-              <ArrowRight className="w-4 h-4 ml-1" />
+              <span>启动三维精算测谎</span>
+              <ArrowRight className="w-4 h-4" />
             </>
           )}
         </button>
 
-        <button type="button" onClick={() => setSnapshotMessage(onSaveSnapshot())}
-          className="w-full rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-slate-800">
-          保存赛前快照
-        </button>
-        {snapshotMessage && <p role="status" className="text-xs text-slate-300">{snapshotMessage}</p>}
-
-        {batchCount > 1 && onBatchAnalyzeAll && (
+        <div className={`grid gap-2 ${batchCount > 1 && onBatchAnalyzeAll ? 'grid-cols-2' : 'grid-cols-1'}`}>
           <button
             type="button"
-            onClick={onBatchAnalyzeAll}
-            className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-850 text-cyan-400 border border-cyan-500/40 text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow"
+            onClick={() => setSnapshotMessage(onSaveSnapshot())}
+            className="h-9 px-3 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 text-xs font-medium text-slate-200 inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
           >
-            <Layers className="w-4 h-4 text-cyan-400" />
-            <span>
-              ⚡ 一键批量测谎并全量渲染当前队列 ({batchCount} 场比赛免反复启动)
-            </span>
+            <Bookmark className="w-3.5 h-3.5 text-emerald-400" />
+            <span>保存赛前快照</span>
           </button>
+
+          {batchCount > 1 && onBatchAnalyzeAll && (
+            <button
+              type="button"
+              onClick={onBatchAnalyzeAll}
+              className="h-9 px-3 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 text-xs font-medium text-slate-200 inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <Layers className="w-3.5 h-3.5 text-slate-400" />
+              <span>批量测谎 ({batchCount} 场)</span>
+            </button>
+          )}
+        </div>
+
+        {snapshotMessage && (
+          <p role="status" className="text-xs text-slate-300 px-1">
+            {snapshotMessage}
+          </p>
         )}
       </div>
     </div>
