@@ -158,22 +158,22 @@ function syncQueueWithSavedReviews(queue: BatchMatchItem[]): BatchMatchItem[] {
         return savedReview ? { ...item, review: savedReview } : item;
       }
 
-      const home = (item.data?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
-      const away = (item.data?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+      const home = (item.data?.matchInfo?.homeTeam || '').trim();
+      const away = (item.data?.matchInfo?.awayTeam || '').trim();
 
       const matchedReview = reviews.find((r) => {
         if (r.id === item.id || r.id === item.review?.id) return true;
         if (hasExplicitKickoffDate(item.data?.matchInfo?.matchTime) &&
             calculateSalesDate(item.data.matchInfo.matchTime, item.timestamp).salesDate !== getReviewSalesInfo(r).salesDate) return false;
-        const rHome = (r.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
-        const rAway = (r.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+        const rHome = (r.matchData?.matchInfo?.homeTeam || '').trim();
+        const rAway = (r.matchData?.matchInfo?.awayTeam || '').trim();
         return (
           home &&
           away &&
           rHome &&
           rAway &&
-          (home.includes(rHome) || rHome.includes(home)) &&
-          (away.includes(rAway) || rAway.includes(away))
+          matchTeamsFuzzy(home, rHome) &&
+          matchTeamsFuzzy(away, rAway)
         );
       });
 
@@ -331,6 +331,8 @@ export default function App() {
   // Attachment upload modal state
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isBatchAnalyzing, setIsBatchAnalyzing] = useState(false);
+  const [showResetPresetsConfirm, setShowResetPresetsConfirm] = useState(false);
+  const [appNotice, setAppNotice] = useState<string | null>(null);
   
   // Notification banner for multi-import differential updates & lock protection
   const [importNotification, setImportNotification] = useState<{
@@ -346,6 +348,7 @@ export default function App() {
   const [calcMode, setCalcMode] = useState<'single' | 'batch'>('single');
 
   const latestQueueRef = useRef(batchQueue);
+  const persistQueueRef = useRef<() => void>(() => {});
   useLayoutEffect(() => {
     latestQueueRef.current = batchQueue;
     const { writer } = initialWorkspace;
@@ -362,6 +365,7 @@ export default function App() {
         }
       }
     };
+    persistQueueRef.current = persist;
     const flush = async () => {
       if (!writer.isDirty(latestQueueRef.current)) return;
       try {
@@ -374,9 +378,23 @@ export default function App() {
       }
     };
     void flush();
-    window.addEventListener('pagehide', flush);
-    return () => window.removeEventListener('pagehide', flush);
   }, [batchQueue, initialWorkspace]);
+
+  // Mount-only pagehide listener: browsers drop async navigator.locks promises during unload,
+  // so flush any pending dirty queue synchronously before the tab closes.
+  useEffect(() => {
+    const { writer } = initialWorkspace;
+    const handlePageHide = () => {
+      if (!writer.isDirty(latestQueueRef.current)) return;
+      try {
+        persistQueueRef.current();
+      } catch {
+        // Ignore unload-time storage errors
+      }
+    };
+    window.addEventListener('pagehide', handlePageHide);
+    return () => window.removeEventListener('pagehide', handlePageHide);
+  }, [initialWorkspace]);
 
   useEffect(() => {
     const warn = () => setStorageWarning('复盘档案写入失败。请保留当前页面并检查浏览器存储空间和档案格式。');
@@ -415,25 +433,25 @@ export default function App() {
     } catch (e) {}
   }, [activeTab]);
 
-  // Explicit handler to reload 5 classic teaching presets
+  // Explicit handler to reload 5 classic teaching presets (confirmed via in-app modal)
   const handleResetToPresets = () => {
-    if (
-      window.confirm(
-        '确定要载入官方 5 场经典教学预设案例吗？当前队列中的比赛将被重置为教学用例（曼城、皇马、利物浦、拉齐奥、多特蒙德）。'
-      )
-    ) {
-      const presets: BatchMatchItem[] = PRESET_CASES.map((c) => ({
-        id: c.id,
-        sourceName: c.name,
-        data: c.data,
-        report: generateActuarialRuleReport(c.data),
-        status: 'done' as const,
-        timestamp: Date.now(),
-      }));
-      setBatchQueue(presets);
-      setMatchData(PRESET_CASES[1].data);
-      setReport(generateActuarialRuleReport(PRESET_CASES[1].data));
-    }
+    setShowResetPresetsConfirm(true);
+  };
+
+  const confirmResetToPresets = () => {
+    const presets: BatchMatchItem[] = PRESET_CASES.map((c) => ({
+      id: c.id,
+      sourceName: c.name,
+      data: c.data,
+      report: generateActuarialRuleReport(c.data),
+      status: 'done' as const,
+      timestamp: Date.now(),
+    }));
+    latestQueueRef.current = presets;
+    setBatchQueue(presets);
+    setMatchData(PRESET_CASES[1].data);
+    setReport(generateActuarialRuleReport(PRESET_CASES[1].data));
+    setShowResetPresetsConfirm(false);
   };
 
   // Analyze function calling server-side Gemini with actuarial rule engine fallback
@@ -601,18 +619,19 @@ export default function App() {
 
   // Explicit handler to purge teaching presets and keep only real analyzed matches
   const handlePurgePresets = () => {
-    setBatchQueue((prev) => {
-      const filtered = prev.filter(
-        (item) =>
-          !item.id.startsWith('preset-') &&
-          !PRESET_CASES.some((c) => c.id === item.id)
-      );
-      if (filtered.length === 0) {
-        alert('当前队列仅包含教学预设案例。请先导入您的实战分析比赛！');
-        return prev;
-      }
-      return filtered;
-    });
+    const prev = latestQueueRef.current;
+    const filtered = prev.filter(
+      (item) =>
+        !item.id.startsWith('preset-') &&
+        !PRESET_CASES.some((c) => c.id === item.id)
+    );
+    if (filtered.length === 0) {
+      setAppNotice('当前队列仅包含教学预设案例，请先导入您的实战分析比赛。');
+      return;
+    }
+    setAppNotice(null);
+    latestQueueRef.current = filtered;
+    setBatchQueue(filtered);
   };
 
   // Explicit handler to import an entire batch queue backup (JSON)
@@ -634,184 +653,184 @@ export default function App() {
     let decConfidenceCount = 0;
     let stableConfidenceCount = 0;
 
-    setBatchQueue((prevQueue) => {
-      // If queue is currently ONLY the default teaching presets, replace them with user's real imported matches!
-      const isOnlyPresets = prevQueue.every(
-        (item) =>
-          item.id.startsWith('preset-') ||
-          PRESET_CASES.some((c) => c.id === item.id)
-      );
-      const updatedQueue = isOnlyPresets ? [] : [...prevQueue];
+    const prevQueue = latestQueueRef.current;
+    // If queue is currently ONLY the default teaching presets, replace them with user's real imported matches!
+    const isOnlyPresets = prevQueue.every(
+      (item) =>
+        item.id.startsWith('preset-') ||
+        PRESET_CASES.some((c) => c.id === item.id)
+    );
+    const updatedQueue = isOnlyPresets ? [] : [...prevQueue];
 
-      for (const m of matches) {
-        const home = m.matchInfo.homeTeam.trim();
-        const away = m.matchInfo.awayTeam.trim();
-        const existingIndex = updatedQueue.findIndex(
-          (item) =>
-            ((item.data.matchInfo.homeTeam.trim() === home && item.data.matchInfo.awayTeam.trim() === away) ||
-             (matchTeamsFuzzy(item.data.matchInfo.homeTeam, home) && matchTeamsFuzzy(item.data.matchInfo.awayTeam, away))) &&
-            !(hasExplicitKickoffDate(m.matchInfo.matchTime) && hasExplicitKickoffDate(item.data.matchInfo.matchTime) &&
-              calculateSalesDate(m.matchInfo.matchTime).salesDate !== calculateSalesDate(item.data.matchInfo.matchTime, item.timestamp).salesDate)
+    for (const m of matches) {
+      const home = m.matchInfo.homeTeam.trim();
+      const away = m.matchInfo.awayTeam.trim();
+      const existingIndex = updatedQueue.findIndex(
+        (item) =>
+          ((item.data.matchInfo.homeTeam.trim() === home && item.data.matchInfo.awayTeam.trim() === away) ||
+           (matchTeamsFuzzy(item.data.matchInfo.homeTeam, home) && matchTeamsFuzzy(item.data.matchInfo.awayTeam, away))) &&
+          !(hasExplicitKickoffDate(m.matchInfo.matchTime) && hasExplicitKickoffDate(item.data.matchInfo.matchTime) &&
+            calculateSalesDate(m.matchInfo.matchTime).salesDate !== calculateSalesDate(item.data.matchInfo.matchTime, item.timestamp).salesDate)
+      );
+
+      if (existingIndex >= 0) {
+        let existing = updatedQueue[existingIndex];
+        const kickoff = snapshotKickoff(existing.data);
+        if (kickoff !== undefined && kickoff <= Date.now()) {
+          existing = { ...sealQueuePrediction(existing, Date.now()), isLocked: true };
+          updatedQueue[existingIndex] = existing;
+        }
+        if (existing.isLocked || existing.predictionSnapshot || existing.isReviewed || existing.finalScore) {
+          protectedCount++;
+          // Lock Protection: preserve locked odds and predictions.
+          // If matchTime was previously '临场' or missing, update matchTime from new data!
+          if (!existing.predictionSnapshot && (!existing.data.matchInfo.matchTime || existing.data.matchInfo.matchTime === '临场') &&
+              m.matchInfo.matchTime && m.matchInfo.matchTime !== '临场') {
+            updatedQueue[existingIndex] = {
+              ...existing,
+              data: {
+                ...existing.data,
+                matchInfo: {
+                  ...existing.data.matchInfo,
+                  matchTime: m.matchInfo.matchTime,
+                },
+              },
+            };
+          }
+          continue;
+        }
+
+        // Smart Early-vs-Late Merge: Even if the match was previously analyzed or reviewed in the morning,
+        // late market data must update the actuarial report so the 2串1 parlay recommendation reflects late market shifts!
+        updatedCount++;
+
+        const prevData = existing.data;
+        const prevReport = existing.report || generateActuarialRuleReport(prevData);
+        const earlyDataToCompare = existing.earlyDataSnapshot || prevData;
+        const earlyReportToCompare = existing.earlyReportSnapshot || prevReport;
+
+        const mergedMatchData: FullMatchData = {
+          ...m,
+          matchInfo: {
+            ...m.matchInfo,
+            homeProfile: m.matchInfo.homeProfile ?? prevData.matchInfo.homeProfile,
+            awayProfile: m.matchInfo.awayProfile ?? prevData.matchInfo.awayProfile,
+            matchTime: (m.matchInfo.matchTime && !/临场|已完场/.test(m.matchInfo.matchTime))
+              ? m.matchInfo.matchTime
+              : (prevData.matchInfo.matchTime || m.matchInfo.matchTime || '临场'),
+            marketStory: m.matchInfo.marketStory || prevData.matchInfo.marketStory,
+          },
+          euroOdds: {
+            // If previous match data already captured earlyWin, and the new upload only has late odds
+            earlyWin: (prevData.euroOdds.earlyWin > 0 && (!m.euroOdds.earlyWin || m.euroOdds.earlyWin === m.euroOdds.lateWin))
+              ? prevData.euroOdds.earlyWin
+              : (m.euroOdds.earlyWin || prevData.euroOdds.earlyWin),
+            earlyDraw: (prevData.euroOdds.earlyDraw > 0 && (!m.euroOdds.earlyDraw || m.euroOdds.earlyDraw === m.euroOdds.lateDraw))
+              ? prevData.euroOdds.earlyDraw
+              : (m.euroOdds.earlyDraw || prevData.euroOdds.earlyDraw),
+            earlyLoss: (prevData.euroOdds.earlyLoss > 0 && (!m.euroOdds.earlyLoss || m.euroOdds.earlyLoss === m.euroOdds.lateLoss))
+              ? prevData.euroOdds.earlyLoss
+              : (m.euroOdds.earlyLoss || prevData.euroOdds.earlyLoss),
+            lateWin: m.euroOdds.lateWin || prevData.euroOdds.lateWin,
+            lateDraw: m.euroOdds.lateDraw || prevData.euroOdds.lateDraw,
+            lateLoss: m.euroOdds.lateLoss || prevData.euroOdds.lateLoss,
+          },
+          asianHandicap: {
+            earlyHandicap: prevData.asianHandicap.earlyHandicap || m.asianHandicap.earlyHandicap,
+            earlyHomeOdds: (prevData.asianHandicap.earlyHomeOdds > 0 && (!m.asianHandicap.earlyHomeOdds || m.asianHandicap.earlyHomeOdds === m.asianHandicap.lateHomeOdds))
+              ? prevData.asianHandicap.earlyHomeOdds
+              : (m.asianHandicap.earlyHomeOdds || prevData.asianHandicap.earlyHomeOdds),
+            earlyAwayOdds: (prevData.asianHandicap.earlyAwayOdds > 0 && (!m.asianHandicap.earlyAwayOdds || m.asianHandicap.earlyAwayOdds === m.asianHandicap.lateAwayOdds))
+              ? prevData.asianHandicap.earlyAwayOdds
+              : (m.asianHandicap.earlyAwayOdds || prevData.asianHandicap.earlyAwayOdds),
+            lateHandicap: m.asianHandicap.lateHandicap || prevData.asianHandicap.lateHandicap,
+            lateHomeOdds: m.asianHandicap.lateHomeOdds || prevData.asianHandicap.lateHomeOdds,
+            lateAwayOdds: m.asianHandicap.lateAwayOdds || prevData.asianHandicap.lateAwayOdds,
+          },
+          overUnder: {
+            earlyLine: prevData.overUnder.earlyLine || m.overUnder.earlyLine,
+            earlyOverOdds: prevData.overUnder.earlyOverOdds || m.overUnder.earlyOverOdds,
+            earlyUnderOdds: prevData.overUnder.earlyUnderOdds || m.overUnder.earlyUnderOdds,
+            lateLine: m.overUnder.lateLine || prevData.overUnder.lateLine,
+            lateOverOdds: m.overUnder.lateOverOdds || prevData.overUnder.lateOverOdds,
+            lateUnderOdds: m.overUnder.lateUnderOdds || prevData.overUnder.lateUnderOdds,
+          },
+        };
+
+        const updatedReport = generateActuarialRuleReport(mergedMatchData);
+        const confidenceShift = compareEarlyVsLateConfidence(
+          mergedMatchData,
+          earlyReportToCompare,
+          updatedReport,
+          earlyDataToCompare
         );
 
-        if (existingIndex >= 0) {
-          let existing = updatedQueue[existingIndex];
-          const kickoff = snapshotKickoff(existing.data);
-          if (kickoff !== undefined && kickoff <= Date.now()) {
-            existing = { ...sealQueuePrediction(existing, Date.now()), isLocked: true };
-            updatedQueue[existingIndex] = existing;
+        if (confidenceShift.shiftType === 'INCREASED') incConfidenceCount++;
+        else if (confidenceShift.shiftType === 'DECREASED') decConfidenceCount++;
+        else stableConfidenceCount++;
+
+        updatedQueue[existingIndex] = {
+          ...existing,
+          data: mergedMatchData,
+          report: updatedReport,
+          earlyDataSnapshot: earlyDataToCompare,
+          earlyReportSnapshot: earlyReportToCompare,
+          confidenceShift,
+          status: 'done',
+          timestamp: Date.now(),
+          marketRecordedAt: Date.now(),
+          isReviewed: existing.isReviewed,
+          finalScore: existing.finalScore,
+          isLocked: existing.isLocked,
+        };
+      } else {
+        // Brand new match, add to queue (首次导入基石盘口)
+        newCount++;
+        const rep = generateActuarialRuleReport(m);
+        
+        // 仅当文本内明确抓取到双重盘口（如“欧初...即...”或“亚初...即...”）时，才在首次建立变轨比对
+        const hasExplicitDualOdds =
+          Boolean(
+            m.asianHandicap.earlyHandicap &&
+            m.asianHandicap.lateHandicap &&
+            m.asianHandicap.earlyHandicap !== m.asianHandicap.lateHandicap
+          ) ||
+          Math.abs(m.asianHandicap.earlyHomeOdds - m.asianHandicap.lateHomeOdds) > 0.02 ||
+          Math.abs(m.euroOdds.earlyWin - m.euroOdds.lateWin) > 0.02;
+
+        let confidenceShift = hasExplicitDualOdds
+          ? compareEarlyVsLateConfidence(m, undefined, rep)
+          : undefined;
+
+        if (confidenceShift) {
+          if (confidenceShift.starChange > 0 && confidenceShift.shiftType !== 'INCREASED') {
+            confidenceShift = { ...confidenceShift, shiftType: 'INCREASED' };
+          } else if (confidenceShift.starChange < 0 && confidenceShift.shiftType !== 'DECREASED') {
+            confidenceShift = { ...confidenceShift, shiftType: 'DECREASED' };
           }
-          if (existing.isLocked || existing.predictionSnapshot || existing.isReviewed || existing.finalScore) {
-            protectedCount++;
-            // Lock Protection: preserve locked odds and predictions.
-            // If matchTime was previously '临场' or missing, update matchTime from new data!
-            if (!existing.predictionSnapshot && (!existing.data.matchInfo.matchTime || existing.data.matchInfo.matchTime === '临场') &&
-                m.matchInfo.matchTime && m.matchInfo.matchTime !== '临场') {
-              updatedQueue[existingIndex] = {
-                ...existing,
-                data: {
-                  ...existing.data,
-                  matchInfo: {
-                    ...existing.data.matchInfo,
-                    matchTime: m.matchInfo.matchTime,
-                  },
-                },
-              };
-            }
-            continue;
-          }
-
-          // Smart Early-vs-Late Merge: Even if the match was previously analyzed or reviewed in the morning,
-          // late market data must update the actuarial report so the 2串1 parlay recommendation reflects late market shifts!
-          updatedCount++;
-
-          const prevData = existing.data;
-          const prevReport = existing.report || generateActuarialRuleReport(prevData);
-          const earlyDataToCompare = existing.earlyDataSnapshot || prevData;
-          const earlyReportToCompare = existing.earlyReportSnapshot || prevReport;
-
-          const mergedMatchData: FullMatchData = {
-            ...m,
-            matchInfo: {
-              ...m.matchInfo,
-              homeProfile: m.matchInfo.homeProfile ?? prevData.matchInfo.homeProfile,
-              awayProfile: m.matchInfo.awayProfile ?? prevData.matchInfo.awayProfile,
-              matchTime: (m.matchInfo.matchTime && !/临场|已完场/.test(m.matchInfo.matchTime))
-                ? m.matchInfo.matchTime
-                : (prevData.matchInfo.matchTime || m.matchInfo.matchTime || '临场'),
-              marketStory: m.matchInfo.marketStory || prevData.matchInfo.marketStory,
-            },
-            euroOdds: {
-              // If previous match data already captured earlyWin, and the new upload only has late odds
-              earlyWin: (prevData.euroOdds.earlyWin > 0 && (!m.euroOdds.earlyWin || m.euroOdds.earlyWin === m.euroOdds.lateWin))
-                ? prevData.euroOdds.earlyWin
-                : (m.euroOdds.earlyWin || prevData.euroOdds.earlyWin),
-              earlyDraw: (prevData.euroOdds.earlyDraw > 0 && (!m.euroOdds.earlyDraw || m.euroOdds.earlyDraw === m.euroOdds.lateDraw))
-                ? prevData.euroOdds.earlyDraw
-                : (m.euroOdds.earlyDraw || prevData.euroOdds.earlyDraw),
-              earlyLoss: (prevData.euroOdds.earlyLoss > 0 && (!m.euroOdds.earlyLoss || m.euroOdds.earlyLoss === m.euroOdds.lateLoss))
-                ? prevData.euroOdds.earlyLoss
-                : (m.euroOdds.earlyLoss || prevData.euroOdds.earlyLoss),
-              lateWin: m.euroOdds.lateWin || prevData.euroOdds.lateWin,
-              lateDraw: m.euroOdds.lateDraw || prevData.euroOdds.lateDraw,
-              lateLoss: m.euroOdds.lateLoss || prevData.euroOdds.lateLoss,
-            },
-            asianHandicap: {
-              earlyHandicap: prevData.asianHandicap.earlyHandicap || m.asianHandicap.earlyHandicap,
-              earlyHomeOdds: (prevData.asianHandicap.earlyHomeOdds > 0 && (!m.asianHandicap.earlyHomeOdds || m.asianHandicap.earlyHomeOdds === m.asianHandicap.lateHomeOdds))
-                ? prevData.asianHandicap.earlyHomeOdds
-                : (m.asianHandicap.earlyHomeOdds || prevData.asianHandicap.earlyHomeOdds),
-              earlyAwayOdds: (prevData.asianHandicap.earlyAwayOdds > 0 && (!m.asianHandicap.earlyAwayOdds || m.asianHandicap.earlyAwayOdds === m.asianHandicap.lateAwayOdds))
-                ? prevData.asianHandicap.earlyAwayOdds
-                : (m.asianHandicap.earlyAwayOdds || prevData.asianHandicap.earlyAwayOdds),
-              lateHandicap: m.asianHandicap.lateHandicap || prevData.asianHandicap.lateHandicap,
-              lateHomeOdds: m.asianHandicap.lateHomeOdds || prevData.asianHandicap.lateHomeOdds,
-              lateAwayOdds: m.asianHandicap.lateAwayOdds || prevData.asianHandicap.lateAwayOdds,
-            },
-            overUnder: {
-              earlyLine: prevData.overUnder.earlyLine || m.overUnder.earlyLine,
-              earlyOverOdds: prevData.overUnder.earlyOverOdds || m.overUnder.earlyOverOdds,
-              earlyUnderOdds: prevData.overUnder.earlyUnderOdds || m.overUnder.earlyUnderOdds,
-              lateLine: m.overUnder.lateLine || prevData.overUnder.lateLine,
-              lateOverOdds: m.overUnder.lateOverOdds || prevData.overUnder.lateOverOdds,
-              lateUnderOdds: m.overUnder.lateUnderOdds || prevData.overUnder.lateUnderOdds,
-            },
-          };
-
-          const updatedReport = generateActuarialRuleReport(mergedMatchData);
-          const confidenceShift = compareEarlyVsLateConfidence(
-            mergedMatchData,
-            earlyReportToCompare,
-            updatedReport,
-            earlyDataToCompare
-          );
-
-          if (confidenceShift.shiftType === 'INCREASED') incConfidenceCount++;
-          else if (confidenceShift.shiftType === 'DECREASED') decConfidenceCount++;
-          else stableConfidenceCount++;
-
-          updatedQueue[existingIndex] = {
-            ...existing,
-            data: mergedMatchData,
-            report: updatedReport,
-            earlyDataSnapshot: earlyDataToCompare,
-            earlyReportSnapshot: earlyReportToCompare,
-            confidenceShift,
-            status: 'done',
-            timestamp: Date.now(),
-            marketRecordedAt: Date.now(),
-            isReviewed: existing.isReviewed,
-            finalScore: existing.finalScore,
-            isLocked: existing.isLocked,
-          };
-        } else {
-          // Brand new match, add to queue (首次导入基石盘口)
-          newCount++;
-          const rep = generateActuarialRuleReport(m);
-          
-          // 仅当文本内明确抓取到双重盘口（如“欧初...即...”或“亚初...即...”）时，才在首次建立变轨比对
-          const hasExplicitDualOdds =
-            Boolean(
-              m.asianHandicap.earlyHandicap &&
-              m.asianHandicap.lateHandicap &&
-              m.asianHandicap.earlyHandicap !== m.asianHandicap.lateHandicap
-            ) ||
-            Math.abs(m.asianHandicap.earlyHomeOdds - m.asianHandicap.lateHomeOdds) > 0.02 ||
-            Math.abs(m.euroOdds.earlyWin - m.euroOdds.lateWin) > 0.02;
-
-          let confidenceShift = hasExplicitDualOdds
-            ? compareEarlyVsLateConfidence(m, undefined, rep)
-            : undefined;
-
-          if (confidenceShift) {
-            if (confidenceShift.starChange > 0 && confidenceShift.shiftType !== 'INCREASED') {
-              confidenceShift = { ...confidenceShift, shiftType: 'INCREASED' };
-            } else if (confidenceShift.starChange < 0 && confidenceShift.shiftType !== 'DECREASED') {
-              confidenceShift = { ...confidenceShift, shiftType: 'DECREASED' };
-            }
-          }
-
-          if (confidenceShift?.shiftType === 'INCREASED') incConfidenceCount++;
-          else if (confidenceShift?.shiftType === 'DECREASED') decConfidenceCount++;
-          else if (confidenceShift) stableConfidenceCount++;
-
-          updatedQueue.push({
-            id: `batch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            sourceName: `导入场次_${home}vs${away}`,
-            data: m,
-            report: rep,
-            earlyDataSnapshot: m, // 保存初盘快照，供晚盘二次导入时精准比对变轨
-            earlyReportSnapshot: rep,
-            marketRecordedAt: Date.now(),
-            confidenceShift,
-            status: 'done',
-            timestamp: Date.now(),
-          });
         }
-      }
 
-      return updatedQueue;
-    });
+        if (confidenceShift?.shiftType === 'INCREASED') incConfidenceCount++;
+        else if (confidenceShift?.shiftType === 'DECREASED') decConfidenceCount++;
+        else if (confidenceShift) stableConfidenceCount++;
+
+        updatedQueue.push({
+          id: `batch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          sourceName: `导入场次_${home}vs${away}`,
+          data: m,
+          report: rep,
+          earlyDataSnapshot: m, // 保存初盘快照，供晚盘二次导入时精准比对变轨
+          earlyReportSnapshot: rep,
+          marketRecordedAt: Date.now(),
+          confidenceShift,
+          status: 'done',
+          timestamp: Date.now(),
+        });
+      }
+    }
+
+    latestQueueRef.current = updatedQueue;
+    setBatchQueue(updatedQueue);
 
     const shiftDetailText = updatedCount > 0
       ? ` ｜ ⚡ 晚盘变轨：⬆️ 增加信心 ${incConfidenceCount} 场，⬇️ 减少信心 ${decConfidenceCount} 场，⏸️ 走势平稳 ${stableConfidenceCount} 场`
@@ -969,39 +988,39 @@ export default function App() {
     awayScore: number,
     incidents: string = ''
   ) => {
-    setBatchQueue((prev) =>
-      prev.map((item) => {
-        if (item.id === id) {
-          const sealed = sealQueuePrediction(item, Date.now());
-          const rep = sealed.report || generateActuarialRuleReport(sealed.data);
-          let review = evaluateMatchOutcomeAndExtractLesson(
-            item.data,
-            rep,
-            homeScore,
-            awayScore,
-            incidents,
-            false,
-            item.review?.salesDateOverride || item.review?.salesDate,
-            item.timestamp,
-            item.review,
-            sealed.predictionSnapshot
-          );
-          if (item.review?.salesDateOverride) {
-            review = calibrateReviewSalesDate({ ...review, salesDateOverride: item.review.salesDateOverride });
-          }
-          // Persist into PostMatchReviews storage
-          if (!savePostMatchReview(review)) return item;
+    const targetItem = latestQueueRef.current.find((item) => item.id === id);
+    if (!targetItem) return;
 
-          return {
-            ...sealed,
-            finalScore: `${homeScore}-${awayScore}`,
-            isReviewed: true,
-            isLocked: true, // Automatically lock once result is recorded
-            review,
-          };
-        }
-        return item;
-      })
+    const sealed = sealQueuePrediction(targetItem, Date.now());
+    const rep = sealed.report || generateActuarialRuleReport(sealed.data);
+    let review = evaluateMatchOutcomeAndExtractLesson(
+      targetItem.data,
+      rep,
+      homeScore,
+      awayScore,
+      incidents,
+      false,
+      targetItem.review?.salesDateOverride || targetItem.review?.salesDate,
+      targetItem.timestamp,
+      targetItem.review,
+      sealed.predictionSnapshot
+    );
+    if (targetItem.review?.salesDateOverride) {
+      review = calibrateReviewSalesDate({ ...review, salesDateOverride: targetItem.review.salesDateOverride });
+    }
+    // Persist into PostMatchReviews storage outside React's state updater
+    if (!savePostMatchReview(review)) return;
+
+    const nextItem: BatchMatchItem = {
+      ...sealed,
+      finalScore: `${homeScore}-${awayScore}`,
+      isReviewed: true,
+      isLocked: true, // Automatically lock once result is recorded
+      review,
+    };
+
+    setBatchQueue((prev) =>
+      prev.map((item) => (item.id === id ? nextItem : item))
     );
   };
 
@@ -1057,6 +1076,13 @@ export default function App() {
         <div role="alert" className="mx-4 mt-3 rounded-lg border border-red-500/50 bg-red-950/70 px-4 py-2.5 text-xs text-red-200 flex items-start justify-between gap-3">
           <span>⚠️ {storageWarning}</span>
           <button type="button" onClick={() => setStorageWarning(null)} className="shrink-0 text-red-300 hover:text-white">关闭</button>
+        </div>
+      )}
+
+      {appNotice && (
+        <div role="status" className="mx-4 mt-3 rounded-lg border border-amber-500/40 bg-amber-950/60 px-4 py-2.5 text-xs text-amber-200 flex items-start justify-between gap-3">
+          <span>{appNotice}</span>
+          <button type="button" onClick={() => setAppNotice(null)} className="shrink-0 text-amber-300 hover:text-white">关闭</button>
         </div>
       )}
 
@@ -1204,6 +1230,37 @@ export default function App() {
         onImageAnalyzed={handleImageAnalyzed}
         onBatchImported={handleBatchImported}
       />
+
+      {/* In-app confirmation modal for resetting to teaching presets */}
+      {showResetPresetsConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-800 flex items-center gap-2.5">
+              <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+              <h3 className="text-sm font-bold text-white">确认载入教学预设案例</h3>
+            </div>
+            <div className="px-5 py-4 text-xs text-slate-300 leading-relaxed">
+              确定要载入官方 5 场经典教学预设案例吗？当前队列中的比赛将被重置为教学用例（曼城、皇马、利物浦、拉齐奥、多特蒙德）。
+            </div>
+            <div className="px-5 py-3 border-t border-slate-800 bg-slate-950/60 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowResetPresetsConfirm(false)}
+                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={confirmResetToPresets}
+                className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 cursor-pointer"
+              >
+                确认载入
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Footer Info */}
       <footer className="border-t border-slate-900 bg-slate-950/80 py-4 text-center text-xs text-slate-500">

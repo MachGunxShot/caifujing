@@ -10,7 +10,7 @@ import {
   ParlayMatchSnapshot,
 } from '../types/fortuneActuary';
 import { parseHandicapValue, parseOverUnderValue } from './actuaryEngine';
-import { calculateSalesDate, calibrateReviewSalesDate, getReviewSalesInfo } from './salesDayUtils';
+import { calculateSalesDate, calibrateReviewSalesDate, getReviewSalesInfo, matchTeamsFuzzy } from './salesDayUtils';
 
 const RULES_STORAGE_KEY = 'fortune_actuary_evolved_rules_v1';
 const REVIEWS_STORAGE_KEY = 'fortune_actuary_reviews_v1';
@@ -1743,15 +1743,16 @@ export function evaluateParlaySettlement(
   allReviews: PostMatchReview[]
 ): ParlayReviewRecord {
   const findReviewForMatch = (m: ParlayMatchSnapshot) => {
-    const mHome = (m.homeTeam || '').replace(/\s+/g, '').toLowerCase();
-    const mAway = (m.awayTeam || '').replace(/\s+/g, '').toLowerCase();
     return allReviews.find((r) => {
-      const rHome = (r.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
-      const rAway = (r.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+      const rHome = r.matchData?.matchInfo?.homeTeam || '';
+      const rAway = r.matchData?.matchInfo?.awayTeam || '';
       return (
-        mHome && mAway && rHome && rAway &&
-        (mHome.includes(rHome) || rHome.includes(mHome)) &&
-        (mAway.includes(rAway) || rAway.includes(mAway))
+        m.homeTeam &&
+        m.awayTeam &&
+        rHome &&
+        rAway &&
+        matchTeamsFuzzy(m.homeTeam, rHome) &&
+        matchTeamsFuzzy(m.awayTeam, rAway)
       );
     });
   };

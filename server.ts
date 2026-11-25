@@ -29,10 +29,15 @@ if (process.env.HTTPS_PROXY || process.env.https_proxy) {
   }
 }
 
-// Loopback by default: the API spends the owner's Gemini quota and has no auth,
-// so exposing it to the LAN must be an explicit choice (HOST=0.0.0.0).
-const HOST = process.env.HOST || '127.0.0.1';
+// Bind to 0.0.0.0 by default for container/preview environments while still honoring
+// an explicit HOST override (e.g. HOST=127.0.0.1 for local-only use).
+const HOST = process.env.HOST || '0.0.0.0';
 const IS_PRODUCTION = process.env.NODE_ENV === 'production' || process.argv.includes('--prod');
+
+function clampText(value: unknown, maxLen: number): string {
+  if (typeof value !== 'string') return '';
+  return value.length > maxLen ? value.slice(0, maxLen) : value;
+}
 
 const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif', 'image/heic', 'image/heif']);
 
@@ -121,15 +126,23 @@ async function startServer() {
         return res.json({ success: true, aiAnalysis: buildRuleEngineText(matchData),
           source: 'RULE_ENGINE_FALLBACK', note: localReport.decision.v4Assessment });
       }
+      const safeLeague = clampText(matchInfo?.league, 200) || '未知联赛';
+      const safeHome = clampText(matchInfo?.homeTeam, 200) || '主队';
+      const safeAway = clampText(matchInfo?.awayTeam, 200) || '客队';
+      const safeTime = clampText(matchInfo?.matchTime, 100) || '临场';
+      const safeStory = clampText(matchInfo?.marketStory, 2000) || '无特殊题材';
+      const safeNotes = clampText(additionalNotes, 2000) || '无';
+      const safeExperiencePrompt = clampText(experiencePrompt, 8000);
+
       const promptText = `
 请以《财富经》足彩盘赔分析与博弈论顶级精算师与风险控制专家的身份，对以下比赛进行极其严苛、深入的盘赔测谎与风险解剖：
 
 【赛事基本面】：
-- 联赛：${matchInfo?.league || '未知联赛'}
-- 对阵：${matchInfo?.homeTeam || '主队'} vs ${matchInfo?.awayTeam || '客队'}
-- 比赛时间：${matchInfo?.matchTime || '临场'}
-- 本地 v4 星级（规则符合度）：${localReport.decision.starRating}；核心组合资格：${localReport.decision.coreEligible ? '符合' : '不符合'}。遵守此结论。\n- 市场热度与题材：${matchInfo?.marketStory || '无特殊题材'}
-- 额外备注/伤停：${additionalNotes || '无'}
+- 联赛：${safeLeague}
+- 对阵：${safeHome} vs ${safeAway}
+- 比赛时间：${safeTime}
+- 本地 v4 星级（规则符合度）：${localReport.decision.starRating}；核心组合资格：${localReport.decision.coreEligible ? '符合' : '不符合'}。遵守此结论。\n- 市场热度与题材：${safeStory}
+- 额外备注/伤停：${safeNotes}
 
 【亚盘早晚盘数据】：
 - 早盘盘口与水位：主队 ${asianHandicap?.earlyHandicap || '-'} (水位 ${asianHandicap?.earlyHomeOdds ?? '-'}) vs 客队 (水位 ${asianHandicap?.earlyAwayOdds ?? '-'})
@@ -143,7 +156,7 @@ async function startServer() {
 - 早盘大小球：${overUnder?.earlyLine ?? '-'} (大球水 ${overUnder?.earlyOverOdds ?? '-'} / 小球水 ${overUnder?.earlyUnderOdds ?? '-'})
 - 晚盘大小球：${overUnder?.lateLine ?? '-'} (大球水 ${overUnder?.lateOverOdds ?? '-'} / 小球水 ${overUnder?.lateUnderOdds ?? '-'})
 
-${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
+${safeExperiencePrompt ? `\n${safeExperiencePrompt}\n` : ''}
 
 请严格依照《财富经》核心研判原则（早盘看意图，晚盘看真实风控；永远学会证伪而非自我证明；天下没有无缘无故的馅饼）和五大经典操盘模型（极限榨水、高息吸筹、雪崩退盘、平赔低洼、浅盘满水死亡）以及大小球联动测谎规则，直击大庄真实底牌。
 
@@ -218,7 +231,7 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
 
 【实际完场结果】：
 - 最终实际比分：${actualScore}
-- 赛中突发转折点：${matchIncidents || '无特殊突发事件，常规技战术对抗'}
+- 赛中突发转折点：${clampText(matchIncidents, 2000) || '无特殊突发事件，常规技战术对抗'}
 
 【请严格按以下 JSON 结构输出】：
 \`\`\`json
@@ -310,7 +323,7 @@ ${experiencePrompt ? `\n${experiencePrompt}\n` : ''}
       const promptText = `
 请仔细识别这张赛事盘口截图（包含欧指胜平负、亚盘让球水位、大小球界线、早盘初盘与临场晚盘即时盘水，或比分网即时赔率），并以《财富经》足彩盘赔分析与博弈论顶级精算师的身份完成识别与深度测谎：
 
-用户附言：${note || '无'}
+用户附言：${clampText(note, 2000) || '无'}
 
 请严格按照以下步骤输出：
 第一步：先输出提取到的结构化数据 JSON 代码块（必须使用 \`\`\`json 包裹），示例如下：
@@ -484,8 +497,9 @@ ${candidateListStr ? `【待匹配的目标赛事参考列表】：${candidateLi
 
       // 2. If rawText is provided (or if OCR didn't catch or offline)
       let usedText = false;
-      if (typeof rawText === 'string' && rawText.trim().length > 0) {
-        const textResults = parseBatchMatchScoresFromText(rawText, candidates);
+      const safeRawText = clampText(rawText, 200_000);
+      if (safeRawText.trim().length > 0) {
+        const textResults = parseBatchMatchScoresFromText(safeRawText, candidates);
         for (const tr of textResults) {
           if (!parsedScores.some((p) => p.homeTeam === tr.homeTeam && p.awayTeam === tr.awayTeam)) {
             parsedScores.push(tr);
@@ -511,14 +525,9 @@ ${candidateListStr ? `【待匹配的目标赛事参考列表】：${candidateLi
     }
   });
 
-  // Health check endpoint
-  app.get('/api/health', (req, res) => {
-    res.json({
-      status: 'ok',
-      hasApiKey: !!process.env.GEMINI_API_KEY,
-      model: GEMINI_MODELS[0],
-      models: GEMINI_MODELS,
-    });
+  // Health check endpoint (keep minimal without exposing internal configuration)
+  app.get('/api/health', (_req, res) => {
+    res.json({ status: 'ok' });
   });
 
   // Last-resort guard so one bad request answers 500 instead of crashing the process.
@@ -533,7 +542,8 @@ ${candidateListStr ? `【待匹配的目标赛事参考列表】：${candidateLi
   // Dev vs Prod middleware
   if (IS_PRODUCTION) {
     app.use(express.static(path.join(__dirname, 'dist')));
-    app.get('*', (req, res) => {
+    app.use((req, res, next) => {
+      if (req.method !== 'GET') return next();
       res.sendFile(path.join(__dirname, 'dist', 'index.html'));
     });
   } else {
@@ -549,8 +559,7 @@ ${candidateListStr ? `【待匹配的目标赛事参考列表】：${candidateLi
   });
 }
 
-// Express 4 does not route rejected async handlers to the error middleware; log them
-// instead of letting Node terminate the server for every user on an unexpected bug.
+// Process-level safety net so unexpected rejected promises are logged rather than crashing the server.
 process.on('unhandledRejection', (reason: any) => {
   console.error('Unhandled promise rejection:', reason?.message || reason);
 });

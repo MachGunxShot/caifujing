@@ -138,6 +138,13 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
   const [parlayFilterStatus, setParlayFilterStatus] = useState<string>('ALL');
   const [isExtractingParlays, setIsExtractingParlays] = useState(false);
   const [parlayActionToast, setParlayActionToast] = useState<string | null>(null);
+  const [ocrNotice, setOcrNotice] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   // Review Form States (Single vs Batch)
   const [reviewEntryMode, setReviewEntryMode] = useState<'batch' | 'single'>('batch');
@@ -373,22 +380,32 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
   // Delete single parlay
   const handleDeleteParlay = (id: string) => {
-    if (window.confirm('确定要删除这期 2串1 战报吗？')) {
-      deleteParlayReview(id);
-      const currentRevs = getPostMatchReviews();
-      const updated = getParlayReviews().map((p) => evaluateParlaySettlement(p, currentRevs));
-      setParlayReviews(updated);
-    }
+    setConfirmDialog({
+      title: '删除 2串1 战报',
+      message: '确定要删除这期 2串1 战报吗？',
+      confirmLabel: '确认删除',
+      onConfirm: () => {
+        deleteParlayReview(id);
+        const currentRevs = getPostMatchReviews();
+        const updated = getParlayReviews().map((p) => evaluateParlaySettlement(p, currentRevs));
+        setParlayReviews(updated);
+      },
+    });
   };
 
   // Clear all parlays
   const handleClearAllParlays = () => {
-    if (window.confirm('确定要清空全部 2串1 稳胆历史战报吗？（单场复盘与法则库不受影响）')) {
-      clearAllParlayReviews();
-      setParlayReviews([]);
-      setParlayActionToast('已清空全部 2串1 稳胆战报！');
-      setTimeout(() => setParlayActionToast(null), 4000);
-    }
+    setConfirmDialog({
+      title: '清空 2串1 战报',
+      message: '确定要清空全部 2串1 稳胆历史战报吗？（单场复盘与法则库不受影响）',
+      confirmLabel: '确认清空',
+      onConfirm: () => {
+        clearAllParlayReviews();
+        setParlayReviews([]);
+        setParlayActionToast('已清空全部 2串1 稳胆战报！');
+        setTimeout(() => setParlayActionToast(null), 4000);
+      },
+    });
   };
 
   // Date formatting helper for YYYY-MM-DD grouping
@@ -582,24 +599,71 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
   // Delete single review
   const handleDeleteReview = (reviewId: string) => {
-    if (window.confirm('确定要删除这条复盘战报吗？')) {
-      const targetReview = reviews.find((r) => r.id === reviewId);
-      const updated = deletePostMatchReview(reviewId);
-      setReviews(updated);
+    setConfirmDialog({
+      title: '删除复盘战报',
+      message: '确定要删除这条复盘战报吗？',
+      confirmLabel: '确认删除',
+      onConfirm: () => {
+        const targetReview = reviews.find((r) => r.id === reviewId);
+        const updated = deletePostMatchReview(reviewId);
+        setReviews(updated);
 
-      if (targetReview) {
-        const home = (targetReview.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
-        const away = (targetReview.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+        if (targetReview) {
+          const home = (targetReview.matchData?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
+          const away = (targetReview.matchData?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+          const updatedQueue = queue.map((item) => {
+            const iHome = (item.data?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
+            const iAway = (item.data?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
+            if (
+              item.review ? item.review.id === reviewId :
+              (home && away && iHome && iAway &&
+                salesDatesCompatible(item.data?.matchInfo?.matchTime, item.timestamp, undefined,
+                  targetReview.matchData?.matchInfo?.matchTime, targetReview.reviewTimestamp, targetReview.salesDateOverride || targetReview.salesDate) &&
+                matchTeamsFuzzy(home, iHome) && matchTeamsFuzzy(away, iAway))
+            ) {
+              return {
+                ...item,
+                isReviewed: false,
+                finalScore: undefined,
+                review: undefined,
+              };
+            }
+            return item;
+          });
+          onUpdateQueue(updatedQueue);
+        }
+      },
+    });
+  };
+
+  // Delete all reviews of a specific sales day
+  const handleDeleteDateGroup = (dateKey: string, dateLabel: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirmDialog({
+      title: '删除单日全部战报',
+      message: `确定要删除【${dateLabel}】的全部战报吗？`,
+      confirmLabel: '确认删除',
+      onConfirm: () => {
+        const toDelete = reviews.filter((r) => {
+          const { salesDate: rKey } = getReviewSalesInfo(r);
+          return rKey === dateKey;
+        });
+        const filtered = reviews.filter((r) => {
+          const { salesDate: rKey } = getReviewSalesInfo(r);
+          return rKey !== dateKey;
+        });
+        replacePostMatchReviews(filtered);
+        setReviews(filtered);
+
         const updatedQueue = queue.map((item) => {
-          const iHome = (item.data?.matchInfo?.homeTeam || '').replace(/\s+/g, '').toLowerCase();
-          const iAway = (item.data?.matchInfo?.awayTeam || '').replace(/\s+/g, '').toLowerCase();
-          if (
-            item.review ? item.review.id === reviewId :
-            (home && away && iHome && iAway &&
-              salesDatesCompatible(item.data?.matchInfo?.matchTime, item.timestamp, undefined,
-                targetReview.matchData?.matchInfo?.matchTime, targetReview.reviewTimestamp, targetReview.salesDateOverride || targetReview.salesDate) &&
-              matchTeamsFuzzy(home, iHome) && matchTeamsFuzzy(away, iAway))
-          ) {
+          const isMatched = toDelete.some((r) => {
+            if (item.review) return r.id === item.review.id;
+            if (!salesDatesCompatible(item.data?.matchInfo?.matchTime, item.timestamp, undefined,
+              r.matchData?.matchInfo?.matchTime, r.reviewTimestamp, r.salesDateOverride || r.salesDate)) return false;
+            return matchTeamsFuzzy(r.matchData?.matchInfo?.homeTeam || '', item.data?.matchInfo?.homeTeam || '') &&
+              matchTeamsFuzzy(r.matchData?.matchInfo?.awayTeam || '', item.data?.matchInfo?.awayTeam || '');
+          });
+          if (isMatched) {
             return {
               ...item,
               isReviewed: false,
@@ -610,60 +674,28 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
           return item;
         });
         onUpdateQueue(updatedQueue);
-      }
-    }
-  };
-
-  // Delete all reviews of a specific sales day
-  const handleDeleteDateGroup = (dateKey: string, dateLabel: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (window.confirm(`确定要删除【${dateLabel}】的全部战报吗？`)) {
-      const toDelete = reviews.filter((r) => {
-        const { salesDate: rKey } = getReviewSalesInfo(r);
-        return rKey === dateKey;
-      });
-      const filtered = reviews.filter((r) => {
-        const { salesDate: rKey } = getReviewSalesInfo(r);
-        return rKey !== dateKey;
-      });
-      replacePostMatchReviews(filtered);
-      setReviews(filtered);
-
-      const updatedQueue = queue.map((item) => {
-        const isMatched = toDelete.some((r) => {
-          if (item.review) return r.id === item.review.id;
-          if (!salesDatesCompatible(item.data?.matchInfo?.matchTime, item.timestamp, undefined,
-            r.matchData?.matchInfo?.matchTime, r.reviewTimestamp, r.salesDateOverride || r.salesDate)) return false;
-          return matchTeamsFuzzy(r.matchData?.matchInfo?.homeTeam || '', item.data?.matchInfo?.homeTeam || '') &&
-            matchTeamsFuzzy(r.matchData?.matchInfo?.awayTeam || '', item.data?.matchInfo?.awayTeam || '');
-        });
-        if (isMatched) {
-          return {
-            ...item,
-            isReviewed: false,
-            finalScore: undefined,
-            review: undefined,
-          };
-        }
-        return item;
-      });
-      onUpdateQueue(updatedQueue);
-    }
+      },
+    });
   };
 
   // Clear all reviews
   const handleClearAllReviews = () => {
-    if (window.confirm(`确定要清空全部 ${reviews.length} 条历史复盘战报吗？（核心法则库将完好保留）`)) {
-      clearAllPostMatchReviews();
-      setReviews([]);
-      const updatedQueue = queue.map((item) => ({
-        ...item,
-        isReviewed: false,
-        finalScore: undefined,
-        review: undefined,
-      }));
-      onUpdateQueue(updatedQueue);
-    }
+    setConfirmDialog({
+      title: '清空历史复盘战报',
+      message: `确定要清空全部 ${reviews.length} 条历史复盘战报吗？（核心法则库将完好保留）`,
+      confirmLabel: '确认清空',
+      onConfirm: () => {
+        clearAllPostMatchReviews();
+        setReviews([]);
+        const updatedQueue = queue.map((item) => ({
+          ...item,
+          isReviewed: false,
+          finalScore: undefined,
+          review: undefined,
+        }));
+        onUpdateQueue(updatedQueue);
+      },
+    });
   };
 
   // Calibrate sales dates for all existing reviews
@@ -835,6 +867,7 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
       setBatchScreenshot(base64);
       setIsExtractingScores(true);
       setBatchReviewSummary(null);
+      setOcrNotice(null);
 
       try {
         const candidateList = [
@@ -856,10 +889,11 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
         if (resJson.success && Array.isArray(resJson.scores) && resJson.scores.length > 0) {
           setParsedScores(resJson.scores);
         } else {
-          alert('未能自动从该截图中识出完整比分。建议切换至右侧“文本 / 表格快速识别”直接粘贴比分网文字！');
+          setOcrNotice('未能自动从该截图中识出完整比分。建议切换至右侧“文本 / 表格快速识别”直接粘贴比分网文字。');
         }
       } catch (err) {
         console.error('Score recognition error:', err);
+        setOcrNotice('比分截图识别请求失败，请检查网络连接或改用文本识别。');
       } finally {
         setIsExtractingScores(false);
       }
@@ -1419,16 +1453,17 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
 
   // Handle Pruning zero-hit isolated rules
   const handlePruneZeroHits = () => {
-    if (
-      window.confirm(
-        '确定要清理所有未被二次印证的孤立单场记录（命中次数为0）吗？《财富经》经典法则与高阶经验将 100% 完好保留。'
-      )
-    ) {
-      const res = pruneZeroHitRules();
-      setRules([...res.newRules]);
-      setHealthNotification(`🧹 已清理 ${res.removedCount} 条未被二次印证的孤立单场记录！`);
-      setTimeout(() => setHealthNotification(null), 6000);
-    }
+    setConfirmDialog({
+      title: '清理孤立单场记录',
+      message: '确定要清理所有未被二次印证的孤立单场记录（命中次数为0）吗？《财富经》经典法则与高阶经验将 100% 完好保留。',
+      confirmLabel: '确认清理',
+      onConfirm: () => {
+        const res = pruneZeroHitRules();
+        setRules([...res.newRules]);
+        setHealthNotification(`🧹 已清理 ${res.removedCount} 条未被二次印证的孤立单场记录！`);
+        setTimeout(() => setHealthNotification(null), 6000);
+      },
+    });
   };
 
   // Handle repairing inconsistent/inverted language (e.g. calling blowout '冷门反杀')
@@ -4837,6 +4872,56 @@ export const ReviewEvolutionView: React.FC<ReviewEvolutionViewProps> = ({
                 })}
             </div>
           )}
+        </div>
+      )}
+
+      {ocrNotice && (
+        <div role="alert" className="fixed bottom-5 right-5 z-50 max-w-md rounded-xl border border-amber-500/40 bg-slate-900/95 px-4 py-3 text-xs text-amber-200 shadow-2xl flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <span>{ocrNotice}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setOcrNotice(null)}
+            className="text-amber-300 hover:text-white shrink-0"
+          >
+            关闭
+          </button>
+        </div>
+      )}
+
+      {confirmDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-800 flex items-center gap-2.5">
+              <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0" />
+              <h3 className="text-sm font-bold text-white">{confirmDialog.title}</h3>
+            </div>
+            <div className="px-5 py-4 text-xs text-slate-300 leading-relaxed">
+              {confirmDialog.message}
+            </div>
+            <div className="px-5 py-3 border-t border-slate-800 bg-slate-950/60 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDialog(null)}
+                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const action = confirmDialog.onConfirm;
+                  setConfirmDialog(null);
+                  action();
+                }}
+                className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-rose-500 hover:bg-rose-400 text-white cursor-pointer"
+              >
+                {confirmDialog.confirmLabel || '确认'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

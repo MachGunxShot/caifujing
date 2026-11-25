@@ -1008,6 +1008,10 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
   };
 
   const [copiedBackup, setCopiedBackup] = useState(false);
+  const [isImportBackupOpen, setIsImportBackupOpen] = useState(false);
+  const [backupJsonInput, setBackupJsonInput] = useState('');
+  const [backupImportError, setBackupImportError] = useState<string | null>(null);
+  const [backupImportNotice, setBackupImportNotice] = useState<string | null>(null);
 
   const hasPresets = useMemo(
     () => queue.some((item) => item.id.startsWith('preset-') || PRESET_CASES.some((c) => c.id === item.id)),
@@ -1026,19 +1030,100 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
   };
 
   const handleImportQueueJson = () => {
-    const input = prompt('请粘贴先前备份导出的工作台赛事 JSON 数据：');
-    if (!input || !onImportQueue) return;
+    if (!onImportQueue) return;
+    setBackupImportError(null);
+    setBackupJsonInput('');
+    setIsImportBackupOpen(true);
+  };
+
+  const handleConfirmImportQueueJson = () => {
+    if (!onImportQueue) return;
+    const trimmed = backupJsonInput.trim();
+    if (!trimmed) {
+      setBackupImportError('请先粘贴备份导出的 JSON 数据');
+      return;
+    }
     try {
-      const items = parseQueueBackup(input);
+      const items = parseQueueBackup(trimmed);
       onImportQueue(items);
-      alert(`成功恢复导入 ${items.length} 场赛事！`);
+      setIsImportBackupOpen(false);
+      setBackupJsonInput('');
+      setBackupImportError(null);
+      setBackupImportNotice(`成功恢复导入 ${items.length} 场赛事`);
+      setTimeout(() => setBackupImportNotice(null), 4000);
     } catch (error) {
-      alert('无法恢复备份：' + (error instanceof Error ? error.message : '格式错误'));
+      setBackupImportError('无法恢复备份：' + (error instanceof Error ? error.message : '格式错误'));
     }
   };
 
+  const importBackupUi = (
+    <>
+      {backupImportNotice && (
+        <div role="status" className="fixed bottom-5 right-5 z-50 rounded-xl border border-emerald-500/40 bg-slate-900/95 px-4 py-2.5 text-xs text-emerald-300 shadow-2xl flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{backupImportNotice}</span>
+        </div>
+      )}
+      {isImportBackupOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="w-full max-w-xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Download className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-sm font-bold text-white">恢复工作台历史备份 (JSON)</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsImportBackupOpen(false)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <p className="text-xs text-slate-400">请粘贴先前备份导出的工作台赛事 JSON 数据：</p>
+              <textarea
+                value={backupJsonInput}
+                onChange={(e) => {
+                  setBackupJsonInput(e.target.value);
+                  setBackupImportError(null);
+                }}
+                rows={7}
+                placeholder='[{"id": "...", "data": {...}, ...}]'
+                className="w-full rounded-xl bg-slate-950 border border-slate-700 px-3 py-2.5 text-xs font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+              />
+              {backupImportError && (
+                <div role="alert" className="rounded-lg border border-rose-500/40 bg-rose-950/60 px-3 py-2 text-xs text-rose-200 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <span>{backupImportError}</span>
+                </div>
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-slate-800 bg-slate-950/60 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsImportBackupOpen(false)}
+                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmImportQueueJson}
+                className="px-4 py-1.5 rounded-lg text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 cursor-pointer"
+              >
+                确认恢复导入
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+
   if (queue.length === 0) {
     return (
+      <>
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-8 text-center space-y-4">
         <div className="w-14 h-14 rounded-2xl bg-slate-800 text-emerald-400 flex items-center justify-center mx-auto shadow-inner">
           <Layers className="w-7 h-7" />
@@ -1081,6 +1166,8 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
           )}
         </div>
       </div>
+      {importBackupUi}
+      </>
     );
   }
 
@@ -3576,6 +3663,7 @@ export const BatchMatrixDashboard: React.FC<BatchMatrixDashboardProps> = ({
           </div>
         </div>
       )}
+      {importBackupUi}
     </div>
   );
 };

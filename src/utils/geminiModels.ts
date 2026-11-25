@@ -1,7 +1,7 @@
 import { ThinkingLevel, type GenerateContentParameters, type GenerateContentResponse } from '@google/genai';
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-4-hydrogen';
-export const DEFAULT_GEMINI_FALLBACKS = 'gemini-3.5-flash-lite';
+export const DEFAULT_GEMINI_FALLBACKS = 'gemini-3.1-flash-lite';
 export const DEFAULT_GEMINI_TIMEOUT_MS = 25_000;
 
 export function getGeminiModels(primary?: string, fallbacks = DEFAULT_GEMINI_FALLBACKS) {

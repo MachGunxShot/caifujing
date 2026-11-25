@@ -42,8 +42,55 @@ const matchShape: Shape = {
 export function parseImageMatch(value: unknown): FullMatchData {
   if (!isObject(value)) throw new Error('截图中没有可用的结构化赛事数据');
   // Older prompts returned the five matchInfo fields at the top level.
-  const {league, homeTeam, awayTeam, matchTime, marketStory} = value;
-  const match = { ...value, matchInfo: value.matchInfo ?? {league, homeTeam, awayTeam, matchTime, marketStory} };
+  const { league, homeTeam, awayTeam, matchTime, marketStory } = value;
+  const rawMatchInfo = isObject(value.matchInfo)
+    ? value.matchInfo
+    : { league, homeTeam, awayTeam, matchTime, marketStory };
+  const rawAsian = value.asianHandicap;
+  const rawEuro = value.euroOdds;
+  const rawOverUnder = value.overUnder;
+  const match: Record<string, unknown> = {
+    matchInfo: {
+      league: rawMatchInfo.league,
+      homeTeam: rawMatchInfo.homeTeam,
+      awayTeam: rawMatchInfo.awayTeam,
+      matchTime: rawMatchInfo.matchTime,
+      marketStory: rawMatchInfo.marketStory,
+      ...(rawMatchInfo.homeProfile !== undefined ? { homeProfile: rawMatchInfo.homeProfile } : {}),
+      ...(rawMatchInfo.awayProfile !== undefined ? { awayProfile: rawMatchInfo.awayProfile } : {}),
+    },
+    asianHandicap: isObject(rawAsian)
+      ? {
+          earlyHandicap: rawAsian.earlyHandicap,
+          earlyHomeOdds: rawAsian.earlyHomeOdds,
+          earlyAwayOdds: rawAsian.earlyAwayOdds,
+          lateHandicap: rawAsian.lateHandicap,
+          lateHomeOdds: rawAsian.lateHomeOdds,
+          lateAwayOdds: rawAsian.lateAwayOdds,
+        }
+      : rawAsian,
+    euroOdds: isObject(rawEuro)
+      ? {
+          earlyWin: rawEuro.earlyWin,
+          earlyDraw: rawEuro.earlyDraw,
+          earlyLoss: rawEuro.earlyLoss,
+          lateWin: rawEuro.lateWin,
+          lateDraw: rawEuro.lateDraw,
+          lateLoss: rawEuro.lateLoss,
+        }
+      : rawEuro,
+    overUnder: isObject(rawOverUnder)
+      ? {
+          earlyLine: rawOverUnder.earlyLine,
+          earlyOverOdds: rawOverUnder.earlyOverOdds,
+          earlyUnderOdds: rawOverUnder.earlyUnderOdds,
+          lateLine: rawOverUnder.lateLine,
+          lateOverOdds: rawOverUnder.lateOverOdds,
+          lateUnderOdds: rawOverUnder.lateUnderOdds,
+        }
+      : rawOverUnder,
+    ...(value.additionalNotes !== undefined ? { additionalNotes: value.additionalNotes } : {}),
+  };
   validate(match, matchShape, '截图');
   return match as unknown as FullMatchData;
 }

@@ -25,6 +25,13 @@ test('unrecognized screenshots and incomplete markets cannot produce a replaceme
   assert.throws(() => parseImageMatch(null));
   assert.throws(() => parseImageMatch({ ...data, matchInfo: { ...data.matchInfo, homeTeam: ' ' } }), /homeTeam/);
   assert.throws(() => parseImageMatch({ ...data, euroOdds: {} }), /earlyWin/);
+  const cleaned = parseImageMatch({
+    ...data,
+    unexpectedTopLevel: 'strip-me',
+    matchInfo: { ...data.matchInfo, unexpectedNested: 123 },
+  });
+  assert.equal('unexpectedTopLevel' in cleaned, false);
+  assert.equal('unexpectedNested' in cleaned.matchInfo, false);
 });
 
 test('queue exports round-trip with their original locked report and early snapshot', () => {

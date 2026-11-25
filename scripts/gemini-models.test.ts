@@ -4,8 +4,8 @@ import { GenerateContentResponse, ThinkingLevel, type GenerateContentParameters 
 import { generateWithModelFallback, getGeminiModels } from '../src/utils/geminiModels';
 
 test('Gemini 4 Hydrogen is the default and custom fallback IDs are deduplicated', () => {
-  assert.deepEqual(getGeminiModels(), ['gemini-4-hydrogen', 'gemini-3.5-flash-lite']);
-  assert.deepEqual(getGeminiModels('gemini-4-neon', ' gemini-4-neon, gemini-3.5-flash-lite ,gemini-3.5-flash-lite '), ['gemini-4-neon', 'gemini-3.5-flash-lite']);
+  assert.deepEqual(getGeminiModels(), ['gemini-4-hydrogen', 'gemini-3.1-flash-lite']);
+  assert.deepEqual(getGeminiModels('gemini-4-neon', ' gemini-4-neon, gemini-3.1-flash-lite ,gemini-3.1-flash-lite '), ['gemini-4-neon', 'gemini-3.1-flash-lite']);
 });
 
 test('a model missing from the project or returning 504 falls back and labels the reply with its actual model', async () => {
@@ -16,7 +16,7 @@ test('a model missing from the project or returning 504 falls back and labels th
       if (calls.length === 1) throw Object.assign(new Error('unavailable'), {status});
       return Object.assign(new GenerateContentResponse(), {candidates: [{ content: { parts: [{ text: 'OK' }] } }]});
     }, {contents: 'test', config: {temperature: 0.2}}, ThinkingLevel.LOW);
-    assert.deepEqual(result, {text: 'OK', model: 'gemini-3.5-flash-lite'});
+    assert.deepEqual(result, {text: 'OK', model: 'gemini-3.1-flash-lite'});
     assert.equal(calls[0].config?.thinkingConfig?.thinkingLevel, ThinkingLevel.LOW);
     assert.equal(calls[0].config?.temperature, undefined);
     assert.equal(calls[1].config?.temperature, 0.2);

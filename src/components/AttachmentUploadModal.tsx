@@ -38,6 +38,7 @@ export const AttachmentUploadModal: React.FC<AttachmentUploadModalProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [batchRawText, setBatchRawText] = useState('');
   const [parsedPreviewCount, setParsedPreviewCount] = useState<number>(0);
+  const [modalError, setModalError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const batchFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -68,6 +69,7 @@ export const AttachmentUploadModal: React.FC<AttachmentUploadModalProps> = ({
   if (!isOpen) return null;
 
   const handleImageFile = (file: File) => {
+    setModalError(null);
     setImageFile(file);
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -78,6 +80,7 @@ export const AttachmentUploadModal: React.FC<AttachmentUploadModalProps> = ({
 
   const handleImageUploadSubmit = async () => {
     if (!previewImage) return;
+    setModalError(null);
     setIsProcessing(true);
 
     try {
@@ -97,23 +100,24 @@ export const AttachmentUploadModal: React.FC<AttachmentUploadModalProps> = ({
         try {
           match = parseImageMatch(res.extractedData);
         } catch (error) {
-          alert(error instanceof Error ? error.message : '截图识别数据不完整');
+          setModalError(error instanceof Error ? error.message : '截图识别数据不完整');
           return;
         }
         onImageAnalyzed(match, res.aiAnalysis, typeof res.geminiModel === 'string' ? res.geminiModel : undefined);
         onClose();
       } else {
-        alert(res.error || '截图识别失败，请重试');
+        setModalError(res.error || '截图识别失败，请重试');
       }
     } catch (err) {
       console.error('Image analysis error:', err);
-      alert('上传截图分析出错，请检查网络连接');
+      setModalError('上传截图分析出错，请检查网络连接');
     } finally {
       setIsProcessing(false);
     }
   };
 
   const handleBatchTextChange = (text: string) => {
+    setModalError(null);
     setBatchRawText(text);
     const matches = parseBatchMatchesFromText(text);
     setParsedPreviewCount(matches.length);
@@ -131,9 +135,10 @@ export const AttachmentUploadModal: React.FC<AttachmentUploadModalProps> = ({
   const handleBatchSubmit = () => {
     const matches = parseBatchMatchesFromText(batchRawText);
     if (matches.length === 0) {
-      alert('未检测到有效的赛事格式，请参考范例文本或点击“载入标准批量模板”');
+      setModalError('未检测到有效的赛事格式，请参考范例文本或点击“载入标准批量模板”');
       return;
     }
+    setModalError(null);
     onBatchImported(matches);
     onClose();
   };
@@ -203,6 +208,22 @@ export const AttachmentUploadModal: React.FC<AttachmentUploadModalProps> = ({
 
         {/* Modal Body */}
         <div className="p-6 overflow-y-auto flex-1 space-y-4">
+          {modalError && (
+            <div role="alert" className="rounded-lg border border-rose-500/40 bg-rose-950/60 px-3.5 py-2.5 text-xs text-rose-200 flex items-start justify-between gap-3">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <span>{modalError}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalError(null)}
+                className="text-rose-300 hover:text-white shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
           {/* TAB 1: IMAGE UPLOAD / PASTE */}
           {activeTab === 'image' && (
             <div className="space-y-4">
